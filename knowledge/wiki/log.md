@@ -85,3 +85,45 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     mocks. This upgrades every previously-"unverified" claim in the Phase 2 session to
     confirmed.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-03T00:00:00Z — Phase 3: Family Space, invitations, family members, child profiles
+
+- **Operation type:** security audit + implementation + wiki update
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-03-phase3-family-space.md`](../raw/sessions/2026-09-03-phase3-family-space.md).
+- **Wiki pages updated:** `domain/family-spaces.md` (rewritten — the gap it flagged as "a
+  hard prerequisite for Phase 3" is now closed), `engineering/security-model.md`,
+  `engineering/data-model.md`, `engineering/authentication.md`,
+  `engineering/system-architecture.md`, `engineering/testing-strategy.md`,
+  `product/glossary.md`.
+- **Decisions/contradictions recorded:**
+  - The mandatory pre-implementation security audit (per this wiki's own workflow) found and
+    fixed two real issues before they shipped: `family_invitations`' invitee-by-email direct
+    SELECT policy was incompatible with token/link-based delivery and was replaced
+    (owner-only direct access; invitees go through a sanitized preview RPC instead); and a
+    genuine gap where `anon` had `EXECUTE` on every `SECURITY DEFINER` function in the
+    codebase — Phase 2's helpers included — because `revoke all on function ... from public`
+    never revokes the separate ACL entry Supabase's own role bootstrap grants directly to
+    `anon`. The second finding was caught by a failing test during implementation (an
+    assertion that `anon` gets `42501` calling an invitation-preview RPC instead observed the
+    call succeeding), not assumed from reading the migration. Both are written up in full in
+    `docs/DECISIONS.md`, "Phase 3," and `engineering/security-model.md`.
+  - `families`/`family_members`/`family_invitations` remain RPC-only for every mutation — no
+    direct `INSERT`/`UPDATE`/`DELETE` grant was added for `authenticated`, continuing the
+    Phase 2 boundary rather than opening it up now that RPCs exist to write through.
+  - Family ownership transfer / an owner leaving their own family has **no RPC** —
+    `remove_family_member` unconditionally refuses to remove the `role = 'owner'` row.
+    Recorded as a deferred, not-yet-designed gap in `docs/ROADMAP.md`, not silently absent.
+  - `screens → hooks → repositories → Supabase client` is now written up as the standing
+    architectural pattern (`docs/ARCHITECTURE.md`, new "Layering" section;
+    `engineering/system-architecture.md` updated to match), not just this feature's shape —
+    future features should follow `src/domain/family/*` / `src/lib/family/familyService.ts`
+    as the reference implementation.
+  - **136/136 pgTAP assertions and 61/61 Jest tests pass**, and the full flow was additionally
+    verified against three real `auth.users` accounts via direct PostgREST calls (not
+    `supabase test db`'s simulated personas) — 16/16 checks, including confirming `anon`
+    really does get `401` calling the invitation-preview RPC now, the real-world proof the
+    EXECUTE-grant fix above actually holds.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

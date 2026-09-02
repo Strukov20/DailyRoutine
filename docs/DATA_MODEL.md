@@ -102,17 +102,29 @@ verified-link flag — that flag doesn't exist yet and is intentionally deferred
 
 ## family_invitations
 
-**Owned by the family**, visible to the invited email/profile and to family adults.
+**Owned by the family** — direct `SELECT` is owner-only (the family's own "invitations I've
+sent" list). Nobody else queries this table directly: an invitee reaches an invitation
+exclusively through `get_family_invitation_preview(token)`, a sanitized RPC that returns the
+family name, inviter, status, and validity — never a member list, never `invited_email`, never
+the token itself. See [DECISIONS.md](DECISIONS.md), "Phase 3", for why (no email provider —
+invitations are delivered as a shareable link, not addressed to a verified inbox — so
+acceptance is validated by token possession, not by matching the caller's email).
 
-| column          | type                 | notes                                                             |
-| --------------- | -------------------- | ----------------------------------------------------------------- |
-| `id`            | uuid                 |                                                                   |
-| `family_id`     | uuid → `families.id` |                                                                   |
-| `invited_email` | text                 | required — invitee may not have an account yet                    |
-| `invited_by`    | uuid → `profiles.id` |                                                                   |
-| `status`        | text                 | `'pending' \| 'accepted' \| 'declined' \| 'expired' \| 'revoked'` |
-| `responded_at`  | timestamptz          | nullable                                                          |
-| `expires_at`    | timestamptz          | required — invitations are not open-ended                         |
+| column          | type                 | notes                                                                                                                   |
+| --------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `id`            | uuid                 |                                                                                                                         |
+| `family_id`     | uuid → `families.id` |                                                                                                                         |
+| `invited_email` | text                 | the owner's own label for who this was meant for — informational only, never used for access control                    |
+| `invited_by`    | uuid → `profiles.id` |                                                                                                                         |
+| `token_hash`    | text                 | SHA-256 hex digest of a one-time token; the raw token is never stored, only returned once by `create_family_invitation` |
+| `status`        | text                 | `'pending' \| 'accepted' \| 'declined' \| 'expired' \| 'revoked'`                                                       |
+| `responded_at`  | timestamptz          | nullable                                                                                                                |
+| `expires_at`    | timestamptz          | required — invitations are not open-ended (default 7 days, see `create_family_invitation`)                              |
+
+Mutations are RPC-only: `create_family_invitation` (owner), `get_family_invitation_preview`
+(any authenticated user holding the token), `accept_family_invitation` /
+`decline_family_invitation` (the token holder), `revoke_family_invitation` (owner). See
+`supabase/migrations/20260903120000_family_management.sql`.
 
 ## categories
 
@@ -283,7 +295,8 @@ its "audit" story) gets:
 | Table                                                        | Owned by                           | Who can read                                                                                                                                 |
 | ------------------------------------------------------------ | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `profiles`                                                   | the user                           | self; other family members see only what `family_members.display_name`/`avatar_url` expose (not the full profile row)                        |
-| `families`, `family_members`, `family_invitations`           | the family                         | family adults (and, for invitations, the invited email)                                                                                      |
+| `families`, `family_members`                                 | the family                         | family adults (and children, for `family_members`)                                                                                           |
+| `family_invitations`                                         | the family                         | direct table access: owner only. Anyone else: only the sanitized `get_family_invitation_preview(token)` RPC — never a table read             |
 | `categories`                                                 | family, or system                  | family members; system categories are public                                                                                                 |
 | `tasks`, `events`                                            | user (personal) or family (shared) | owner always; family members only if `visibility = 'family'`, and only sanitized fields if the item is private (see SECURITY_AND_PRIVACY.md) |
 | `task_assignments`, `event_participants`, `responsibilities` | the family                         | family adults                                                                                                                                |

@@ -174,6 +174,18 @@ database logs) must follow the same rule once they exist: log row ids, not row c
   notification-sending code exists yet; the constraint that makes it safe
   (`tasks_assert_integrity`'s private+non-owner-assignee rejection) is already in place and
   tested, ready for when notification sending is built.
+- ⚠️ **Function EXECUTE grants are a separate mechanism from table grants — audited in Phase
+  3, fixed where it mattered.** The "REVOKE ALL ... FROM anon, authenticated" bullet above is
+  about _tables_ and remains accurate. _Functions_ are different: Supabase's own role bootstrap
+  grants `anon`/`authenticated` EXECUTE on every new function directly (not via the `PUBLIC`
+  pseudo-role), so `revoke all on function ... from public` alone never actually revokes it —
+  confirmed by inspecting `pg_proc.proacl` on a real local instance. Every
+  `SECURITY DEFINER` function in this codebase (Phase 2's `is_family_member`/`is_family_owner`/
+  `current_family_ids` and Phase 3's family/invitation/child RPCs) now explicitly revokes from
+  `anon` too — see [DECISIONS.md](DECISIONS.md), "Phase 3," for the full writeup and which two
+  functions this was a real (not just theoretical) gap for. **Before adding any new
+  `SECURITY DEFINER` function**, confirm its ACL with a query like the one in that entry
+  rather than trusting a `revoke ... from public` statement alone.
 
 ## Non-goals for MVP
 

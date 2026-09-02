@@ -1,7 +1,7 @@
 ---
 title: Glossary
 status: current
-updated: 2026-09-02
+updated: 2026-09-03
 sources:
   - ../../../docs/PRODUCT.md
   - ../../../docs/DATA_MODEL.md
@@ -21,6 +21,10 @@ Fast lookup for domain terms. Each links to the wiki page or doc with full detai
   [family-spaces](../domain/family-spaces.md).
 - **Active family** — which family the _UI_ currently focuses on when a user belongs to
   several; client-only state (`useUIStore.activeFamilyId`), not membership data.
+- **Invitation** — a one-time, hashed capability token (not an emailed link — there is no
+  email provider) an owner generates and shares via native Share/copy-link; whoever holds a
+  valid, unexpired, still-pending token can accept it, regardless of their account's email
+  address. See [family-spaces](../domain/family-spaces.md).
 - **Inbox** — tasks with no `date` set.
 - **Today / Tomorrow** — date-scoped personal views.
 - **Family Today** — the combined, cross-member family schedule for the current day.
