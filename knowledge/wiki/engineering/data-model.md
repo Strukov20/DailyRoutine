@@ -1,18 +1,19 @@
 ---
 title: Data model
 status: current
-updated: 2026-09-02
+updated: 2026-09-03
 sources:
   - ../../../docs/DATA_MODEL.md
   - ../../../docs/DECISIONS.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
   - ../../raw/sessions/2026-09-02-phase2-docker-resolved.md
+  - ../../raw/sessions/2026-09-03-phase3-family-space.md
 tags: [engineering, data-model, supabase]
 ---
 
 ## Status: implemented
 
-`supabase/migrations/` (9 files) implements this schema against a local Supabase project
+`supabase/migrations/` (10 files) implements this schema against a local Supabase project
 only — no hosted/production project connected. See [`docs/DATA_MODEL.md`](../../../docs/DATA_MODEL.md)
 for the normative description; the migrations are the source of truth for exact syntax.
 
@@ -67,11 +68,13 @@ table. Key points not to get wrong:
   [personal-planning](../domain/personal-planning.md).
 - Recurrence materialization strategy (generate-ahead vs. on-read) — left as an
   implementation-phase decision in `docs/DATA_MODEL.md`, "recurrence_rules."
-- **No family-creation RPC exists yet** — `families`/`family_members` INSERT isn't granted to
-  `authenticated` this phase; only migrations/test fixtures create rows. A
-  `create_family_with_owner` `SECURITY DEFINER` RPC is the anticipated Phase 3 solution to the
-  chicken-and-egg problem of creating a family and its owner's membership row atomically
-  under RLS — sketched but not built. See [DECISIONS.md](../../../docs/DECISIONS.md).
+- ~~No family-creation RPC exists yet~~ — resolved in Phase 3: `create_family_with_owner`
+  atomically creates the family row and its owner's membership row; `families`/
+  `family_members` still have no direct INSERT grant for `authenticated` by design. See
+  [Family Spaces](../domain/family-spaces.md) and [DECISIONS.md](../../../docs/DECISIONS.md).
+- **Family ownership transfer has no RPC** — `remove_family_member` refuses unconditionally
+  to remove the `role = 'owner'` row, so an owner cannot currently hand off or leave a family
+  they created. See [roadmap](../product/roadmap.md).
 - ~~`src/lib/supabase/types.ts` is hand-authored~~ — resolved: it's now the real generated
   output (`npm run db:types` run for real against the local stack). CHECK-constrained columns
   come back as `string` (a generator limitation, not a bug) — narrowed in domain mappers

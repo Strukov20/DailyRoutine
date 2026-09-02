@@ -197,8 +197,36 @@ can't resolve sibling TypeScript imports).
   `console.*` is disallowed by ESLint outside `warn`/`error`. Swapping in a real sink (Sentry,
   a Supabase log table) later means changing this one file.
 - Screens compose `LoadingState` / `EmptyState` / `ErrorState` (`src/components/ui/`) instead
-  of ad hoc conditionals, so loading/empty/error treatment stays visually consistent as real
-  data-fetching hooks replace the current placeholders.
+  of ad hoc conditionals, so loading/empty/error treatment stays visually consistent across
+  screens. `app/(app)/family.tsx` is the first screen built against this with real
+  data-fetching hooks rather than a placeholder — see "Layering" below.
+
+## Layering: screens → hooks → repositories → the Supabase client
+
+Established by the family/invitation/child-profile feature (Phase 3) as the pattern every
+future feature should follow, mirroring how `src/lib/auth/authService.ts` already isolated
+auth's transport calls:
+
+1. **Screens** (`app/**`) never import `@/lib/supabase/client` or call `supabase.rpc(...)` /
+   `supabase.from(...)` directly. They call a hook and render its `data`/`isLoading`/`isError`.
+2. **Hooks** (`src/domain/<feature>/hooks.ts`) wrap a service function in a TanStack Query
+   `useQuery`/`useMutation`, own query keys and cache invalidation, and are the only layer
+   Zustand and TanStack Query state get reconciled in (see `useActiveFamily()` for the
+   pattern — it's the one place `uiStore.activeFamilyId` and the family list meet).
+3. **Repositories/services** (`src/lib/<feature>/<feature>Service.ts`) are the only place that
+   calls the Supabase client, and the only place that normalizes a raw Postgres/PostgREST
+   error into a typed `<Feature>ServiceError` with a stable `code` — see
+   `src/lib/family/familyService.ts` for the full pattern (mirrors `AuthServiceError`).
+4. **Domain types/mappers/schemas** (`src/domain/<feature>/{types,mappers,schemas,errorMessages}.ts`)
+   stay framework-agnostic: mappers narrow the generated (CHECK-constraint-widened) Supabase
+   row shape to a real union type, schemas validate form input independent of any screen, and
+   `errorMessages.ts` maps a service error code to an i18n key — never inline English strings
+   in a screen.
+
+A screen reaching past its hook into `familyService` (or, worse, `supabase` directly) is a
+layering violation to fix on sight, not a style nitpick — it's what keeps error normalization,
+cache invalidation, and the RPC-only write boundary (see
+[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md)) from being reimplemented ad hoc per screen.
 
 ## Offline & caching (current state, not the V2 design)
 

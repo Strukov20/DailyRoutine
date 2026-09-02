@@ -1,12 +1,13 @@
 ---
 title: Authentication
 status: current
-updated: 2026-09-02
+updated: 2026-09-03
 sources:
   - ../../../docs/ARCHITECTURE.md
   - ../../../docs/DECISIONS.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
   - ../../raw/sessions/2026-09-02-phase2-docker-resolved.md
+  - ../../raw/sessions/2026-09-03-phase3-family-space.md
 tags: [engineering, auth, supabase]
 ---
 
@@ -41,6 +42,15 @@ not an oversight. Exchanging its recovery `code` for a session flips `status` to
 app mid-flow, before they've set a new password. An always-reachable top-level screen avoids
 that race entirely. Full reasoning: [DECISIONS.md](../../../docs/DECISIONS.md).
 
+`app/invite/[token].tsx` (Phase 3) is top-level for a related but different reason: it must
+render for a **signed-out** visitor (someone who opened an invitation link with no account
+yet), not just survive a status flip. Since sign-in/sign-up navigate purely via the implicit
+`Stack.Protected` swap with no param-passing mechanism, the token is stashed in
+`useUIStore.pendingInviteToken` and a small effect in `app/_layout.tsx` redirects back to
+`/invite/<token>` the moment `status` becomes `'signed-in'`. See
+[Family Spaces](../domain/family-spaces.md) and
+[DECISIONS.md, "Phase 3"](../../../docs/DECISIONS.md).
+
 ## Google / Apple sign-in: real code, config-gated
 
 `src/lib/auth/oauth.ts` calls the real `signInWithOAuth` + `expo-web-browser` flow — not a
@@ -60,8 +70,7 @@ write-up: [DECISIONS.md](../../../docs/DECISIONS.md).
 ## Unresolved
 
 - ~~Docker/local-instance verification~~ — resolved; see the Docker-resolved session source.
-- **No family-creation RPC yet** — signing up only creates a `profiles` row; there is no
-  path yet from "signed in" to "owns a family." That's Phase 3 (family UI) — see
+- ~~No family-creation RPC yet~~ — resolved in Phase 3, see
   [family-spaces](../domain/family-spaces.md).
 - **Native Sign in with Apple** (`expo-apple-authentication`'s platform button, preferred by
   App Store guidelines over a browser redirect for this specific provider) is a documented
@@ -72,4 +81,4 @@ write-up: [DECISIONS.md](../../../docs/DECISIONS.md).
 
 - [Security model](security-model.md) — how RLS ties to `auth.uid()`
 - [Data model](data-model.md) — `profiles` / `auth.users`
-- [Family Spaces](../domain/family-spaces.md) — what comes after sign-in, not yet built
+- [Family Spaces](../domain/family-spaces.md) — what comes after sign-in, now built

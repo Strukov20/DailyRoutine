@@ -428,3 +428,140 @@ A single `src/lib/logger/logger.ts` abstraction is the only sanctioned logging p
 `no-console` rule allows only `warn`/`error` directly) so a real sink can be swapped in later
 by editing one file, and so the "never log private content" rule
 (SECURITY_AND_PRIVACY.md) has one enforcement point instead of many call sites to audit.
+
+## Phase 3 (Family Space, invitations, family members, child profiles)
+
+The entries below were made implementing `supabase/migrations/20260903120000_family_management.sql`,
+`src/lib/family/`, `src/domain/family/`, and `app/family/*` / `app/invite/[token].tsx`. Phase 3
+began with a security regression audit of the Phase 2 sanitized views and RLS (per this
+project's own rule of auditing before extending) — the audit's findings and their fixes are
+recorded first, since they shaped everything built afterward.
+
+### Audit finding: `anon` had `EXECUTE` on every function via Supabase's default privileges
+
+Every Phase 2 `SECURITY DEFINER` helper (`is_family_member`, `is_family_owner`,
+`current_family_ids`) — and, before this fix, every new Phase 3 RPC — carried
+`revoke all on function ... from public; grant execute ... to authenticated;`, which reads as
+"only `authenticated` can call this." Inspecting `pg_proc.proacl` on a real local instance
+showed `anon=X/postgres` on all of them anyway. Root cause: Supabase's local/hosted Postgres
+runs `alter default privileges in schema public grant execute on functions to anon,
+authenticated, service_role` as part of its own role bootstrap, which grants `anon` and
+`authenticated` EXECUTE **directly**, as separate ACL entries from the `PUBLIC` pseudo-role —
+`revoke ... from public` only removes the `PUBLIC` entry, never those two.
+
+For the three Phase 2 helpers this was harmless in practice (`auth.uid()` is `null` for
+`anon`, so each one safely returns false/empty), but for two of this phase's own new RPCs it
+was not: `get_family_invitation_preview` has no internal auth check by design (a preview
+doesn't need to know who's asking), so `anon` could preview any guessed/leaked token with
+zero authentication; `decline_family_invitation` never checks `auth.uid()` either (declining
+doesn't need to), so `anon` could decline someone else's pending invitation as a griefing
+vector. **Decision:** every `revoke all on function ... from public` in this codebase should
+really read `revoke all on function ... from public, anon` — fixed for both the new functions
+and, retroactively via a new statement in the Phase 3 migration (not by editing the shipped
+Phase 2 file), for the three Phase 2 helpers. See
+`supabase/migrations/20260903120000_family_management.sql`'s opening comment for the full
+writeup, and `supabase/tests/080_family_management_test.sql`'s final two assertions (and the
+real-user curl verification in Section 14 of the Phase 3 report) for how this was proven
+fixed, not just asserted fixed.
+
+### `family_invitations`: hashed one-time tokens, not the invitee's email
+
+Phase 2 shipped `family_invitations` with an `invited_email`-matching RLS policy: an invitee
+could `SELECT` their own pending invitation once their JWT email matched. That model assumed
+delivery by email to a known address. Phase 3 has no email provider (see below), so
+invitations are delivered as a shareable link — which needed to work for a link forwarded
+through any channel, not just an email-verified session. **Decision:** add a `token_hash`
+column (SHA-256 hex digest — `sha256()` on `bytea` is a core Postgres builtin since v13, so no
+`pgcrypto` dependency was added just for this), generate the raw token from two concatenated
+`gen_random_uuid()` values (244 bits of randomness) inside `create_family_invitation`, return
+it to the caller **exactly once**, and never store or log it anywhere. `invited_email` stays
+on the table as the owner's own record of who they meant to invite, but no longer grants
+access — the invitee-by-email SELECT policy is dropped entirely, and every invitee-facing
+operation (`get_family_invitation_preview`, `accept_family_invitation`,
+`decline_family_invitation`) is validated purely by token possession + status + expiry, never
+by comparing the caller's email. As defense in depth, `token_hash` is also excluded from the
+column-level `SELECT` grant on `family_invitations` — nothing in the app ever needs to read it
+back, so it is simplest not to expose it at all, even hashed.
+
+### No email provider yet — link/Share/copy-link delivery only
+
+Sending real email (a transactional-email provider, DNS/SPF/DKIM setup, template design) is
+out of scope for this phase (see [ROADMAP.md](ROADMAP.md)). `create_family_invitation` returns
+a `familyflow://invite/<token>` deep link (`src/lib/family/inviteLink.ts`); the owner shares it
+through the native Share sheet or a copy-link button (`app/family/invite.tsx`) via whatever
+channel they already use. This is why invitation acceptance is token-only rather than
+email-verified (previous entry) — the app has no way to prove the recipient controls
+`invited_email` without an email provider to send to it.
+
+### `get_family_invitation_preview` requires authentication — deliberately, not by omission
+
+Unlike `create_family_invitation`/`accept_family_invitation`/etc., the preview RPC has no
+business-logic reason to check `auth.uid()` — a token's validity doesn't depend on who is
+asking. It would be technically possible to let `anon` call it. **Decision:** require
+`authenticated` anyway, consistent with the rest of the app (every screen requires sign-in
+first — see `app/_layout.tsx`'s `Stack.Protected` guards), and to avoid a fully unauthenticated
+token-probing surface with no Supabase Auth audit trail at all. The practical protection is
+still the token's 256-bit-scale randomness either way; this is defense in depth, not the
+primary control. See the "anon had EXECUTE" finding above for why this had to be explicitly
+re-verified rather than assumed to already be true.
+
+### `families`/`family_members` still have no direct write grant — RPC-only, unchanged from Phase 2
+
+Phase 2 deliberately left `families`/`family_members` without an `INSERT`/`UPDATE`/`DELETE`
+grant for `authenticated` (beyond the single owner-rename case), anticipating that family
+creation and roster changes would need business-rule enforcement (owner-orphan prevention,
+child-only fields, cross-family checks) that RLS alone expresses awkwardly. Phase 3 keeps that
+boundary and adds `create_family_with_owner`, `create_child_profile`, `update_child_profile`,
+and `remove_family_member` as the only ways to write these tables. The two `for all` policies
+this made dead (`family_members_owner_manages_roster`, `family_invitations_owner_manages`) are
+dropped in the Phase 3 migration for clarity — they never matched anything even before this
+phase, since no grant ever existed for them to combine with.
+
+### Owner-orphan prevention: `remove_family_member` refuses to ever remove the `role = 'owner'` row
+
+A family with zero owners would be unrecoverable under this schema (every mutating RPC checks
+`is_family_owner`). `remove_family_member` raises `22023` unconditionally if asked to remove
+the owner row, regardless of who's asking. **Deferred, not solved:** ownership transfer (an
+owner handing the role to another adult) and "the owner leaves the family" have no RPC this
+phase — see [ROADMAP.md](ROADMAP.md). An owner who wants to stop using a family today has no
+supported way to do that other than removing every other member and leaving the family
+itself intact but unused; this is a known, accepted gap for the MVP, not an oversight.
+
+### Child profiles: any adult member may create/update; only the owner may remove
+
+Creating or editing a child profile (`create_child_profile`/`update_child_profile`) only checks
+`is_family_member` — any adult (owner or adult role) can manage children, matching how
+multiple parents/guardians in one family would actually use this. Removing _any_ member,
+child included, is owner-only (`remove_family_member`), for the simpler reason that Phase 2
+already established "roster changes are owner-only" as the default and Phase 3 saw no product
+requirement strong enough to carve out an exception for children specifically. Child rows never
+carry a `profile_id` this phase (unlinked by construction — see the `create_child_profile`
+migration comment), so they cannot be discovered or contacted independently of the family that
+created them.
+
+### Multi-family support: TanStack Query owns the list, Zustand owns only the selection
+
+A user may belong to several families. `src/domain/family/hooks.ts`'s `useMyFamilies` (and the
+`familyKeys` query-key scheme built on it) is the only source of truth for _which families
+exist and what's in them_ — `useUIStore.activeFamilyId` (already scaffolded in Phase 1) holds
+only _which one the UI is currently showing_, exactly as `docs/ARCHITECTURE.md`'s
+state-management boundary already specified. `useActiveFamily()` is the one place that
+reconciles the two: it falls back to the first family when the stored preference doesn't
+refer to a family the user is actually in (e.g., they were removed from it elsewhere), and
+persists that fallback back into the store rather than only returning it — see its Jest tests
+in `src/domain/family/hooks.test.tsx`.
+
+### Invitation deep link is a top-level route, and `pendingInviteToken` is a small, deliberate Zustand exception
+
+`app/invite/[token].tsx` sits outside both `Stack.Protected` groups in `app/_layout.tsx` (like
+`reset-password.tsx`/`auth-callback.tsx`), so it renders regardless of auth status. A
+signed-out visitor who opens the link has no session yet and must sign up/in first — but the
+existing sign-in/sign-up screens navigate purely via the implicit `Stack.Protected` swap on
+`status` change (see their own comments), with no mechanism to carry a param through that
+flow. **Decision:** stash the token in a new `pendingInviteToken` field on `useUIStore` when a
+signed-out visitor opens the invite screen, and let a small effect in `app/_layout.tsx`'s
+`RootNavigator` redirect to `/invite/<token>` the moment `status` becomes `'signed-in'`,
+clearing the field immediately after. This is `uiStore`'s only Phase 3 addition beyond
+`activeFamilyId`, and it fits the same "genuinely UI-only, no server owner" test — it's not
+persisted (no persist middleware on this store), which is the right lifetime for a value that
+should not survive an app restart.

@@ -1,18 +1,20 @@
 ---
 title: Testing strategy
 status: current
-updated: 2026-09-02
+updated: 2026-09-03
 sources:
   - ../../../docs/TEST_STRATEGY.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
   - ../../raw/sessions/2026-09-02-phase2-docker-resolved.md
+  - ../../raw/sessions/2026-09-03-phase3-family-space.md
 tags: [engineering, testing]
 ---
 
 ## Confirmed / current
 
 - **Domain logic** (`src/domain/**`) — plain Jest, no React/I/O.
-  `src/domain/tasks/priority.test.ts`, `src/domain/auth/errorMessages.test.ts`.
+  `src/domain/tasks/priority.test.ts`, `src/domain/auth/errorMessages.test.ts`,
+  `src/domain/family/errorMessages.test.ts`, `src/domain/family/mappers.test.ts`.
 - **Components** — Jest + React Native Testing Library, rendered wrapped in
   `<AppThemeProvider>` (not mocked). `src/components/ui/EmptyState.test.tsx`.
 - **Localization** — `src/i18n/i18n.test.ts` checks i18next initializes, a key translates
@@ -20,14 +22,22 @@ tags: [engineering, testing]
 - **Auth/config** — Jest with `@/lib/supabase/client`/`@/lib/env` mocked at the module
   boundary. `src/lib/env.test.ts`, `src/lib/auth/authService.test.ts`,
   `src/lib/auth/oauth.test.ts`, `src/lib/auth/AuthProvider.test.tsx`.
+- **Repositories/services and selection hooks** (Phase 3 pattern) — `src/lib/family/familyService.test.ts`
+  mocks `@/lib/supabase/client`'s `.from()`/`.rpc()` chains to test row-mapping and SQLSTATE
+  normalization; `src/domain/family/hooks.test.tsx` uses RNTL's `renderHook` (which is
+  `async` — must be awaited, unlike `render`/`fireEvent` which merely _return_ promises) with
+  a `QueryClientProvider` wrapper to test `useActiveFamily()`'s fallback-selection logic.
 - **RLS/privacy tests** — pgTAP via `supabase test db`, against a real local Postgres
-  instance with RLS enabled. `supabase/tests/*.sql` (7 files, 88 assertions), including a
-  dedicated secret-marker privacy-regression test (`060_privacy_regression_test.sql`).
-  **Verified: all 88 assertions pass** against a real local instance (`supabase db reset &&
-supabase test db`) — see
-  [`knowledge/raw/sessions/2026-09-02-phase2-docker-resolved.md`](../../raw/sessions/2026-09-02-phase2-docker-resolved.md).
-  Running these for real surfaced and fixed one migration-ordering bug and two test-assertion
-  bugs, none of them RLS/privacy design flaws — see [DECISIONS.md](../../../docs/DECISIONS.md).
+  instance with RLS enabled. `supabase/tests/*.sql` (8 files, 136 assertions), including a
+  dedicated secret-marker privacy-regression test (`060_privacy_regression_test.sql`) and the
+  full family/invitation/child-profile RPC suite (`080_family_management_test.sql`).
+  **Verified: all 136 assertions pass** against a real local instance (`supabase db reset &&
+supabase test db`), plus a real curl-driven three-user flow (owner/member/outsider, real
+  `auth.users` accounts, not simulated `set local role`) — see
+  [`knowledge/raw/sessions/2026-09-03-phase3-family-space.md`](../../raw/sessions/2026-09-03-phase3-family-space.md).
+  Running the Phase 2 suite for real surfaced and fixed one migration-ordering bug and two
+  test-assertion bugs; the Phase 3 audit surfaced a real `anon`-EXECUTE-grant gap (see
+  [security-model](security-model.md)) — none of these were caught by static review alone.
   CI's `database` job also runs them on every push/PR.
 - **Build/bundle smoke test** — `npx expo export --platform ios|android`, `npx expo config`,
   `npx expo-doctor`; catches what lint/typecheck can't (see the `expo-router` vs.

@@ -1,26 +1,38 @@
 ---
 title: Security model
 status: current
-updated: 2026-09-02
+updated: 2026-09-03
 sources:
   - ../../../docs/SECURITY_AND_PRIVACY.md
   - ../../../docs/DECISIONS.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
   - ../../raw/sessions/2026-09-02-phase2-docker-resolved.md
+  - ../../raw/sessions/2026-09-03-phase3-family-space.md
 tags: [engineering, security, rls, privacy]
 ---
 
 ## Status: implemented and verified (Mechanisms 1, 2, 5) / not yet implemented (3, 4)
 
-`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 88 assertions
+`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 136 assertions
 passing against a real local Postgres instance) proves it, particularly
-`060_privacy_regression_test.sql`. See
+`060_privacy_regression_test.sql` and `080_family_management_test.sql`. See
 [privacy-and-availability](../domain/privacy-and-availability.md) for the domain-facing
 version of this same content; this page is the engineering-facing index.
 
-**A real gap was found and fixed while implementing Mechanism 2** — not a bug, a design
-correction made before anything shipped. See
-[DECISIONS.md](../../../docs/DECISIONS.md#privacy-view-not-security_invoker--this-fixes-a-real-gap-in-the-phase-1-design).
+**Two real gaps have been found and fixed while implementing this, not bugs shipped and
+later caught** — design corrections made during the same phase that built the feature:
+
+- Mechanism 2 (sanitized views, Phase 2):
+  [DECISIONS.md](../../../docs/DECISIONS.md#privacy-view-not-security_invoker--this-fixes-a-real-gap-in-the-phase-1-design).
+- **`anon` had `EXECUTE` on every `SECURITY DEFINER` function (Phase 3)** — Supabase's own
+  role bootstrap grants `anon`/`authenticated` EXECUTE directly at function-creation time,
+  as ACL entries separate from `PUBLIC`; every `revoke all on function ... from public`
+  statement in this codebase (Phase 2's included) never actually revoked `anon`'s access,
+  confirmed by inspecting `pg_proc.proacl` on a real local instance rather than trusting the
+  migration's own intent. Harmless for the three Phase 2 helpers (`auth.uid()` is null for
+  `anon`) but a real hole for two Phase 3 invitation RPCs with no internal auth check. Fixed
+  everywhere. Full writeup:
+  [DECISIONS.md, "Phase 3"](../../../docs/DECISIONS.md).
 
 ## The five mechanisms
 
@@ -60,10 +72,25 @@ A `visibility = 'private'` task cannot have `assignee_member_id` set to anyone b
 ## Anti-recursion RLS helpers
 
 `is_family_member()`, `is_family_owner()`, and `current_family_ids()`
-(`supabase/migrations/20260902120000_extensions_and_helpers.sql`) are `SECURITY DEFINER`
-functions that let a table's own RLS policy check family membership without the classic
-recursive-policy problem (a `family_members` policy that subqueries `family_members` directly
-would recurse infinitely). Used throughout every table's policies instead of inline joins.
+(`supabase/migrations/20260902120200_families_and_members.sql` — not
+`..._extensions_and_helpers.sql`; they had to move there because PostgreSQL resolves table
+references inside a `LANGUAGE SQL` function body at `CREATE FUNCTION` time, so they can't be
+defined before `family_members` exists) are `SECURITY DEFINER` functions that let a table's
+own RLS policy check family membership without the classic recursive-policy problem (a
+`family_members` policy that subqueries `family_members` directly would recurse infinitely).
+Used throughout every table's policies instead of inline joins.
+
+## Family/invitation/child-profile mutations are RPC-only (Phase 3)
+
+`families`/`family_members`/`family_invitations` still have no direct `INSERT`/`UPDATE`/
+`DELETE` grant for `authenticated` — every mutation is a narrowly scoped `SECURITY DEFINER`
+RPC (`create_family_with_owner`, the five invitation RPCs, `create_child_profile`/
+`update_child_profile`, `remove_family_member`) that enforces a business invariant RLS alone
+expresses awkwardly: owner-orphan prevention (`remove_family_member` unconditionally refuses
+to remove a `role = 'owner'` row), invitation-token validity, child-profile field limits. See
+[Family Spaces](../domain/family-spaces.md) for the full RPC list and
+[DECISIONS.md, "Phase 3"](../../../docs/DECISIONS.md) for why the table-write boundary from
+Phase 2 was kept rather than opened up.
 
 ## Before enabling Realtime on any table
 
