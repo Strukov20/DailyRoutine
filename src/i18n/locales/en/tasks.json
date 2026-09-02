@@ -1,0 +1,10 @@
+{
+  "newTask": {
+    "title": "New task",
+    "titleField": "Title",
+    "titlePlaceholder": "What needs to be done?",
+    "titleRequired": "A title is required.",
+    "submit": "Create task",
+    "persistenceNotice": "This is a preview of task creation. Saving tasks isn't wired up to the backend yet."
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "appName": "FamilyFlow",
+  "tagline": "Plan your day. Coordinate your family.",
+  "actions": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "create": "Create",
+    "retry": "Try again",
+    "close": "Close",
+    "continue": "Continue",
+    "signOut": "Sign out"
+  },
+  "state": {
+    "loading": "Loading…",
+    "offline": "You're offline. Showing the last synced data.",
+    "somethingWentWrong": "Something went wrong."
+  },
+  "priority": {
+    "normal": "Normal",
+    "important": "Important",
+    "critical": "Critical"
+  },
+  "category": {
+    "work": "Work",
+    "family": "Family",
+    "home": "Home",
+    "shopping": "Shopping",
+    "health": "Health",
+    "other": "Other"
+  }
+}
