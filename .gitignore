@@ -44,3 +44,6 @@ yarn-error.*
 
 # test coverage output
 /coverage
+
+# Claude Code session-local runtime state (not shared project config)
+.claude/*.lock
