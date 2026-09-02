@@ -2,7 +2,13 @@
   "today": {
     "title": "Today",
     "emptyTitle": "Nothing scheduled yet",
-    "emptyDescription": "Tasks and events with today's date will show up here."
+    "emptyDescription": "Tasks and events with today's date will show up here.",
+    "tomorrowLink": "Tomorrow"
+  },
+  "tomorrow": {
+    "title": "Tomorrow",
+    "emptyTitle": "Nothing scheduled for tomorrow",
+    "emptyDescription": "Tasks you schedule for tomorrow will show up here."
   },
   "calendar": {
     "title": "Calendar",

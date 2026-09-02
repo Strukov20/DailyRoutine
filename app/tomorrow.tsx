@@ -1,8 +1,8 @@
-import { router } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, View } from 'react-native';
-import { Button, FAB, Text } from 'react-native-paper';
+import { FAB } from 'react-native-paper';
 
 import { QuickAddInput } from '@/components/tasks/QuickAddInput';
 import { TaskSectionList } from '@/components/tasks/TaskSectionList';
@@ -11,34 +11,39 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { OfflineBanner } from '@/components/ui/OfflineBanner';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { useCategories } from '@/domain/categories/hooks';
-import { todayDateString, tomorrowDateString } from '@/domain/tasks/dateUtils';
+import { tomorrowDateString } from '@/domain/tasks/dateUtils';
 import {
   useCompletePersonalTask,
   useDeletePersonalTask,
   useMoveTaskToInbox,
   useRestorePersonalTask,
-  useSchedulePersonalTask,
-  useTodaySections,
+  useTomorrowSections,
 } from '@/domain/tasks/hooks';
 import type { Task } from '@/domain/tasks/types';
 import { useAppTheme } from '@/theme';
 
-export default function TodayScreen() {
+/**
+ * A nested, top-level route (not a bottom-nav tab — see docs/PRODUCT.md,
+ * "do not add a tab without a strong UX reason") reachable from
+ * app/(app)/today.tsx's header action.
+ */
+export default function TomorrowScreen() {
   const { t } = useTranslation(['tasks', 'screens']);
   const theme = useAppTheme();
   const [togglingTaskId, setTogglingTaskId] = useState<string | null>(null);
+  const tomorrow = tomorrowDateString();
 
-  const { sections, isLoading, isError, refetch } = useTodaySections();
+  const { sections, isLoading, isError, refetch } = useTomorrowSections();
   const categoriesQuery = useCategories();
   const completeTask = useCompletePersonalTask();
   const restoreTask = useRestorePersonalTask();
-  const scheduleTask = useSchedulePersonalTask();
   const moveToInbox = useMoveTaskToInbox();
   const deleteTask = useDeletePersonalTask();
 
   if (isLoading) {
     return (
       <ScreenContainer>
+        <Stack.Screen options={{ title: t('screens:tomorrow.title'), headerShown: true }} />
         <LoadingState />
       </ScreenContainer>
     );
@@ -47,6 +52,7 @@ export default function TodayScreen() {
   if (isError) {
     return (
       <ScreenContainer>
+        <Stack.Screen options={{ title: t('screens:tomorrow.title'), headerShown: true }} />
         <ErrorState onRetry={refetch} />
       </ScreenContainer>
     );
@@ -65,22 +71,14 @@ export default function TodayScreen() {
 
   return (
     <ScreenContainer noPadding>
+      <Stack.Screen options={{ title: t('screens:tomorrow.title'), headerShown: true }} />
       <View style={styles.header}>
-        <View style={styles.titleRow}>
-          <Text variant="headlineSmall" style={styles.title}>
-            {t('screens:today.title')}
-          </Text>
-          <Button mode="text" icon="calendar-arrow-right" onPress={() => router.push('/tomorrow')}>
-            {t('screens:today.tomorrowLink')}
-          </Button>
-        </View>
         <OfflineBanner />
-        <QuickAddInput date={todayDateString()} />
+        <QuickAddInput date={tomorrow} />
       </View>
 
       <TaskSectionList
         sections={[
-          { key: 'overdue', title: t('tasks:sections.overdue'), data: sections.overdue, showOverdue: true },
           { key: 'timed', title: t('tasks:sections.timed'), data: sections.timed },
           { key: 'anytime', title: t('tasks:sections.anytime'), data: sections.anytime },
           { key: 'completed', title: t('tasks:sections.completed'), data: sections.completed },
@@ -89,20 +87,17 @@ export default function TodayScreen() {
         onToggleComplete={(task) => void onToggleComplete(task)}
         togglingTaskId={togglingTaskId}
         onEdit={(task) => router.push({ pathname: '/task/[id]/edit', params: { id: task.id } })}
-        onMoveToTomorrow={(task) =>
-          void scheduleTask.mutateAsync({ taskId: task.id, date: tomorrowDateString() })
-        }
         onMoveToInbox={(task) => void moveToInbox.mutateAsync(task.id)}
         onArchive={(task) => void deleteTask.mutateAsync(task.id)}
-        emptyTitle={t('screens:today.emptyTitle')}
-        emptyDescription={t('screens:today.emptyDescription')}
+        emptyTitle={t('screens:tomorrow.emptyTitle')}
+        emptyDescription={t('screens:tomorrow.emptyDescription')}
       />
 
       <FAB
         icon="plus"
         style={[styles.fab, { backgroundColor: theme.colors.primary }]}
         color={theme.colors.onPrimary}
-        onPress={() => router.push({ pathname: '/task/new', params: { date: todayDateString() } })}
+        onPress={() => router.push({ pathname: '/task/new', params: { date: tomorrow } })}
       />
     </ScreenContainer>
   );
@@ -112,14 +107,6 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 16,
     paddingTop: 16,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  title: {
-    marginBottom: 8,
   },
   fab: {
     position: 'absolute',
