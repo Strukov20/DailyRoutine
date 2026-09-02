@@ -6,6 +6,7 @@ sources:
   - ../../../docs/DATA_MODEL.md
   - ../../../docs/DECISIONS.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
+  - ../../raw/sessions/2026-09-02-phase2-docker-resolved.md
 tags: [engineering, data-model, supabase]
 ---
 
@@ -71,8 +72,10 @@ table. Key points not to get wrong:
   `create_family_with_owner` `SECURITY DEFINER` RPC is the anticipated Phase 3 solution to the
   chicken-and-egg problem of creating a family and its owner's membership row atomically
   under RLS — sketched but not built. See [DECISIONS.md](../../../docs/DECISIONS.md).
-- `src/lib/supabase/types.ts` is hand-authored, not generated (Docker was unavailable at
-  write time) — regenerate for real (`npm run db:types`) the moment a local stack is running.
+- ~~`src/lib/supabase/types.ts` is hand-authored~~ — resolved: it's now the real generated
+  output (`npm run db:types` run for real against the local stack). CHECK-constrained columns
+  come back as `string` (a generator limitation, not a bug) — narrowed in domain mappers
+  instead, e.g. `src/domain/profile/mappers.ts`.
 
 ## See also
 

@@ -24,10 +24,10 @@ called out explicitly as the easiest way to get this wrong by accident.
 `supabase/migrations/` implements and `supabase/tests/060_privacy_regression_test.sql`
 proves mechanisms 1, 2, and 5 below — a secret marker planted in every sensitive field of a
 private event/task is asserted absent from every non-owner query path. Mechanisms 3
-(Realtime) and 4 (notifications) remain undone, by design (out of Phase 2 scope). **Not run
-against a live Postgres instance this session** — Docker was unavailable; see
-[authentication](../engineering/authentication.md) for the exact blocker. Verify with
-`npm run db:test` before trusting this as proven.
+(Realtime) and 4 (notifications) remain undone, by design (out of Phase 2 scope).
+**Verified against a real local Postgres instance** (`supabase test db`, all 88 assertions
+passing) — see
+[`knowledge/raw/sessions/2026-09-02-phase2-docker-resolved.md`](../../raw/sessions/2026-09-02-phase2-docker-resolved.md).
 
 ## Mechanisms
 

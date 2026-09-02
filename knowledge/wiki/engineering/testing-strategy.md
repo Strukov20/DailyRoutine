@@ -5,6 +5,7 @@ updated: 2026-09-02
 sources:
   - ../../../docs/TEST_STRATEGY.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
+  - ../../raw/sessions/2026-09-02-phase2-docker-resolved.md
 tags: [engineering, testing]
 ---
 
@@ -20,13 +21,14 @@ tags: [engineering, testing]
   boundary. `src/lib/env.test.ts`, `src/lib/auth/authService.test.ts`,
   `src/lib/auth/oauth.test.ts`, `src/lib/auth/AuthProvider.test.tsx`.
 - **RLS/privacy tests** — pgTAP via `supabase test db`, against a real local Postgres
-  instance with RLS enabled. `supabase/tests/*.sql` (6 files, ~85 assertions), including a
-  dedicated secret-marker privacy-regression test
-  (`060_privacy_regression_test.sql`). **Not run against a live instance this session** —
-  Docker wasn't available (see [authentication](authentication.md) and
-  [security-model](security-model.md)) — written and reasoned through, but must be run
-  (`npm run db:test`) before trusting these as passing; CI's `database` job now runs them on
-  every push/PR.
+  instance with RLS enabled. `supabase/tests/*.sql` (7 files, 88 assertions), including a
+  dedicated secret-marker privacy-regression test (`060_privacy_regression_test.sql`).
+  **Verified: all 88 assertions pass** against a real local instance (`supabase db reset &&
+supabase test db`) — see
+  [`knowledge/raw/sessions/2026-09-02-phase2-docker-resolved.md`](../../raw/sessions/2026-09-02-phase2-docker-resolved.md).
+  Running these for real surfaced and fixed one migration-ordering bug and two test-assertion
+  bugs, none of them RLS/privacy design flaws — see [DECISIONS.md](../../../docs/DECISIONS.md).
+  CI's `database` job also runs them on every push/PR.
 - **Build/bundle smoke test** — `npx expo export --platform ios|android`, `npx expo config`,
   `npx expo-doctor`; catches what lint/typecheck can't (see the `expo-router` vs.
   `@react-navigation/native` case in [system-architecture](system-architecture.md)). Wired

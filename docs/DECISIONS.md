@@ -162,15 +162,35 @@ default `false`), and calling either function while disabled throws a `not_confi
   the browser-based flow for `expo-apple-authentication`'s native button, which Apple's App
   Store guidelines prefer over a web redirect for this specific provider.
 
-### Docker installed via Homebrew mid-session, with the user completing the privileged step
+### Docker installed via Homebrew's cache (bypassing an interactive-sudo install failure)
 
 This machine had no Docker (required for `supabase start`/`db reset`/`test db`/`gen types
 --local`). Per this task's explicit instruction not to install system-level software without
 permission, the user was asked and chose to have it installed. `brew install --cask docker`
-was run, but its final step (symlinking `docker-credential-osxkeychain` into `/usr/local/bin`)
-needs `sudo` with an interactive password prompt that a non-interactive background shell
-cannot supply — the user completed that step themselves. See the final report for whether
-Docker was verified working by the time this phase's checks ran.
+downloaded and checksum-verified `Docker.dmg`, but its final step (symlinking
+`docker-credential-osxkeychain` into the root-owned `/usr/local/bin`) needs `sudo` with an
+interactive password prompt a non-interactive shell can't supply — and Homebrew rolls back
+the entire cask install (deletes `Docker.app`) when any postflight step fails, so simply
+"finish the last step" wasn't possible after the fact.
+
+**Resolved** by using Homebrew's own already-verified cached `.dmg` directly: mounted it,
+copied `Docker.app` into `/Applications` (writable without sudo — the user is in the `admin`
+group, which owns `/Applications`), and symlinked the bundled CLI tools into
+`/opt/homebrew/bin` (user-writable, already on `PATH`) instead of `/usr/local/bin`. The one
+step that's genuinely unavoidable without sudo — Docker Desktop's first-launch privileged
+network/virtualization helper, which requires a macOS GUI authorization dialog — was
+completed by the user via `open -a Docker` followed by the on-screen prompts.
+
+**Verified working**: `supabase start`, `supabase db reset` (all 9 migrations apply cleanly
+from scratch), `supabase test db` (all 88 pgTAP assertions pass), and
+`supabase gen types typescript --local` (now the real content of
+`src/lib/supabase/types.ts`) all ran successfully against the resulting local stack. Running
+migrations for real also surfaced and fixed one real bug (a migration-ordering issue —
+`is_family_member()` et al. were defined before `family_members` existed, and PostgreSQL
+resolves table references in a `LANGUAGE SQL` function body at `CREATE FUNCTION` time, not
+first call as originally assumed) and two pgTAP test-assertion bugs (`anon` has no `GRANT` at
+all on these tables, so "anonymous sees zero rows" needed to be `throws_ok(..., '42501', ...)`,
+not `is(count, 0)`) — full detail in `knowledge/raw/sessions/2026-09-02-phase2-docker-resolved.md`.
 
 ### React Compiler-aware ESLint rules (`react-hooks` v7, via `eslint-config-expo`) surfaced two real issues
 

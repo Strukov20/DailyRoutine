@@ -6,13 +6,15 @@ sources:
   - ../../../docs/SECURITY_AND_PRIVACY.md
   - ../../../docs/DECISIONS.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
+  - ../../raw/sessions/2026-09-02-phase2-docker-resolved.md
 tags: [engineering, security, rls, privacy]
 ---
 
-## Status: implemented (Mechanisms 1, 2, 5) / not yet implemented (3, 4)
+## Status: implemented and verified (Mechanisms 1, 2, 5) / not yet implemented (3, 4)
 
-`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP) proves it,
-particularly `060_privacy_regression_test.sql`. See
+`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 88 assertions
+passing against a real local Postgres instance) proves it, particularly
+`060_privacy_regression_test.sql`. See
 [privacy-and-availability](../domain/privacy-and-availability.md) for the domain-facing
 version of this same content; this page is the engineering-facing index.
 

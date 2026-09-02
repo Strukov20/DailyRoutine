@@ -59,3 +59,29 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
   - No family-creation RPC exists yet — flagged in `domain/family-spaces.md` and
     `engineering/data-model.md` as a hard prerequisite for Phase 3, not silently deferred.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-02T00:00:00Z — Phase 2 follow-up: Docker resolved, full verification completed
+
+- **Operation type:** blocker resolution + verification + wiki update
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-02-phase2-docker-resolved.md`](../raw/sessions/2026-09-02-phase2-docker-resolved.md).
+- **Wiki pages updated:** `engineering/authentication.md`, `engineering/security-model.md`,
+  `engineering/data-model.md`, `engineering/testing-strategy.md`,
+  `domain/privacy-and-availability.md` — removed "not run this session" / Docker-unavailable
+  caveats now that they're resolved.
+- **Decisions/contradictions recorded:**
+  - The previous session's "Docker was unavailable" blocker is resolved — worked around the
+    interactive-sudo install failure by installing from Homebrew's own already-verified
+    cached download, placing the CLI symlinks in a user-writable location instead of the
+    root-owned one the cask defaults to. Full method in the raw source above.
+  - Running the migrations for real (not reasoned through) surfaced one real migration-order
+    bug and two pgTAP test-assertion bugs — both fixed and re-verified; see the raw source
+    and `docs/DECISIONS.md` for detail. Neither was a privacy/RLS design flaw.
+  - **All 88 pgTAP assertions now pass against a real local Postgres instance**, and the full
+    sign-up → profile-creation-trigger → confirmation-email pipeline was verified end to end
+    via direct REST calls against the running local stack — not just unit-tested against
+    mocks. This upgrades every previously-"unverified" claim in the Phase 2 session to
+    confirmed.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

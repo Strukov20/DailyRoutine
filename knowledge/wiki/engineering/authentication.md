@@ -6,12 +6,15 @@ sources:
   - ../../../docs/ARCHITECTURE.md
   - ../../../docs/DECISIONS.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
+  - ../../raw/sessions/2026-09-02-phase2-docker-resolved.md
 tags: [engineering, auth, supabase]
 ---
 
-## Confirmed / implemented
+## Confirmed / implemented / verified end to end
 
-Real Supabase Auth, email/password fully functional against a local project:
+Real Supabase Auth, email/password fully functional against a local project — **verified via
+direct REST calls against the real running stack**: sign-up → profile-creation trigger fired
+correctly → confirmation email landed in Mailpit. Not just unit-tested against mocks.
 
 - `src/lib/auth/authService.ts` — the only module calling `supabase.auth.*`; normalizes every
   failure to `AuthServiceError` with a stable `code`, mapped to translated strings via
@@ -56,10 +59,7 @@ write-up: [DECISIONS.md](../../../docs/DECISIONS.md).
 
 ## Unresolved
 
-- **Docker/local-instance verification** — this phase's auth code was written and unit
-  tested (mocked Supabase client) but not exercised against a real local Supabase Auth
-  server in this session — Docker was unavailable. Must be verified for real before trusting
-  the email/password flow end to end. See the session record for the exact blocker.
+- ~~Docker/local-instance verification~~ — resolved; see the Docker-resolved session source.
 - **No family-creation RPC yet** — signing up only creates a `profiles` row; there is no
   path yet from "signed in" to "owns a family." That's Phase 3 (family UI) — see
   [family-spaces](../domain/family-spaces.md).
