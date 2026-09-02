@@ -1,18 +1,22 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link, Stack } from 'expo-router';
+import { useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, View } from 'react-native';
 import { Button, HelperText, Text, TextInput } from 'react-native-paper';
 
+import { EmptyState } from '@/components/ui/EmptyState';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
+import { authErrorMessageKey } from '@/domain/auth/errorMessages';
 import { signUpSchema, type SignUpInput } from '@/domain/auth/schemas';
+import { AuthServiceError, signUpWithPassword } from '@/lib/auth/authService';
 import { createLogger } from '@/lib/logger/logger';
 import { useAppTheme } from '@/theme';
 
 const logger = createLogger('sign-up');
 
-const ERROR_MESSAGE_KEYS: Record<string, string> = {
+const FIELD_ERROR_MESSAGE_KEYS: Record<string, string> = {
   name_required: 'signUp.errors.nameRequired',
   email_required: 'signIn.errors.emailRequired',
   email_invalid: 'signIn.errors.emailInvalid',
@@ -22,6 +26,8 @@ const ERROR_MESSAGE_KEYS: Record<string, string> = {
 export default function SignUpScreen() {
   const { t } = useTranslation(['auth', 'common']);
   const theme = useAppTheme();
+  const [formError, setFormError] = useState<string | null>(null);
+  const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
   const {
     control,
     handleSubmit,
@@ -32,13 +38,47 @@ export default function SignUpScreen() {
   });
 
   const onSubmit = handleSubmit(async (values) => {
-    logger.info('sign-up submitted (not yet wired to Supabase)', { email: values.email });
+    setFormError(null);
+    try {
+      await signUpWithPassword({
+        email: values.email,
+        password: values.password,
+        displayName: values.name,
+      });
+      // Supabase's local dev config enables email confirmation (see
+      // supabase/config.toml) — signUp does not create a usable session
+      // until the link is confirmed, so there is nothing to auto-navigate
+      // to yet. If confirmations are ever disabled, signUp already returns
+      // a session and AuthProvider picks it up automatically.
+      setConfirmationEmail(values.email);
+    } catch (error) {
+      const code = error instanceof AuthServiceError ? error.code : 'unknown';
+      logger.warn('sign-up failed', { code });
+      setFormError(t(authErrorMessageKey(code)));
+    }
   });
 
   const errorMessage = (field: keyof SignUpInput): string | undefined => {
     const key = errors[field]?.message;
-    return key ? t(`auth:${ERROR_MESSAGE_KEYS[key] ?? key}`) : undefined;
+    return key ? t(`auth:${FIELD_ERROR_MESSAGE_KEYS[key] ?? key}`) : undefined;
   };
+
+  if (confirmationEmail) {
+    return (
+      <ScreenContainer>
+        <Stack.Screen options={{ headerShown: false }} />
+        <View style={styles.confirmationContent}>
+          <EmptyState
+            title={t('auth:signUp.title')}
+            description={t('auth:signUp.confirmationSent', { email: confirmationEmail })}
+          />
+          <Link href="/(auth)/sign-in" asChild>
+            <Button mode="contained">{t('auth:signIn.submit')}</Button>
+          </Link>
+        </View>
+      </ScreenContainer>
+    );
+  }
 
   return (
     <ScreenContainer>
@@ -117,13 +157,13 @@ export default function SignUpScreen() {
           )}
         />
 
+        <HelperText type="error" visible={Boolean(formError)}>
+          {formError}
+        </HelperText>
+
         <Button mode="contained" onPress={onSubmit} loading={isSubmitting} style={styles.submit}>
           {t('auth:signUp.submit')}
         </Button>
-
-        <Text style={[styles.notice, { color: theme.colors.onSurfaceVariant }]}>
-          {t('auth:notImplemented')}
-        </Text>
 
         <View style={styles.footer}>
           <Text style={{ color: theme.colors.onSurfaceVariant }}>
@@ -143,6 +183,11 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
   },
+  confirmationContent: {
+    flex: 1,
+    justifyContent: 'center',
+    gap: 16,
+  },
   title: {
     marginBottom: 4,
   },
@@ -154,11 +199,6 @@ const styles = StyleSheet.create({
   },
   submit: {
     marginTop: 8,
-  },
-  notice: {
-    marginTop: 16,
-    fontSize: 12,
-    textAlign: 'center',
   },
   footer: {
     flexDirection: 'row',

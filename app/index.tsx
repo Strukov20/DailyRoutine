@@ -1,11 +1,18 @@
 import { Redirect } from 'expo-router';
 
+import { useAuth } from '@/lib/auth/AuthProvider';
+
 /**
- * Entry route. Full authentication (session persistence, real redirect
- * based on a signed-in user) is out of scope for this foundation phase —
- * see docs/ROADMAP.md. For now this always sends new visitors to the
- * onboarding placeholder, which links onward to the auth placeholder.
+ * Entry route. The root layout (app/_layout.tsx) already withholds
+ * rendering until the session has been restored, so `status` here is never
+ * 'loading' by the time this component mounts.
  */
 export default function Index() {
+  const { status } = useAuth();
+
+  if (status === 'signed-in') {
+    return <Redirect href="/(app)/today" />;
+  }
+
   return <Redirect href="/onboarding" />;
 }

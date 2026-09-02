@@ -1,10 +1,11 @@
 # Security & Privacy Design
 
-Status: **proposed, not yet implemented.** No migrations exist yet — this document is written
-first, on purpose, per the project brief: "Document the proposed security approach before
-implementing database migrations." When migrations are written, they must implement this
-document; if an implementer needs to deviate, this document should be updated in the same
-change, not silently bypassed.
+Status: **implemented** in `supabase/migrations/` (Phase 2) and proven by the pgTAP suite in
+`supabase/tests/`, most directly `060_privacy_regression_test.sql`. This document was
+originally written _before_ any migration existed, per the project brief's instruction to
+design the security approach first — implementing it surfaced one real gap in the original
+Mechanism 2 design, corrected below and recorded in
+[DECISIONS.md](DECISIONS.md#privacy-view-not-security_invoker--this-fixes-a-real-gap-in-the-phase-1-design).
 
 ## The rule
 
@@ -58,47 +59,60 @@ assumption.
 
 ## Mechanism 2 — a sanitized view is the _only_ way to read someone else's item
 
-Family members never query `events`/`tasks` directly for other members' data. They query a
-view (or `SECURITY DEFINER` RPC — a view is preferred here because it stays composable with
-PostgREST's existing filtering/pagination instead of requiring a bespoke function signature):
+Family members never query `events`/`tasks` directly for other members' data. They query
+`family_schedule` / `family_task_board`
+(`supabase/migrations/20260902120800_sanitized_availability.sql`):
 
 ```sql
-create view family_schedule as
+create view public.family_schedule as
 select
-  e.id,
-  e.family_id,
-  e.owner_profile_id,
-  e.starts_at,
-  e.ends_at,
-  e.visibility,
+  e.id, e.family_id, e.owner_profile_id, e.starts_at, e.ends_at, e.visibility,
   case when e.visibility = 'family' then e.title       else null end as title,
   case when e.visibility = 'family' then e.description else null end as description,
   case when e.visibility = 'family' then e.location    else null end as location
-from events e
-where e.family_id in (select family_id from family_members where profile_id = auth.uid());
+from public.events e
+where e.family_id is not null
+  and e.family_id in (select fm.family_id from public.family_members fm where fm.profile_id = auth.uid());
 ```
 
-The sanitizing `CASE` is the whole mechanism: a private row still appears (so "Busy" renders
-at the right time), but its `title`/`description`/`location` are `NULL` **in the query result
-itself** — not hidden by the client. Querying this view with `select *` from a REST client,
-a debugger, or a bug in the mobile app can never surface more than the allowed fields, because
-the disallowed fields are never computed into the row. The client only ever consumes this
-view for anyone else's data; it queries the base `tasks`/`events` tables only for `owner_profile_id
-= auth.uid()`.
+**This view is deliberately _not_ `security_invoker`.** That's a correction to this
+document's original design, made while implementing it — see
+[DECISIONS.md](DECISIONS.md#privacy-view-not-security_invoker--this-fixes-a-real-gap-in-the-phase-1-design)
+for the full reasoning. In short: `events`' own base-table RLS (Mechanism 1) already hides a
+private row from non-owners entirely. A `security_invoker` view runs with the querying user's
+own RLS, so it would inherit that same block and could never show a Busy block for a private
+item — the opposite of what this view exists to do. As an ordinary (owner-executed) view, it
+bypasses the querying user's RLS on `events` by construction, which means **the view's own
+`WHERE` clause is the entire authorization check** — there is no second, independent RLS
+layer behind it for this view. That's why the `WHERE` clause and the sanitizing `CASE`
+expressions are reviewed together, in this one file, rather than assumed to be backed by
+table RLS as well.
 
-The same pattern produces `family_task_board` for tasks. Both views carry `RLS` too (`family_id`
-membership check), so the view's own row-visibility and its column sanitization are two
-independent, defense-in-depth layers.
+The sanitizing `CASE` is the column-level mechanism: a private row still appears as a row (so
+"Busy" renders at the right time), but its `title`/`description`/`location` are `NULL` **in
+the query result itself** — not hidden by the client. Querying this view with `select *` from
+a REST client, a debugger, or a bug in the mobile app can never surface more than the allowed
+fields, because the disallowed fields are never computed into the row.
 
-**Single source of truth for the sanitization rule**: the `CASE WHEN visibility = 'family'`
-logic should exist in exactly one SQL function (e.g. `sanitize_event(events)`), used by both
-the view and the realtime trigger in Mechanism 3, so "what counts as sanitized" is never
-defined twice and cannot drift.
+The client only ever queries `events`/`tasks` (the base tables) for its own data
+(`owner_profile_id = auth.uid()`); it queries `family_schedule`/`family_task_board` for
+anyone else's. `family_task_board` mirrors this exact pattern for tasks, including
+sanitizing `assignee_member_id` (which would otherwise reveal who a private task is
+delegated to).
+
+Proven end to end — a private event/task planted with a unique secret marker in every
+sensitive field, asserted absent from both views for a family member, and both views empty
+for an outsider/anonymous — by `supabase/tests/060_privacy_regression_test.sql`.
 
 ## Mechanism 3 — Realtime never re-broadcasts the raw row
 
-Supabase Realtime's `postgres_changes` on the base `events`/`tasks` tables is **not used for
-cross-member updates**, even though modern Supabase Realtime is RLS-aware, because:
+**Not implemented yet** — Realtime sync is explicitly out of scope for Phase 2 (see
+docs/ROADMAP.md); `supabase/config.toml` has `[realtime] enabled = true` (the default) but no
+table currently has Realtime turned on, and no broadcast trigger exists. This section
+documents the design that must be followed when Realtime is added, not current behavior.
+
+Supabase Realtime's `postgres_changes` on the base `events`/`tasks` tables must **not be used
+for cross-member updates**, even though modern Supabase Realtime is RLS-aware, because:
 
 1. it broadcasts the full `NEW`/`OLD` row payload to the change-detection layer before RLS
    narrows _visibility_ of the row — RLS controls whether a subscriber sees the change event
@@ -109,13 +123,13 @@ cross-member updates**, even though modern Supabase Realtime is RLS-aware, becau
 2. it is easy to misconfigure (a service-role key or a permissive policy added later for an
    unrelated feature silently widens who receives these events).
 
-Instead: **family-visible schedule changes broadcast through the sanitized view's shape**,
-using Supabase's Broadcast-from-Database pattern — a trigger on `events`/`tasks` calls the
-same `sanitize_event()` function from Mechanism 2 and broadcasts _that_ payload to a
+Instead: **family-visible schedule changes must broadcast through the same sanitization
+shape as `family_schedule`**, using Supabase's Broadcast-from-Database pattern — a trigger on
+`events`/`tasks` reusing the exact `CASE`-based projection from the view (extracted into a
+shared SQL function at that point, so both the view and the broadcast trigger call the same
+code rather than two copies of the sanitization logic) and broadcasting _that_ payload to a
 per-family Realtime channel (`family:{family_id}:schedule`). Personal, non-shared items
-(`family_id IS NULL`) never trigger a broadcast at all. This keeps exactly one function
-responsible for "what is another family member allowed to see," reused by REST reads and
-realtime pushes alike.
+(`family_id IS NULL`) must never trigger a broadcast at all.
 
 ## Mechanism 4 — notifications
 
@@ -141,23 +155,25 @@ error message and component stack, never component props/state, which is exactly
 private task's title would otherwise end up. Supabase/Postgres-side logs (Edge Functions,
 database logs) must follow the same rule once they exist: log row ids, not row content.
 
-## What this leaves for the migration author to still get right
+## Implementation status
 
-This document fixes the _shape_ of the solution; a real implementation still needs:
-
-- Actual RLS policies for every table in DATA_MODEL.md's ownership table, not just
-  `events`/`tasks` (shown above as the representative, highest-risk case).
-- Tests that assert a non-owner **cannot** read a private row's sensitive columns via the
-  base table, via the view, and via a simulated realtime subscription — see
-  [TEST_STRATEGY.md](TEST_STRATEGY.md), "RLS and privacy tests." These tests should run
-  against a real (local/CI) Postgres instance with RLS enabled, not be mocked.
-- A migration-time check that `anon`/`authenticated` roles have **no** direct grant on
-  `events`/`tasks` columns beyond what RLS+views allow, and that `service_role` usage is
-  confined to trusted server-side code (Edge Functions), never shipped in the mobile bundle.
-- Confirming, before enabling Realtime on any table, exactly which broadcast mechanism is
-  active (see Mechanism 3) — Supabase's Realtime configuration is per-table and it is
-  possible to enable naive `postgres_changes` broadcast on `events` by accident while adding
-  an unrelated feature. This should be a checklist item in the PR that first enables Realtime.
+- ✅ RLS policies for every table in DATA_MODEL.md's ownership table exist in
+  `supabase/migrations/` — not just `events`/`tasks`.
+- ✅ Tests assert a non-owner **cannot** read a private row's sensitive columns via the base
+  table or via the sanitized views — `supabase/tests/060_privacy_regression_test.sql`, run
+  against a real local Postgres instance with RLS enabled (`supabase test db`), not mocked.
+  See [TEST_STRATEGY.md](TEST_STRATEGY.md), "RLS and privacy tests."
+- ✅ Every table has `REVOKE ALL ... FROM anon, authenticated` followed by narrow explicit
+  `GRANT`s — no table relies on RLS alone while leaving broad default privileges in place.
+  `service_role` is never referenced by the mobile app (`src/lib/supabase/client.ts` only
+  ever uses the anon key — see `docs/DECISIONS.md`, "Never place a service_role key...").
+- ⬜ **Not yet implemented**: Realtime (Mechanism 3) — see that section above. Confirm the
+  broadcast-trigger design is actually in place, as a PR checklist item, before enabling
+  Realtime on `events`/`tasks` for the first time.
+- ⬜ **Not yet implemented**: assignment/response notifications (Mechanism 4) — no
+  notification-sending code exists yet; the constraint that makes it safe
+  (`tasks_assert_integrity`'s private+non-owner-assignee rejection) is already in place and
+  tested, ready for when notification sending is built.
 
 ## Non-goals for MVP
 

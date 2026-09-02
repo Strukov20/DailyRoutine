@@ -27,13 +27,15 @@ Full version-selection rationale (including two deliberate downgrades from "late
 
 ```text
 app/                      Expo Router routes (file-based)
-  _layout.tsx              Root: providers, i18n init, Stack
-  index.tsx                Entry redirect → /onboarding
-  onboarding.tsx            Placeholder first-run screen
-  (auth)/                   Auth route group (placeholder screens, no real auth yet)
-    sign-in.tsx
-    sign-up.tsx
-  (app)/                    Primary tab group
+  _layout.tsx              Root: providers, i18n init, auth-gated Stack.Protected
+  index.tsx                Redirects based on real auth status
+  onboarding.tsx            First-run screen
+  reset-password.tsx        Top-level (unguarded) — password recovery deep-link target
+  auth-callback.tsx         Top-level (unguarded) — OAuth deep-link safety net
+  (auth)/                   Reachable only when signed out
+    sign-in.tsx / sign-up.tsx / forgot-password.tsx
+    confirm.tsx              Email-confirmation deep-link target
+  (app)/                    Reachable only when signed in
     _layout.tsx              Tabs: Today, Calendar, Inbox, Family, Profile
     today.tsx / calendar.tsx / inbox.tsx / family.tsx / profile.tsx
   task/
@@ -50,13 +52,18 @@ src/
     appInfo.ts                Typed re-export of app-info.json for app code
   domain/                    Pure logic — no React, no I/O, unit-testable in isolation
     tasks/ (priority.ts, schemas.ts)
-    auth/ (schemas.ts)
+    auth/ (schemas.ts, errorMessages.ts)
+    profile/ (types.ts, mappers.ts) — domain Profile, decoupled from the DB row shape
   i18n/                      i18next setup + locales/{en,uk}/*.json
   lib/
     env.ts                    Zod-validated environment access
     logger/logger.ts          Structured logging abstraction
     supabase/client.ts         Supabase client (AsyncStorage-backed session)
-    supabase/types.ts          Placeholder for generated DB types
+    supabase/types.ts          Database types (hand-authored — see file header)
+    supabase/authRedirect.ts    Deep-link URL builder for auth flows
+    auth/authService.ts         The only module that calls supabase.auth.*
+    auth/AuthProvider.tsx        App-wide session state + useAuth()
+    auth/oauth.ts                Config-gated Google/Apple sign-in
     query/queryClient.ts       TanStack Query client + defaults
     query/QueryProvider.tsx
   store/
@@ -73,6 +80,11 @@ docs/                      This document set
 knowledge/                 LLM Wiki — see docs/LLM_WIKI.md
 scripts/
   wiki-lint.mjs             Validates the LLM Wiki structure
+supabase/                  See docs/DATA_MODEL.md and docs/SECURITY_AND_PRIVACY.md
+  config.toml                Local dev stack config (ports, auth, providers)
+  migrations/                 Schema, constraints, RLS, grants, triggers, views
+  seed.sql                    System-category seed data only (see file header)
+  tests/                      pgTAP tests — supabase test db
 ```
 
 ## Provider stack (`app/_layout.tsx`)
@@ -89,6 +101,43 @@ GestureHandlerRootView
 `initI18n()` runs once at module scope in `app/_layout.tsx`, before the first render — i18next
 resources are bundled, not fetched, so this is synchronous and there is no "translations not
 ready yet" flash.
+
+## Authentication
+
+Real Supabase Auth (Phase 2) — email/password fully functional against a local Supabase
+project; Google/Apple OAuth architecturally complete but config-gated (see
+[DECISIONS.md](DECISIONS.md)).
+
+- **`src/lib/auth/authService.ts`** — the only module that calls `supabase.auth.*`. Normalizes
+  every failure to an `AuthServiceError` with a stable `code` (never a raw GoTrue message),
+  so UI code maps codes to translated strings via `src/domain/auth/errorMessages.ts` instead
+  of displaying backend English text.
+- **`src/lib/auth/AuthProvider.tsx`** — owns session state app-wide: restores the session on
+  launch (`supabase.auth.getSession()`), subscribes to `onAuthStateChange` (sign-in/out,
+  token refresh), and fetches the matching `profiles` row into a domain `Profile`
+  (`src/domain/profile/`) via `src/domain/profile/mappers.ts` — screens never see a raw
+  Supabase row shape. Exposes `useAuth()` → `{ status: 'loading' | 'signed-out' |
+'signed-in', session, profile, refreshProfile }`.
+- **`app/_layout.tsx`** — renders nothing but a loading state while `status === 'loading'`
+  (no flash of signed-in or signed-out content on cold start), then gates the `(auth)` and
+  `(app)` route groups with Expo Router's `<Stack.Protected guard={...}>` — one root-level
+  guard instead of a redirect check duplicated in every screen. See DECISIONS.md for why
+  `app/reset-password.tsx` is a deliberate exception, living outside both guards.
+- **`src/lib/auth/oauth.ts`** — Google/Apple via `supabase.auth.signInWithOAuth` +
+  `expo-web-browser`'s `openAuthSessionAsync`, gated by `EXPO_PUBLIC_AUTH_GOOGLE_ENABLED`/
+  `EXPO_PUBLIC_AUTH_APPLE_ENABLED` (both default `false`). Calling either while disabled
+  throws `not_configured` rather than attempting a request that would fail server-side.
+- **Deep links**: `familyflow://confirm` (email confirmation → `app/(auth)/confirm.tsx`),
+  `familyflow://reset-password` (password recovery → `app/reset-password.tsx`),
+  `familyflow://auth-callback` (OAuth safety net → `app/auth-callback.tsx`). Built via
+  `src/lib/supabase/authRedirect.ts` (`Linking.createURL`); registered in
+  `supabase/config.toml`'s `auth.additional_redirect_urls`.
+- **Session persistence**: AsyncStorage, not SecureStore — see DECISIONS.md for the explicit
+  trade-off (not encrypted at rest, accepted for documented reasons) and what would change if
+  that trade-off is ever revisited.
+- **Profile creation**: automatic and idempotent, via a `SECURITY DEFINER` trigger on
+  `auth.users` (`supabase/migrations/20260902120100_profiles.sql`) — never client code. See
+  [DATA_MODEL.md](DATA_MODEL.md) and [SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md).
 
 ## State-management boundaries
 
@@ -108,6 +157,12 @@ single most common React Native architecture mistake:
 - **React Hook Form owns in-progress form state**, validated by Zod schemas that live in
   `src/domain/*/schemas.ts` (not inline in the screen) so the same validation is reusable and
   unit-testable independent of any component.
+- **Auth session state is neither of the above — it's its own `AuthProvider` context**
+  (`src/lib/auth/AuthProvider.tsx`, see "Authentication" below). It doesn't fit TanStack
+  Query (its source of truth is the Supabase SDK's own in-memory/AsyncStorage session, not a
+  request/response cache) or Zustand (every other screen depends on it for routing, not just
+  UI presentation). Don't move it into either without a good reason — this was a deliberate
+  choice, not an oversight.
 
 ## Navigation theming — a note on `expo-router` vs `@react-navigation/native`
 

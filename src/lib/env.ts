@@ -17,6 +17,17 @@ const envSchema = z.object({
     .optional(),
   EXPO_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1).optional(),
   EXPO_PUBLIC_APP_ENV: z.enum(['local', 'staging', 'production']).default('local'),
+  // Config-gates for OAuth providers that need real credentials configured
+  // in supabase/config.toml before they can work — see
+  // src/lib/auth/oauth.ts and docs/DECISIONS.md, "Google and Apple Auth".
+  EXPO_PUBLIC_AUTH_GOOGLE_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  EXPO_PUBLIC_AUTH_APPLE_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -26,6 +37,8 @@ function loadEnv(): Env {
     EXPO_PUBLIC_SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL,
     EXPO_PUBLIC_SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
     EXPO_PUBLIC_APP_ENV: process.env.EXPO_PUBLIC_APP_ENV,
+    EXPO_PUBLIC_AUTH_GOOGLE_ENABLED: process.env.EXPO_PUBLIC_AUTH_GOOGLE_ENABLED,
+    EXPO_PUBLIC_AUTH_APPLE_ENABLED: process.env.EXPO_PUBLIC_AUTH_APPLE_ENABLED,
   });
 
   if (!parsed.success) {

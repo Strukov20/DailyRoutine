@@ -1,12 +1,18 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, View } from 'react-native';
-import { Divider, List, SegmentedButtons, Text } from 'react-native-paper';
+import { Button, Divider, HelperText, List, SegmentedButtons, Text } from 'react-native-paper';
 
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { APP_INFO } from '@/config/appInfo';
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '@/i18n';
+import { AuthServiceError, signOut } from '@/lib/auth/authService';
+import { useAuth } from '@/lib/auth/AuthProvider';
+import { createLogger } from '@/lib/logger/logger';
 import { useUIStore } from '@/store/uiStore';
 import { useAppTheme } from '@/theme';
+
+const logger = createLogger('profile-screen');
 
 const LANGUAGE_LABELS: Record<SupportedLanguage, string> = {
   en: 'English',
@@ -14,16 +20,45 @@ const LANGUAGE_LABELS: Record<SupportedLanguage, string> = {
 };
 
 export default function ProfileScreen() {
-  const { t, i18n } = useTranslation('screens');
+  const { t, i18n } = useTranslation(['screens', 'common']);
   const theme = useAppTheme();
   const colorSchemeOverride = useUIStore((state) => state.colorSchemeOverride);
   const setColorSchemeOverride = useUIStore((state) => state.setColorSchemeOverride);
+  const { session, profile } = useAuth();
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+
+  const onSignOut = async () => {
+    setSignOutError(null);
+    setIsSigningOut(true);
+    try {
+      await signOut();
+      // No manual navigation needed — AuthProvider flips status to
+      // 'signed-out' and the root Stack.Protected guard takes it from
+      // there (see app/_layout.tsx).
+    } catch (error) {
+      const code = error instanceof AuthServiceError ? error.code : 'unknown';
+      logger.warn('sign-out failed', { code });
+      setSignOutError(t('common:state.somethingWentWrong'));
+    } finally {
+      setIsSigningOut(false);
+    }
+  };
 
   return (
     <ScreenContainer>
       <Text variant="headlineSmall" style={styles.title}>
         {t('profile.title')}
       </Text>
+
+      <View style={styles.identity}>
+        <Text variant="titleMedium">{profile?.displayName ?? session?.user.email}</Text>
+        {session?.user.email ? (
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            {session.user.email}
+          </Text>
+        ) : null}
+      </View>
 
       <List.Subheader style={styles.subheader}>{t('profile.language')}</List.Subheader>
       <SegmentedButtons
@@ -48,6 +83,20 @@ export default function ProfileScreen() {
 
       <Divider style={styles.divider} />
 
+      <Button
+        mode="outlined"
+        onPress={() => void onSignOut()}
+        loading={isSigningOut}
+        disabled={isSigningOut}
+      >
+        {t('common:actions.signOut')}
+      </Button>
+      <HelperText type="error" visible={Boolean(signOutError)}>
+        {signOutError}
+      </HelperText>
+
+      <Divider style={styles.divider} />
+
       <View>
         <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
           {t('profile.about', { appName: APP_INFO.productName })}
@@ -63,6 +112,9 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   title: {
     marginBottom: 8,
+  },
+  identity: {
+    marginBottom: 16,
   },
   subheader: {
     paddingHorizontal: 0,

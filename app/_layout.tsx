@@ -4,7 +4,10 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/ui/LoadingState';
+import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { initI18n } from '@/i18n';
+import { AuthProvider, useAuth } from '@/lib/auth/AuthProvider';
 import { QueryProvider } from '@/lib/query/QueryProvider';
 import { AppThemeProvider, useAppTheme } from '@/theme';
 
@@ -18,9 +21,11 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <AppThemeProvider>
           <QueryProvider>
-            <ErrorBoundary>
-              <RootNavigator />
-            </ErrorBoundary>
+            <AuthProvider>
+              <ErrorBoundary>
+                <RootNavigator />
+              </ErrorBoundary>
+            </AuthProvider>
           </QueryProvider>
         </AppThemeProvider>
       </SafeAreaProvider>
@@ -30,16 +35,34 @@ export default function RootLayout() {
 
 function RootNavigator() {
   const theme = useAppTheme();
+  const { status } = useAuth();
+
+  if (status === 'loading') {
+    // Nothing renders behind this while the session restores — prevents a
+    // flash of signed-out (or signed-in) content on cold start. See
+    // docs/DECISIONS.md, "Authentication".
+    return (
+      <ScreenContainer>
+        <LoadingState />
+      </ScreenContainer>
+    );
+  }
 
   return (
     <>
       <StatusBar style={theme.dark ? 'light' : 'dark'} />
       <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Protected guard={status === 'signed-out'}>
+          <Stack.Screen name="onboarding" />
+          <Stack.Screen name="(auth)" />
+        </Stack.Protected>
+        <Stack.Protected guard={status === 'signed-in'}>
+          <Stack.Screen name="(app)" />
+          <Stack.Screen name="task/new" options={{ presentation: 'modal', headerShown: true }} />
+        </Stack.Protected>
         <Stack.Screen name="index" />
-        <Stack.Screen name="onboarding" />
-        <Stack.Screen name="(auth)" />
-        <Stack.Screen name="(app)" />
-        <Stack.Screen name="task/new" options={{ presentation: 'modal', headerShown: true }} />
+        <Stack.Screen name="reset-password" />
+        <Stack.Screen name="auth-callback" />
         <Stack.Screen name="+not-found" />
       </Stack>
     </>
