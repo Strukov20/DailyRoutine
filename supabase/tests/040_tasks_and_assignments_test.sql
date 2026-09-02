@@ -1,6 +1,6 @@
 -- Tests: tasks RLS + integrity, task_assignments workflow.
 begin;
-select plan(19);
+select plan(20);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures
@@ -251,10 +251,18 @@ reset role;
 set local role anon;
 select set_config('request.jwt.claims', '', true);
 
-select is(
-  (select count(*)::int from public.tasks) + (select count(*)::int from public.task_assignments),
-  0,
-  'anonymous sees zero tasks and zero task_assignments'
+select throws_ok(
+  $$ select count(*) from public.tasks $$,
+  '42501',
+  null,
+  'anonymous has no grant on tasks at all'
+);
+
+select throws_ok(
+  $$ select count(*) from public.task_assignments $$,
+  '42501',
+  null,
+  'anonymous has no grant on task_assignments at all'
 );
 
 select * from finish();

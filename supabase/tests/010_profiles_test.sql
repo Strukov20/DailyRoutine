@@ -7,7 +7,7 @@
 -- Postgres image's auth.uid()/auth.jwt() read from. See
 -- docs/TEST_STRATEGY.md, "RLS and privacy tests".
 begin;
-select plan(8);
+select plan(9);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures
@@ -98,10 +98,13 @@ reset role;
 set local role anon;
 select set_config('request.jwt.claims', '', true);
 
-select is(
-  (select count(*)::int from public.profiles),
-  0,
-  'anonymous user sees zero profile rows'
+-- anon has no GRANT at all on profiles (not even a filtered-to-zero RLS
+-- result) — the query is rejected before RLS is even evaluated.
+select throws_ok(
+  $$ select count(*) from public.profiles $$,
+  '42501',
+  null,
+  'anonymous has no grant on profiles at all'
 );
 
 select * from finish();

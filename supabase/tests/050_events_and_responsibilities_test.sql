@@ -2,7 +2,7 @@
 -- Exercises the "Swimming — Son — drop_off:Mom / pick_up:Dad" example from
 -- docs/PRODUCT.md directly.
 begin;
-select plan(14);
+select plan(15);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password,
@@ -165,12 +165,18 @@ reset role;
 set local role anon;
 select set_config('request.jwt.claims', '', true);
 
-select is(
-  (select count(*)::int from public.events)
-  + (select count(*)::int from public.event_participants)
-  + (select count(*)::int from public.responsibilities),
-  0,
-  'anonymous sees zero events, participants, or responsibilities'
+select throws_ok(
+  $$ select count(*) from public.events $$,
+  '42501',
+  null,
+  'anonymous has no grant on events at all'
+);
+
+select throws_ok(
+  $$ select count(*) from public.responsibilities $$,
+  '42501',
+  null,
+  'anonymous has no grant on responsibilities at all'
 );
 
 select * from finish();

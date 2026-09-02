@@ -6,7 +6,7 @@
 -- here for completeness) nor via the sanitized family_schedule /
 -- family_task_board views, which is the whole point of this file.
 begin;
-select plan(16);
+select plan(17);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password,
@@ -177,10 +177,18 @@ reset role;
 set local role anon;
 select set_config('request.jwt.claims', '', true);
 
-select is(
-  (select count(*)::int from public.family_schedule) + (select count(*)::int from public.family_task_board),
-  0,
-  '[anon] zero rows from either sanitized view — auth.uid() is null, so the family_id subquery is always empty'
+select throws_ok(
+  $$ select count(*) from public.family_schedule $$,
+  '42501',
+  null,
+  '[anon] no grant on family_schedule at all'
+);
+
+select throws_ok(
+  $$ select count(*) from public.family_task_board $$,
+  '42501',
+  null,
+  '[anon] no grant on family_task_board at all'
 );
 
 select * from finish();

@@ -65,10 +65,11 @@ reset role;
 set local role anon;
 select set_config('request.jwt.claims', '', true);
 
-select is(
-  (select count(*)::int from public.categories),
-  0,
-  'anonymous sees zero categories (system categories require authentication too)'
+select throws_ok(
+  $$ select count(*) from public.categories $$,
+  '42501',
+  null,
+  'anonymous has no grant on categories at all (system categories require authentication too)'
 );
 
 select * from finish();

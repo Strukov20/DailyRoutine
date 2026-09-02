@@ -3,7 +3,7 @@
 -- adult D who owns a different family (Family Beta). See
 -- docs/DATA_MODEL.md and docs/DECISIONS.md ("Owner consistency").
 begin;
-select plan(12);
+select plan(13);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures (as postgres — bypasses RLS)
@@ -51,11 +51,16 @@ returning id as owner_d_member_id \gset
 -- ---------------------------------------------------------------------------
 -- Integrity: at most one owner per family
 -- ---------------------------------------------------------------------------
+-- Uses owner_a_id (not adult_b_id) so this specifically isolates the
+-- partial unique index — a row whose profile_id *doesn't* match
+-- families.owner_id would instead be caught by
+-- assert_family_owner_consistency first (a different, also-correct
+-- rejection, but not the one this test is targeting).
 select throws_ok(
   format(
     $$ insert into public.family_members (family_id, member_type, role, profile_id, display_name, created_by)
-       values (%L, 'adult', 'owner', %L, 'Second Owner', %L) $$,
-    :'family_alpha_id', :'adult_b_id', :'owner_a_id'
+       values (%L, 'adult', 'owner', %L, 'Second Owner Row', %L) $$,
+    :'family_alpha_id', :'owner_a_id', :'owner_a_id'
   ),
   '23505',
   null,
@@ -183,10 +188,18 @@ reset role;
 set local role anon;
 select set_config('request.jwt.claims', '', true);
 
-select is(
-  (select count(*)::int from public.families) + (select count(*)::int from public.family_members),
-  0,
-  'anonymous sees zero families and zero family_members rows'
+select throws_ok(
+  $$ select count(*) from public.families $$,
+  '42501',
+  null,
+  'anonymous has no grant on families at all'
+);
+
+select throws_ok(
+  $$ select count(*) from public.family_members $$,
+  '42501',
+  null,
+  'anonymous has no grant on family_members at all'
 );
 
 select * from finish();
