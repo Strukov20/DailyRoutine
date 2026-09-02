@@ -1,13 +1,33 @@
 # Data Model
 
-Status: **proposed, not yet implemented.** No Supabase project is connected and no
-migrations exist in this repository yet (see [README.md](../README.md), "Stop point"). This
-document is the contract the first migration should implement, and the thing
-[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md)'s RLS design is written against.
+Status: **implemented** in `supabase/migrations/` (Phase 2), against a local Supabase
+project only — no hosted/production project is connected. This document is the normative
+description; the migrations are the source of truth for exact syntax. See
+[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md) for the RLS design layered on top of it,
+and [DECISIONS.md](DECISIONS.md) ("Phase 2" section) for schema refinements made during
+implementation that go beyond what's described below.
 
 Naming: tables are `snake_case`, plural. Every table has `id uuid primary key default
 gen_random_uuid()` unless noted. Every mutable table has the audit columns described at the
 bottom of this document.
+
+## Implementation refinements beyond this document's original design
+
+Made while writing `supabase/migrations/`, each documented in full in
+[DECISIONS.md](DECISIONS.md):
+
+- **Denormalized `family_id`** added to `task_assignments`, `event_participants`, and
+  `responsibilities` (auto-populated from the parent row by a trigger, never client-writable)
+  — not present in the original table lists below, added to enable a composite-FK "same
+  family" integrity check and non-recursive RLS.
+- **`timezone` columns** added to `events` (`NOT NULL`), `tasks` (nullable, required when
+  `start_time` is set), and `recurrence_rules` (`NOT NULL`) — needed to resolve
+  `date`/`start_time` into an unambiguous instant and to compute recurrence across DST.
+- **No native Postgres `ENUM` types** — every status/type/role column below is `text` with a
+  `CHECK` constraint instead, for evolvability. See DECISIONS.md.
+- **`families.owner_id` consistency** is enforced by a validating trigger + a partial unique
+  index on `family_members`, not by a value computed automatically from `family_members` —
+  see DECISIONS.md, "Family ownership integrity."
 
 ## Entity overview
 

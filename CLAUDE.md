@@ -75,8 +75,16 @@ Sources of truth, highest to lowest: **executed code/tests/migrations** → **ap
 - **Events and responsibilities are separate records** — never re-add a drop-off/pickup
   field to an event. See [`docs/PRODUCT.md`](docs/PRODUCT.md) and
   `knowledge/wiki/domain/events-and-responsibilities.md`.
-- **TanStack Query owns server state; Zustand (`src/store/uiStore.ts`) stays small** —
-  see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), "State-management boundaries."
+- **TanStack Query owns server state; Zustand (`src/store/uiStore.ts`) stays small; auth
+  session state lives in `AuthProvider`, not either of those** — see
+  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), "State-management boundaries."
+- **Never call `supabase.auth.*` or raw `supabase.from(...)` from a screen** — go through
+  `src/lib/auth/authService.ts` / `useAuth()`, or a future repository/service module. This is
+  the transport/domain/UI boundary — see `docs/ARCHITECTURE.md`.
+- **Every exposed Supabase table needs RLS policies, explicit grants, and a pgTAP test** —
+  see `supabase/migrations/` for the pattern (composite FKs for "same family" checks,
+  `current_family_ids()`/`is_family_member()` helpers to avoid recursive RLS) and
+  `supabase/tests/` for the test conventions (`docs/TEST_STRATEGY.md`).
 - **`render()`/`fireEvent.*()` from React Native Testing Library are async in the installed
   version — always `await` them** in new tests.
 - Logging goes through `src/lib/logger/logger.ts`, never bare `console.log`.
@@ -89,6 +97,9 @@ npm run verify   # lint + typecheck + test + wiki:lint
 
 Also worth running after any navigation, config, or dependency change:
 `npx expo export --platform ios`, `npx expo config`, `npx expo-doctor`.
+
+After any schema/RLS change: `npm run db:reset && npm run db:test` (needs the local Supabase
+stack running — `npm run supabase:start`, which needs Docker).
 
 ## Scope discipline
 

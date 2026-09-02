@@ -31,6 +31,7 @@ For a one-off lookup, prefer `rg <term> knowledge/wiki` over reading this whole 
 - [System architecture](engineering/system-architecture.md) — stack, folders, state boundaries
 - [Data model](engineering/data-model.md) — entities, ownership, authorization
 - [Security model](engineering/security-model.md) — RLS + sanitization mechanisms
+- [Authentication](engineering/authentication.md) — Supabase Auth, session state, deep links
 - [Testing strategy](engineering/testing-strategy.md) — what's tested, what isn't yet
 - [Development workflow](engineering/development-workflow.md) — git rules, CI, **the
   mandatory wiki read/update workflow** — read this once, it governs how every other page

@@ -4,17 +4,29 @@ status: current
 updated: 2026-09-02
 sources:
   - ../../../docs/TEST_STRATEGY.md
+  - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
 tags: [engineering, testing]
 ---
 
 ## Confirmed / current
 
-- **Domain logic** (`src/domain/**`) — plain Jest, no React/I/O. Existing:
-  `src/domain/tasks/priority.test.ts`.
+- **Domain logic** (`src/domain/**`) — plain Jest, no React/I/O.
+  `src/domain/tasks/priority.test.ts`, `src/domain/auth/errorMessages.test.ts`.
 - **Components** — Jest + React Native Testing Library, rendered wrapped in
-  `<AppThemeProvider>` (not mocked). Existing: `src/components/ui/EmptyState.test.tsx`.
+  `<AppThemeProvider>` (not mocked). `src/components/ui/EmptyState.test.tsx`.
 - **Localization** — `src/i18n/i18n.test.ts` checks i18next initializes, a key translates
   differently per locale, and every namespace has matching keys across `en`/`uk`.
+- **Auth/config** — Jest with `@/lib/supabase/client`/`@/lib/env` mocked at the module
+  boundary. `src/lib/env.test.ts`, `src/lib/auth/authService.test.ts`,
+  `src/lib/auth/oauth.test.ts`, `src/lib/auth/AuthProvider.test.tsx`.
+- **RLS/privacy tests** — pgTAP via `supabase test db`, against a real local Postgres
+  instance with RLS enabled. `supabase/tests/*.sql` (6 files, ~85 assertions), including a
+  dedicated secret-marker privacy-regression test
+  (`060_privacy_regression_test.sql`). **Not run against a live instance this session** —
+  Docker wasn't available (see [authentication](authentication.md) and
+  [security-model](security-model.md)) — written and reasoned through, but must be run
+  (`npm run db:test`) before trusting these as passing; CI's `database` job now runs them on
+  every push/PR.
 - **Build/bundle smoke test** — `npx expo export --platform ios|android`, `npx expo config`,
   `npx expo-doctor`; catches what lint/typecheck can't (see the `expo-router` vs.
   `@react-navigation/native` case in [system-architecture](system-architecture.md)). Wired
@@ -22,13 +34,8 @@ tags: [engineering, testing]
 
 ## Not yet implemented
 
-- **RLS/privacy tests** — needs a real Postgres instance with RLS enabled (pgTAP or
-  Supabase's local-stack test runner); can't exist until the first migration does. Flagged
-  as the **highest-priority addition** the moment migrations start — a correctness
-  requirement for [privacy-and-availability](../domain/privacy-and-availability.md), not a
-  nice-to-have.
-- **E2E (Maestro)** — explicitly future work per the brief; no flow exists yet worth
-  E2E-testing.
+- **E2E (Maestro)** — explicitly future work per the brief; the sign-in/sign-up flow now
+  exists and would be the first realistic candidate once Maestro is set up.
 
 ## Conventions to follow in new tests
 
@@ -41,11 +48,21 @@ tags: [engineering, testing]
   without any i18n setup.
 - Jest's `transformIgnorePatterns` is left to the `jest-expo` preset — don't hand-roll it
   (see `docs/DECISIONS.md` for the `standard-navigation` breakage this caused once already).
+- **Modules with load-time side effects** (`env.ts` computes `env` eagerly at import) — test
+  with `jest.resetModules()` + `require()` per case, not `import()` (this Babel/CJS Jest
+  setup can't resolve a throwing dynamic `import()` to a rejected promise).
+- **Firing a captured external callback** (e.g. Supabase's `onAuthStateChange` mock) must be
+  wrapped in `act()` from `@testing-library/react-native`.
+- **pgTAP fixtures** are inserted directly as `postgres` (bypasses RLS); a specific user is
+  simulated via `set local role authenticated;` + `set_config('request.jwt.claims', ...)`;
+  expect exact Postgres SQLSTATEs (`23503`/`23505`/`23514`/`42501`) with `throws_ok`. Full
+  convention: [`docs/TEST_STRATEGY.md`, "RLS test-writing conventions"](../../../docs/TEST_STRATEGY.md).
 
 ## Running
 
 ```bash
 npm run test        # jest
+npm run db:test      # pgTAP — needs the local Supabase stack running
 npm run wiki:lint    # validates this wiki's structure
 npm run verify       # lint + typecheck + test + wiki:lint
 ```
@@ -53,4 +70,5 @@ npm run verify       # lint + typecheck + test + wiki:lint
 ## See also
 
 - [Security model](security-model.md) — why RLS tests can't be mocked
+- [Authentication](authentication.md) — what the auth test suite covers
 - [Development workflow](development-workflow.md) — CI wiring

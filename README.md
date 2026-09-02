@@ -17,35 +17,51 @@ Full product/architecture documentation lives in [`docs/`](docs/):
 - [docs/TEST_STRATEGY.md](docs/TEST_STRATEGY.md) — what's tested and how
 - [docs/LLM_WIKI.md](docs/LLM_WIKI.md) — the `knowledge/` LLM Wiki: how to read/maintain it
 
-## Current state: foundation phase
+## Current state
 
-This repository currently contains the **foundation** for FamilyFlow, not the MVP itself:
-app shell, navigation, theming, localization (English + Ukrainian), environment/config
-validation, a Supabase client with no real project connected, and the quality tooling
-(lint/typecheck/test/CI). No authentication, task/event persistence, or family
-invitations are implemented yet — see [docs/MVP_SCOPE.md](docs/MVP_SCOPE.md) for the exact
-boundary and [docs/DECISIONS.md](docs/DECISIONS.md) for why.
+- **Phase 1 (foundation)**: app shell, navigation, theming, localization (English +
+  Ukrainian), environment/config validation, quality tooling (lint/typecheck/test/CI).
+- **Phase 2 (Supabase foundation)**: database schema + Row Level Security implemented in
+  `supabase/migrations/` (see [docs/DATA_MODEL.md](docs/DATA_MODEL.md) and
+  [docs/SECURITY_AND_PRIVACY.md](docs/SECURITY_AND_PRIVACY.md)), real email/password
+  authentication (sign-up, sign-in, sign-out, password reset, email confirmation — see
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), "Authentication"), Google/Apple sign-in
+  architecturally complete but config-gated off by default.
+
+Still not implemented: task/event CRUD UI, family creation/invitations UI, calendar UI,
+Realtime sync, notifications — see [docs/MVP_SCOPE.md](docs/MVP_SCOPE.md) for the exact
+boundary and [docs/DECISIONS.md](docs/DECISIONS.md) for why things were built the way they
+were.
 
 ## Getting started
 
 ```bash
 npm install
-cp .env.example .env   # optional — the app runs with a placeholder Supabase client without it
-npm run ios            # or: npm run android
+cp .env.example .env   # fill in Supabase URL/anon key once you've run supabase:start
+npm run supabase:start  # local Supabase stack — needs Docker running
+npm run db:reset         # applies migrations + seed data
+npm run ios              # or: npm run android
 ```
+
+Without `supabase:start`, the app still boots (the Supabase client falls back to a
+placeholder), but sign-up/sign-in will fail — see `src/lib/supabase/client.ts`.
 
 ### Scripts
 
-| Command                                   | Does                                                      |
-| ----------------------------------------- | --------------------------------------------------------- |
-| `npm run start`                           | Start the Expo dev server                                 |
-| `npm run ios` / `npm run android`         | Start the dev server and open the platform                |
-| `npm run lint` / `npm run lint:fix`       | ESLint                                                    |
-| `npm run format` / `npm run format:check` | Prettier                                                  |
-| `npm run typecheck`                       | `tsc --noEmit`                                            |
-| `npm run test` / `npm run test:watch`     | Jest                                                      |
-| `npm run wiki:lint`                       | Validate the `knowledge/` LLM Wiki (see docs/LLM_WIKI.md) |
-| `npm run verify`                          | lint + typecheck + test + wiki:lint, in that order        |
+| Command                                    | Does                                                         |
+| ------------------------------------------ | ------------------------------------------------------------ |
+| `npm run start`                            | Start the Expo dev server                                    |
+| `npm run ios` / `npm run android`          | Start the dev server and open the platform                   |
+| `npm run lint` / `npm run lint:fix`        | ESLint                                                       |
+| `npm run format` / `npm run format:check`  | Prettier                                                     |
+| `npm run typecheck`                        | `tsc --noEmit`                                               |
+| `npm run test` / `npm run test:watch`      | Jest                                                         |
+| `npm run wiki:lint`                        | Validate the `knowledge/` LLM Wiki (see docs/LLM_WIKI.md)    |
+| `npm run verify`                           | lint + typecheck + test + wiki:lint, in that order           |
+| `npm run supabase:start` / `supabase:stop` | Start/stop the local Supabase stack (needs Docker)           |
+| `npm run db:reset`                         | Rebuild the local database from migrations + seed data       |
+| `npm run db:test`                          | Run the pgTAP suite in `supabase/tests/`                     |
+| `npm run db:types`                         | Regenerate `src/lib/supabase/types.ts` from the local schema |
 
 ## Git workflow
 

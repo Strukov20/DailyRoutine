@@ -3,6 +3,195 @@
 Short ADR-style entries. Newest first is not enforced — entries are grouped by topic instead,
 since several were made together during the foundation build.
 
+## Phase 2 (Supabase foundation, schema, RLS, auth)
+
+The entries below were made while implementing `supabase/migrations/` and the auth layer
+(`src/lib/auth/`). Several of them **correct or refine** the Phase-1 proposals in
+[DATA_MODEL.md](DATA_MODEL.md)/[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md) rather than
+just implementing them as-is — each says explicitly what changed and why, per this project's
+own rule of documenting a required change before applying it.
+
+### Privacy view: not `security_invoker` — this fixes a real gap in the Phase 1 design
+
+**Context found during implementation:** the Phase-1 `SECURITY_AND_PRIVACY.md` proposed a
+`security_invoker` sanitized view for Busy blocks. Working through it end to end surfaced a
+real contradiction: base-table RLS (correctly) hides a private row from non-owners entirely.
+A `security_invoker` view runs _with the querying user's own RLS_, so it would inherit that
+same block — no Busy block could ever render for a private item, defeating the view's whole
+purpose.
+
+**Decision:** `family_schedule` and `family_task_board` (`supabase/migrations/20260902120800_sanitized_availability.sql`)
+are ordinary views (default owner-execution semantics — Postgres views are NOT
+`security_invoker` unless explicitly opted in), owned by the migration role. They bypass the
+querying user's RLS on the base table by construction, so the view's own `WHERE` clause
+(same-family membership) becomes the _sole_ authorization check — reviewed together with the
+column-sanitizing `CASE` expressions in one file, so "what a family member may see" has
+exactly one definition. `docs/SECURITY_AND_PRIVACY.md`'s Mechanism 2 has been updated to
+match. Proven by `supabase/tests/060_privacy_regression_test.sql`.
+
+### Denormalized `family_id` on family-scoped child tables
+
+`task_assignments`, `event_participants`, and `responsibilities` each carry their own
+`family_id` column (auto-populated by a `BEFORE INSERT` trigger from the parent
+task/event — never trusted from the client), in addition to their existing FK to
+`tasks`/`events`. This is an addition to the Phase-1 schema, not a change to the approved
+unified `family_members` model.
+
+**Why:** it enables two things that would otherwise need either recursive joins or
+per-row-lookup triggers: (1) a **composite foreign key** —
+`foreign key (assignee_member_id, family_id) references family_members (id, family_id)` —
+that declaratively prevents "assignment to someone outside the relevant family" at the
+database level, with no trigger required for that specific check; (2) flat, non-recursive RLS
+policies on these tables (`family_id in (select current_family_ids())`) instead of a subquery
+that joins through the parent every time.
+
+### Composite-FK "same family" pattern, and its MATCH SIMPLE gap
+
+The pattern above relies on Postgres's default `MATCH SIMPLE` FK semantics: if _any_ column
+in a composite FK is `NULL`, the whole constraint is skipped. That means `assignee_member_id
+IS NOT NULL AND family_id IS NULL` would silently bypass the FK. Every table using this
+pattern (`tasks`, `responsibilities`, `event_participants`) therefore also has an explicit
+`CHECK` closing that gap (e.g. `tasks_assignee_requires_family`). Tested directly in
+`supabase/tests/040_tasks_and_assignments_test.sql`.
+
+### Family ownership integrity: a validating trigger, not a syncing one
+
+`families.owner_id` is a denormalized pointer to the single `family_members` row with
+`role = 'owner'`. Rather than a trigger that _writes_ `owner_id` from `family_members` (which
+has a chicken-and-egg ordering problem — the owner's `family_members` row can't be inserted
+before the family exists, and the family's `owner_id` can't be derived before the owner's
+member row exists), the owner is written explicitly at family-creation time and a `BEFORE
+INSERT OR UPDATE` trigger on `family_members` (`assert_family_owner_consistency`) _validates_
+that any `role = 'owner'` row's `profile_id` matches `families.owner_id`, raising otherwise. A
+partial unique index (`family_id) WHERE role = 'owner'`) separately guarantees at most one
+owner row per family. Together these are the DB-level guard against "direct creation of a
+second family Owner without an approved ownership-transfer flow." No family-creation RPC
+exists yet (family UI is Phase 3 — see docs/ROADMAP.md); until then, only migrations/tests
+create `families` rows.
+
+### Task assignment is a SECURITY DEFINER trigger over an append-only log, not a direct UPDATE grant
+
+`tasks.assignee_member_id`/`assignment_status` are never updated directly by clients — there
+is no UPDATE grant covering those columns for anyone but the task owner, and the owner's
+UPDATE policy covers the whole row, not just those two columns. Instead, every assignment
+action (`assigned`/`took`/`accepted`/`declined`/`unassigned`/`reassigned`) is an INSERT into
+the append-only `task_assignments` table; a `SECURITY DEFINER` trigger
+(`apply_task_assignment_action`) then updates the `tasks` snapshot columns. This means an
+assignee never needs direct write access to a task row they don't own in order to accept or
+decline an assignment addressed to them — the trigger, not a grant, does that write, and the
+RLS policy on `task_assignments` (not `tasks`) is what actually gates who may record which
+action. See `supabase/tests/040_tasks_and_assignments_test.sql` for the wrong-user-cannot-accept
+and cross-family-cannot-assign cases this is designed to prevent.
+
+### Timezone handling: `timezone` columns on `events`, `tasks`, and `recurrence_rules`
+
+The brief requires `timestamptz` for real instants, explicit local dates where an item has no
+time, and IANA timezone identifiers "where local scheduling semantics require them." Applied
+as: `events.timezone` is `NOT NULL` (events always have a time, and recurrence/DST
+calculations need an anchor); `tasks.timezone` is nullable but required whenever
+`tasks.start_time` is set (`tasks_time_requires_timezone` CHECK) — a date-only task has no
+ambiguity to resolve; `recurrence_rules.timezone` is `NOT NULL` for the same DST-anchor
+reason as events. `tasks.date` stays a plain `date` (no timezone) for the date-only case, per
+the brief's explicit "explicit local date" instruction.
+
+### `text` + `CHECK`, not native Postgres `ENUM`, for every status/type/role column
+
+No enum types are used anywhere in `supabase/migrations/`. Native Postgres `ENUM`s are
+expensive to evolve — adding a value requires `ALTER TYPE ... ADD VALUE` (which historically
+couldn't run inside the same transaction as its first use, and still can't be rolled back),
+and removing or renaming a value isn't supported at all short of recreating the type. Given
+this product's status/role/type columns (`priority`, `visibility`, `assignment_status`,
+`family_members.role`, `responsibilities.type`, etc.) are exactly the kind of thing likely to
+grow a new value as the product evolves, `text` + `CHECK (col in (...))` was used everywhere
+instead — a `CHECK` constraint can be dropped and recreated with a new value list in one
+ordinary migration, no special-cased DDL. This is the "recorded project decision" the brief
+asked implementers to follow.
+
+### Authentication session persistence: AsyncStorage, and the trade-off that implies
+
+Continuing the Phase-1 choice (`src/lib/supabase/client.ts`): sessions persist via
+`@react-native-async-storage/async-storage`, not `expo-secure-store`. **Trade-off being made
+explicitly:** AsyncStorage is not encrypted at rest on the device (SecureStore is, backed by
+Keychain/Keystore) — a session token sitting in AsyncStorage is readable by anything with
+filesystem access to the app's sandbox (e.g. a rooted/jailbroken device, or a backup
+extraction tool). This is accepted because (a) Supabase's own guidance is AsyncStorage for
+React Native specifically because session objects routinely exceed SecureStore's ~2KB
+per-item limit — SecureStore would silently fail to persist a real session; (b) the access
+token is short-lived (`auth.jwt_expiry = 3600`s locally) and auto-refreshed, capping the
+exposure window of a leaked token; (c) `expo-secure-store` remains installed and available
+for anything genuinely small and sensitive added later. If this trade-off ever needs
+revisiting (e.g. a compliance requirement for encrypted-at-rest session storage), the fix is
+a hybrid: SecureStore for the encryption _key_, AsyncStorage (or MMKV) for the encrypted
+session blob — not a change to `persistSession: true`/`autoRefreshToken: true` themselves.
+
+### Protected routes: `Stack.Protected`, not manual `<Redirect>` checks per screen
+
+`app/_layout.tsx` gates the `(auth)` and `(app)` route groups with `<Stack.Protected guard={...}>`
+(Expo Router's built-in guarded-route primitive) rather than each screen/layout independently
+redirecting based on `useAuth()`. One root-level guard is the single source of truth for
+"which screens are navigable right now," and it re-evaluates automatically whenever
+`AuthProvider`'s `status` changes — e.g. completing the email-confirmation deep link flips
+`status` to `'signed-in'` and the tree switches itself, with no explicit navigation call
+needed anywhere in `app/(auth)/confirm.tsx`.
+
+**One deliberate exception:** `app/reset-password.tsx` lives at the top level, _outside_
+both `Stack.Protected` blocks. Exchanging its recovery `code` for a session would otherwise
+flip `status` to `'signed-in'` mid-flow and cause the guard to yank the user into the signed-in
+app before they've actually set a new password. An always-reachable top-level screen sidesteps
+that race entirely rather than trying to special-case it inside the guard condition.
+
+### Google/Apple auth: real API calls, config-gated by an env flag — not a stub
+
+`src/lib/auth/oauth.ts` calls the real `supabase.auth.signInWithOAuth` + `expo-web-browser`
+flow — this is functioning code that will work once a provider is enabled with real
+credentials in `supabase/config.toml`. What's gated is only whether the sign-in buttons
+render at all (`EXPO_PUBLIC_AUTH_GOOGLE_ENABLED`/`EXPO_PUBLIC_AUTH_APPLE_ENABLED`, both
+default `false`), and calling either function while disabled throws a `not_configured`
+`AuthServiceError` rather than attempting a request that would fail confusingly server-side.
+**Manual setup required before flipping either flag to `true`:**
+
+- **Google:** a Google Cloud Console OAuth 2.0 Client ID (Web application type, even for a
+  mobile app, since Supabase's OAuth flow is browser-redirect based) with `familyflow://*`
+  and `https://<project-ref>.supabase.co/auth/v1/callback` as authorized redirect URIs, then
+  set `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID`/`_SECRET` (see `.env.example`) and flip
+  `supabase/config.toml`'s `[auth.external.google] enabled = true`.
+- **Apple:** an Apple Developer "Services ID" (distinct from the app's own Bundle ID) with
+  Sign in with Apple enabled, a private key for it, and the same redirect URI registered in
+  the Apple Developer portal; set `SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID`/`_SECRET` and flip
+  `[auth.external.apple] enabled = true`. A future enhancement (not built now) is swapping
+  the browser-based flow for `expo-apple-authentication`'s native button, which Apple's App
+  Store guidelines prefer over a web redirect for this specific provider.
+
+### Docker installed via Homebrew mid-session, with the user completing the privileged step
+
+This machine had no Docker (required for `supabase start`/`db reset`/`test db`/`gen types
+--local`). Per this task's explicit instruction not to install system-level software without
+permission, the user was asked and chose to have it installed. `brew install --cask docker`
+was run, but its final step (symlinking `docker-credential-osxkeychain` into `/usr/local/bin`)
+needs `sudo` with an interactive password prompt that a non-interactive background shell
+cannot supply — the user completed that step themselves. See the final report for whether
+Docker was verified working by the time this phase's checks ran.
+
+### React Compiler-aware ESLint rules (`react-hooks` v7, via `eslint-config-expo`) surfaced two real issues
+
+Two lint errors appeared that weren't present in Phase 1's simpler components, both from
+`eslint-plugin-react-hooks`'s newer React Compiler-aware rules (bundled transitively via
+`eslint-config-expo`, not something added this phase):
+
+- `react-hooks/set-state-in-effect` — `app/(auth)/confirm.tsx` and `app/reset-password.tsx`
+  originally called `setState` synchronously inside a `useEffect` for the "no `code` param"
+  branch. Fixed by moving that branch into the `useState` initializer (lazy initial state)
+  instead, so the effect only runs for the actual async exchange.
+- `react-hooks/preserve-manual-memoization` — `AuthProvider.tsx`'s `refreshProfile`
+  `useCallback` had a dependency array (`[loadProfile, session?.user.id]`) more granular than
+  what the compiler's dependency inference expected (`session` as a whole). Simplified to
+  depend on `session` directly.
+
+Neither is a stylistic preference — both are the React Compiler's static analysis catching a
+pattern that either causes an extra render (`set-state-in-effect`) or produces memoization
+the compiler can't safely trust (`preserve-manual-memoization`). Worth knowing this rule set
+exists before writing more effect-heavy code.
+
 ## Platform & framework
 
 **Expo (managed) + Expo Router, SDK 57.** Chosen per the brief. Expo Router gives file-based
