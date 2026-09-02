@@ -1,10 +1,67 @@
 {
-  "newTask": {
-    "title": "Нове завдання",
+  "sections": {
+    "overdue": "Прострочені",
+    "timed": "За часом",
+    "anytime": "Будь-коли",
+    "tasks": "Завдання",
+    "completed": "Виконані"
+  },
+  "overdue": {
+    "label": "Прострочено"
+  },
+  "row": {
+    "markComplete": "Позначити як виконане",
+    "markIncomplete": "Позначити як невиконане",
+    "actions": "Дії із завданням",
+    "edit": "Редагувати",
+    "moveToToday": "Перемістити на сьогодні",
+    "moveToTomorrow": "Перемістити на завтра",
+    "moveToInbox": "Перемістити у вхідні",
+    "archive": "Архівувати"
+  },
+  "quickAdd": {
+    "placeholder": "Додати завдання…",
+    "submit": "Додати завдання",
+    "error": "Не вдалося додати завдання. Спробуйте ще раз."
+  },
+  "editor": {
+    "createTitle": "Нове завдання",
+    "editTitle": "Редагування завдання",
+    "notFound": "Це завдання не знайдено.",
     "titleField": "Назва",
-    "titlePlaceholder": "Що потрібно зробити?",
-    "titleRequired": "Назва обов'язкова.",
-    "submit": "Створити завдання",
-    "persistenceNotice": "Це попередній перегляд створення завдання. Збереження ще не підключено до бекенду."
+    "descriptionField": "Опис",
+    "dateField": "Дата",
+    "dateNotSet": "Без дати (Вхідні)",
+    "timeField": "Час",
+    "timeNotSet": "Будь-коли",
+    "durationField": "Тривалість (хвилини)",
+    "priorityField": "Пріоритет",
+    "visibilityField": "Видимість",
+    "visibilityPrivate": "Приватне",
+    "visibilityFamily": "Сімейне",
+    "visibilityFamilyUnavailable": "Приєднайтеся до сім'ї або створіть її, щоб зробити завдання видимим для сім'ї.",
+    "categoryField": "Категорія",
+    "categoryNone": "Без категорії",
+    "create": "Створити завдання",
+    "save": "Зберегти зміни",
+    "unsavedChanges": {
+      "title": "Скасувати зміни?",
+      "message": "У цього завдання є незбережені зміни.",
+      "discard": "Скасувати зміни"
+    },
+    "errors": {
+      "titleRequired": "Назва обов'язкова.",
+      "dateInvalid": "Введіть коректну дату.",
+      "timeInvalid": "Введіть коректний час.",
+      "durationInvalid": "Введіть тривалість більшу за нуль.",
+      "durationTooLong": "Тривалість не може перевищувати 24 години (1440 хвилин).",
+      "timeRequiresDate": "Спершу вкажіть дату, потім час.",
+      "durationRequiresTime": "Спершу вкажіть час початку, потім тривалість."
+    }
+  },
+  "errors": {
+    "forbidden": "У вас немає прав для цієї дії.",
+    "invalidInput": "Це значення недійсне для цього завдання.",
+    "generic": "Щось пішло не так. Спробуйте ще раз."
   }
 }

@@ -1,10 +1,67 @@
 {
-  "newTask": {
-    "title": "New task",
+  "sections": {
+    "overdue": "Overdue",
+    "timed": "Timed",
+    "anytime": "Anytime",
+    "tasks": "Tasks",
+    "completed": "Completed"
+  },
+  "overdue": {
+    "label": "Overdue"
+  },
+  "row": {
+    "markComplete": "Mark as complete",
+    "markIncomplete": "Mark as not complete",
+    "actions": "Task actions",
+    "edit": "Edit",
+    "moveToToday": "Move to Today",
+    "moveToTomorrow": "Move to Tomorrow",
+    "moveToInbox": "Move to Inbox",
+    "archive": "Archive"
+  },
+  "quickAdd": {
+    "placeholder": "Add a task…",
+    "submit": "Add task",
+    "error": "Couldn't add the task. Please try again."
+  },
+  "editor": {
+    "createTitle": "New task",
+    "editTitle": "Edit task",
+    "notFound": "This task could not be found.",
     "titleField": "Title",
-    "titlePlaceholder": "What needs to be done?",
-    "titleRequired": "A title is required.",
-    "submit": "Create task",
-    "persistenceNotice": "This is a preview of task creation. Saving tasks isn't wired up to the backend yet."
+    "descriptionField": "Description",
+    "dateField": "Date",
+    "dateNotSet": "No date (Inbox)",
+    "timeField": "Time",
+    "timeNotSet": "Anytime",
+    "durationField": "Duration (minutes)",
+    "priorityField": "Priority",
+    "visibilityField": "Visibility",
+    "visibilityPrivate": "Private",
+    "visibilityFamily": "Family",
+    "visibilityFamilyUnavailable": "Join or create a family to make a task Family-visible.",
+    "categoryField": "Category",
+    "categoryNone": "No category",
+    "create": "Create task",
+    "save": "Save changes",
+    "unsavedChanges": {
+      "title": "Discard changes?",
+      "message": "You have unsaved changes to this task.",
+      "discard": "Discard"
+    },
+    "errors": {
+      "titleRequired": "A title is required.",
+      "dateInvalid": "Enter a valid date.",
+      "timeInvalid": "Enter a valid time.",
+      "durationInvalid": "Enter a duration greater than zero.",
+      "durationTooLong": "Duration can be at most 24 hours (1440 minutes).",
+      "timeRequiresDate": "Set a date before adding a time.",
+      "durationRequiresTime": "Set a start time before adding a duration."
+    }
+  },
+  "errors": {
+    "forbidden": "You don't have permission to do that.",
+    "invalidInput": "That's not a valid value for this task.",
+    "generic": "Something went wrong. Please try again."
   }
 }
