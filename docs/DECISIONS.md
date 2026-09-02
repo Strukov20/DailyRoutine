@@ -192,6 +192,31 @@ first call as originally assumed) and two pgTAP test-assertion bugs (`anon` has 
 all on these tables, so "anonymous sees zero rows" needed to be `throws_ok(..., '42501', ...)`,
 not `is(count, 0)`) — full detail in `knowledge/raw/sessions/2026-09-02-phase2-docker-resolved.md`.
 
+### Supabase client: explicit `flowType: 'pkce'` — supabase-js still defaults to `'implicit'`
+
+Found via live manual testing (not a unit test — no mock would have caught this): a real
+sign-up's confirmation email linked to `familyflow://confirm#access_token=...` (an implicit-flow
+URL _fragment_), which `app/(auth)/confirm.tsx` — written to read a `?code=` _query_ param and
+call `exchangeCodeForSession(code)` — could not parse at all. `@supabase/supabase-js`'s
+`flowType` option still defaults to `'implicit'` for backwards compatibility (confirmed by
+reading the installed `GoTrueClient.js`), not `'pkce'` as assumed when `confirm.tsx`/
+`reset-password.tsx`/`oauth.ts` were originally written. Fixed by setting `flowType: 'pkce'`
+explicitly in `src/lib/supabase/client.ts`. Re-verified: the resulting confirmation link now
+starts with `token=pkce_...` and redirects to `familyflow://confirm?code=...`.
+
+**Known follow-up, not fixed**: with `flowType: 'pkce'`, supabase-js generates the PKCE code
+challenge via SHA-256 when `crypto.subtle` is available, falling back to the weaker `'plain'`
+method with a console warning otherwise ("WebCrypto API is not supported"). Confirmed via a
+real device console log that Hermes/React Native has no global `crypto.subtle`, so this app
+is currently on the `'plain'` fallback — spec-compliant (RFC 7636) and not a functional bug,
+but a real reduction in protection against authorization-code interception on mobile (the
+exact threat PKCE exists to address, and relevant here given the app uses a custom URL scheme
+for its redirect). `expo-standard-web-crypto` was evaluated and rejected — it only polyfills
+`crypto.getRandomValues`, not `crypto.subtle`. `react-native-quick-crypto` (JSI-based, used in
+Supabase's own React Native guidance for this exact gap) is the likely fix, deferred because
+it adds a new native dependency requiring a rebuild, out of scope for an in-session debugging
+fix. Should be picked up before this app handles production credentials.
+
 ### React Compiler-aware ESLint rules (`react-hooks` v7, via `eslint-config-expo`) surfaced two real issues
 
 Two lint errors appeared that weren't present in Phase 1's simpler components, both from
