@@ -1,0 +1,275 @@
+# Data Model
+
+Status: **proposed, not yet implemented.** No Supabase project is connected and no
+migrations exist in this repository yet (see [README.md](../README.md), "Stop point"). This
+document is the contract the first migration should implement, and the thing
+[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md)'s RLS design is written against.
+
+Naming: tables are `snake_case`, plural. Every table has `id uuid primary key default
+gen_random_uuid()` unless noted. Every mutable table has the audit columns described at the
+bottom of this document.
+
+## Entity overview
+
+```text
+profiles ──< family_members >── families
+   │             │                  │
+   │             │                  └──< family_invitations
+   │             ├──< responsibilities (assignee)
+   │             │
+   ├──< tasks ──< task_assignments
+   │       │
+   │       └──< reminders
+   │       └──> recurrence_rules
+   │       └──> categories
+   │
+   ├──< events ──< event_participants
+   │       │            │
+   │       │            └──> responsibilities (per participant, e.g. drop-off/pickup)
+   │       └──> recurrence_rules
+   │
+   └──< notification_tokens
+```
+
+`>` / `<` show the "many" side. A `family_members` row represents a person _in the context of
+one family_ — for an adult it links to a `profiles` row; for a child it may not (see below).
+
+## profiles
+
+One row per authenticated user (1:1 with `auth.users`). **Owned by the user.**
+
+| column                   | type | notes                                                                                                                |
+| ------------------------ | ---- | -------------------------------------------------------------------------------------------------------------------- |
+| `id`                     | uuid | = `auth.users.id`, not a separate generated id                                                                       |
+| `display_name`           | text | required                                                                                                             |
+| `avatar_url`             | text | nullable                                                                                                             |
+| `preferred_language`     | text | `'en' \| 'uk'`, defaults from device locale at signup (see `src/i18n`)                                               |
+| `preferred_color_scheme` | text | `'system' \| 'light' \| 'dark'`, mirrors `useUIStore` default, persisted server-side only once the user is signed in |
+
+## families
+
+**Owned by the family** (see "Ownership and authorization" below).
+
+| column     | type                 | notes                                                                                              |
+| ---------- | -------------------- | -------------------------------------------------------------------------------------------------- |
+| `id`       | uuid                 |                                                                                                    |
+| `name`     | text                 | required                                                                                           |
+| `owner_id` | uuid → `profiles.id` | the creating adult; ownership can be transferred later (V2), never deleted-with-cascade implicitly |
+
+## family_members
+
+The unified membership table. **Owned by the family.** One row per person (adult or child)
+in a given family. This is the "child profiles or unified family-member profiles" decision
+point called out in the brief — resolved as: **one table, two shapes**, distinguished by
+`member_type`, rather than a separate `children` table. Rationale in
+[DECISIONS.md](DECISIONS.md).
+
+| column          | type                           | notes                                                                                                                                                                                                                                    |
+| --------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`            | uuid                           |                                                                                                                                                                                                                                          |
+| `family_id`     | uuid → `families.id`           | required                                                                                                                                                                                                                                 |
+| `member_type`   | text                           | `'adult' \| 'child'`                                                                                                                                                                                                                     |
+| `profile_id`    | uuid → `profiles.id`, nullable | **required when `member_type = 'adult'`**; nullable for a child. This nullable FK is the deliberate seam for "a child profile can be linked to a real account in the future" — linking is just setting this column, no migration needed. |
+| `role`          | text                           | `'owner' \| 'adult' \| 'child'` — `owner` is a role, not a separate member type, so ownership transfer is a role update, not a row move                                                                                                  |
+| `display_name`  | text                           | required; for a child this is the only name on record (no `profiles` row to read it from)                                                                                                                                                |
+| `avatar_url`    | text                           | nullable                                                                                                                                                                                                                                 |
+| `date_of_birth` | date                           | nullable; child profiles only, optional                                                                                                                                                                                                  |
+| `invited_by`    | uuid → `profiles.id`, nullable | who added this member                                                                                                                                                                                                                    |
+
+Constraint (enforced in the migration, not just documented): `member_type = 'adult'` requires
+`profile_id is not null`; `member_type = 'child'` requires `profile_id is null OR` a future
+verified-link flag — that flag doesn't exist yet and is intentionally deferred.
+
+## family_invitations
+
+**Owned by the family**, visible to the invited email/profile and to family adults.
+
+| column          | type                 | notes                                                             |
+| --------------- | -------------------- | ----------------------------------------------------------------- |
+| `id`            | uuid                 |                                                                   |
+| `family_id`     | uuid → `families.id` |                                                                   |
+| `invited_email` | text                 | required — invitee may not have an account yet                    |
+| `invited_by`    | uuid → `profiles.id` |                                                                   |
+| `status`        | text                 | `'pending' \| 'accepted' \| 'declined' \| 'expired' \| 'revoked'` |
+| `responded_at`  | timestamptz          | nullable                                                          |
+| `expires_at`    | timestamptz          | required — invitations are not open-ended                         |
+
+## categories
+
+Defaults (Work, Family, Home, Shopping, Health, Other) are seeded as **system categories**
+(`family_id IS NULL`, `is_system = true`), readable by everyone, not owned by any one family.
+A custom category is **owned by the family** (or, for a purely personal task, could be scoped
+by `owner_profile_id` instead — MVP ships family-scoped custom categories only; personal
+custom categories are a V2 nice-to-have, not blocked by this schema).
+
+| column        | type                           | notes                                                                               |
+| ------------- | ------------------------------ | ----------------------------------------------------------------------------------- |
+| `id`          | uuid                           |                                                                                     |
+| `family_id`   | uuid → `families.id`, nullable | null = system default                                                               |
+| `name`        | text                           | required                                                                            |
+| `color_token` | text                           | references a token in `src/theme/tokens.ts`'s `categoryColors`, not a raw hex value |
+| `is_system`   | boolean                        | default false                                                                       |
+
+## tasks
+
+**Owned by a user** (personal) **or a family** (shared) — never both; see "Ownership and
+authorization." Only `title` is required, matching `src/domain/tasks/schemas.ts`.
+
+| column               | type                                   | notes                                                                                                                                                                                     |
+| -------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                 | uuid                                   |                                                                                                                                                                                           |
+| `owner_profile_id`   | uuid → `profiles.id`                   | who created it                                                                                                                                                                            |
+| `family_id`          | uuid → `families.id`, nullable         | null = personal task                                                                                                                                                                      |
+| `title`              | text                                   | **required, only mandatory field**                                                                                                                                                        |
+| `description`        | text                                   | nullable                                                                                                                                                                                  |
+| `date`               | date                                   | nullable — null means "Inbox"                                                                                                                                                             |
+| `start_time`         | time                                   | nullable — a task can have a date without a time                                                                                                                                          |
+| `duration_minutes`   | integer                                | nullable                                                                                                                                                                                  |
+| `priority`           | text                                   | `'normal' \| 'important' \| 'critical'` — matches `src/domain/tasks/priority.ts` exactly; that module's ordering logic is the client-side mirror of this column, not a redefinition of it |
+| `category_id`        | uuid → `categories.id`, nullable       |                                                                                                                                                                                           |
+| `recurrence_rule_id` | uuid → `recurrence_rules.id`, nullable |                                                                                                                                                                                           |
+| `visibility`         | text                                   | `'private' \| 'family'` — meaningless (ignored) when `family_id IS NULL`                                                                                                                  |
+| `completed_at`       | timestamptz                            | nullable; presence = completed. Not a boolean, so "when" is never lost                                                                                                                    |
+| `assignee_member_id` | uuid → `family_members.id`, nullable   | current assignee, family tasks only                                                                                                                                                       |
+| `assignment_status`  | text                                   | `'unassigned' \| 'pending_acceptance' \| 'accepted' \| 'declined'` — see `task_assignments` for the auditable history this field is a snapshot of                                         |
+
+## task_assignments
+
+Append-mostly audit trail. **Owned by the family** the task belongs to. This is what makes
+assignment history real instead of inferred from `tasks.assignment_status` alone.
+
+| column                  | type                                 | notes                                                                                            |
+| ----------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `id`                    | uuid                                 |                                                                                                  |
+| `task_id`               | uuid → `tasks.id`                    |                                                                                                  |
+| `assigned_to_member_id` | uuid → `family_members.id`           |                                                                                                  |
+| `assigned_by_member_id` | uuid → `family_members.id`, nullable | null when the action was "Take task" (self-claim) rather than an assignment by someone else      |
+| `action`                | text                                 | `'assigned' \| 'took' \| 'accepted' \| 'declined' \| 'unassigned' \| 'reassigned'`               |
+| `created_at`            | timestamptz                          | when this action happened — this table has no `updated_at`; rows are never edited, only appended |
+
+## reminders
+
+**Owned by the user** who owns the parent task (family membership does not grant reminder
+access to someone else's reminder — a shared task can have per-person reminders).
+
+| column                  | type                 | notes                                                                                                       |
+| ----------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `id`                    | uuid                 |                                                                                                             |
+| `task_id`               | uuid → `tasks.id`    |                                                                                                             |
+| `profile_id`            | uuid → `profiles.id` | whose reminder this is                                                                                      |
+| `remind_at`             | timestamptz          | resolved, absolute time (computed client- or server-side from the task's date/time + an offset at creation) |
+| `offset_minutes_before` | integer              | nullable; the authored offset, kept so editing the task's time can recompute `remind_at`                    |
+| `delivered_at`          | timestamptz          | nullable; set once `expo-notifications` confirms delivery                                                   |
+
+## recurrence_rules
+
+Shared by tasks and events. **Owned by whatever references it** — no independent ownership
+model; RLS is enforced via the referencing row.
+
+| column       | type    | notes                                                                                                 |
+| ------------ | ------- | ----------------------------------------------------------------------------------------------------- |
+| `id`         | uuid    |                                                                                                       |
+| `frequency`  | text    | `'daily' \| 'weekly' \| 'monthly'` (MVP set — `RRULE`-style expressiveness is a V2 concern if needed) |
+| `interval`   | integer | e.g. every 2 weeks                                                                                    |
+| `by_weekday` | int[]   | nullable, ISO weekday numbers                                                                         |
+| `until`      | date    | nullable — open-ended if null                                                                         |
+
+Recurrence **generates** task/event instances rather than every instance being a stored row
+forever; the exact materialization strategy (generate N ahead vs. generate on read) is an
+implementation detail for the MVP build phase, not fixed here.
+
+## events
+
+**Owned by a user** (personal) **or a family** (shared) — same personal/family split as
+`tasks`. An event is never a responsibility carrier — see "Responsibilities" below.
+
+| column               | type                                   | notes                   |
+| -------------------- | -------------------------------------- | ----------------------- |
+| `id`                 | uuid                                   |                         |
+| `owner_profile_id`   | uuid → `profiles.id`                   |                         |
+| `family_id`          | uuid → `families.id`, nullable         | null = personal event   |
+| `title`              | text                                   | required                |
+| `description`        | text                                   | nullable                |
+| `location`           | text                                   | nullable                |
+| `starts_at`          | timestamptz                            | required                |
+| `ends_at`            | timestamptz                            | required                |
+| `visibility`         | text                                   | `'private' \| 'family'` |
+| `recurrence_rule_id` | uuid → `recurrence_rules.id`, nullable |                         |
+
+## event_participants
+
+Who/what the event is _about_ — e.g., "this swimming event is for Son." This is distinct
+from responsibility (who has to act). **Owned by the family** the event belongs to (or
+implicitly personal if the event has no `family_id`).
+
+| column             | type                       | notes                                           |
+| ------------------ | -------------------------- | ----------------------------------------------- |
+| `id`               | uuid                       |                                                 |
+| `event_id`         | uuid → `events.id`         |                                                 |
+| `family_member_id` | uuid → `family_members.id` | the person (adult or child) this event concerns |
+
+## responsibilities
+
+**This is the table that encodes the "event ≠ responsibility" rule from
+[PRODUCT.md](PRODUCT.md).** A responsibility is a discrete, assignable duty tied to an event,
+never a text field on the event itself.
+
+| column               | type                                 | notes                                                                                     |
+| -------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `id`                 | uuid                                 |                                                                                           |
+| `event_id`           | uuid → `events.id`                   |                                                                                           |
+| `type`               | text                                 | e.g. `'drop_off' \| 'pick_up' \| 'supervise' \| 'custom'` — `custom` pairs with a `label` |
+| `label`              | text                                 | nullable; required when `type = 'custom'` (e.g., "Bring snacks")                          |
+| `assignee_member_id` | uuid → `family_members.id`, nullable | who is on the hook; nullable = unassigned, mirroring `tasks.assignee_member_id`           |
+| `status`             | text                                 | `'unassigned' \| 'pending_acceptance' \| 'accepted' \| 'declined' \| 'done'`              |
+
+Worked example matching PRODUCT.md's swimming scenario: one `events` row ("Swimming",
+17:00–18:00) + one `event_participants` row (Son) + two `responsibilities` rows
+(`drop_off` → Mom, `pick_up` → Dad). Editing who does pickup never touches the event row.
+
+## notification_tokens
+
+**Owned by the user.** Expo push tokens, one row per installed device.
+
+| column            | type                 | notes                                                               |
+| ----------------- | -------------------- | ------------------------------------------------------------------- |
+| `id`              | uuid                 |                                                                     |
+| `profile_id`      | uuid → `profiles.id` |                                                                     |
+| `expo_push_token` | text                 | required, unique                                                    |
+| `device_platform` | text                 | `'ios' \| 'android'`                                                |
+| `last_seen_at`    | timestamptz          | updated on each successful send/refresh, used to prune stale tokens |
+
+## Availability / "Busy" representation
+
+**Not a table.** Deliberately implemented as a **Postgres view (or `security definer` RPC)**
+over `events`, never as a client-side filter of full event rows. See
+[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md) for the exact mechanism — this is the
+piece that prevents private event details from ever leaving the database for a non-owner in
+the first place.
+
+## Audit-relevant timestamps and actors
+
+Every table above except `task_assignments` (append-only by design, so `created_at` alone is
+its "audit" story) gets:
+
+| column       | type                 | notes                                                                                    |
+| ------------ | -------------------- | ---------------------------------------------------------------------------------------- |
+| `created_at` | timestamptz          | default `now()`                                                                          |
+| `updated_at` | timestamptz          | maintained by a trigger, not application code — see DECISIONS.md                         |
+| `created_by` | uuid → `profiles.id` | who performed the insert, for tables where this isn't already implied by an owner column |
+
+## Ownership and authorization summary
+
+| Table                                                        | Owned by                           | Who can read                                                                                                                                 |
+| ------------------------------------------------------------ | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `profiles`                                                   | the user                           | self; other family members see only what `family_members.display_name`/`avatar_url` expose (not the full profile row)                        |
+| `families`, `family_members`, `family_invitations`           | the family                         | family adults (and, for invitations, the invited email)                                                                                      |
+| `categories`                                                 | family, or system                  | family members; system categories are public                                                                                                 |
+| `tasks`, `events`                                            | user (personal) or family (shared) | owner always; family members only if `visibility = 'family'`, and only sanitized fields if the item is private (see SECURITY_AND_PRIVACY.md) |
+| `task_assignments`, `event_participants`, `responsibilities` | the family                         | family adults                                                                                                                                |
+| `reminders`                                                  | the user                           | owner only — never visible to other family members, even for a shared task                                                                   |
+| `notification_tokens`                                        | the user                           | owner only; never exposed to any other user, including family members                                                                        |
+
+This table is the plain-language summary; the enforceable version is Postgres RLS policies,
+designed in [SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md) and written before any
+migration lands.
