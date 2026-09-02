@@ -115,8 +115,12 @@ in [SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md).
 
 ## MVP navigation
 
-Five primary tabs: **Today, Calendar, Inbox, Family, Profile** (implemented as placeholders
-in `app/(app)/`). Task creation is reachable from Today and Inbox via a FAB → `/task/new`.
+Five primary tabs: **Today, Calendar, Inbox, Family, Profile** (`app/(app)/`). Today, Inbox,
+and Family are fully functional as of Phase 4/Phase 3 respectively; Calendar remains a
+placeholder (event CRUD is out of scope through Phase 4 — see [MVP_SCOPE.md](MVP_SCOPE.md)).
+Task creation is reachable from Today, Inbox, and Tomorrow (a nested route off Today, not a
+sixth tab — see [ARCHITECTURE.md](ARCHITECTURE.md)) via both an inline quick-add and a FAB →
+the full editor (`/task/new`).
 
 ## MVP success scenario
 

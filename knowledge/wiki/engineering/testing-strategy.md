@@ -7,36 +7,52 @@ sources:
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
   - ../../raw/sessions/2026-09-02-phase2-docker-resolved.md
   - ../../raw/sessions/2026-09-03-phase3-family-space.md
+  - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
 tags: [engineering, testing]
 ---
 
 ## Confirmed / current
 
 - **Domain logic** (`src/domain/**`) — plain Jest, no React/I/O.
-  `src/domain/tasks/priority.test.ts`, `src/domain/auth/errorMessages.test.ts`,
-  `src/domain/family/errorMessages.test.ts`, `src/domain/family/mappers.test.ts`.
+  `src/domain/tasks/{priority,schemas,mappers,dateUtils,sections,errorMessages}.test.ts`,
+  `src/domain/auth/errorMessages.test.ts`, `src/domain/family/{errorMessages,mappers}.test.ts`,
+  `src/domain/categories/mappers.test.ts`. `dateUtils.test.ts` is the one with the most at
+  stake — deterministic coverage for UTC/Europe-Kyiv/negative-offset/DST/midnight-boundary
+  cases, per this phase's brief; see "A real Jest/TZ quirk" below.
 - **Components** — Jest + React Native Testing Library, rendered wrapped in
-  `<AppThemeProvider>` (not mocked). `src/components/ui/EmptyState.test.tsx`.
+  `<AppThemeProvider>` (not mocked). `src/components/ui/EmptyState.test.tsx`,
+  `src/components/tasks/{TaskRow,QuickAddInput}.test.tsx` (accessibility state, double-submit
+  and duplicate-tap prevention).
 - **Localization** — `src/i18n/i18n.test.ts` checks i18next initializes, a key translates
   differently per locale, and every namespace has matching keys across `en`/`uk`.
 - **Auth/config** — Jest with `@/lib/supabase/client`/`@/lib/env` mocked at the module
   boundary. `src/lib/env.test.ts`, `src/lib/auth/authService.test.ts`,
   `src/lib/auth/oauth.test.ts`, `src/lib/auth/AuthProvider.test.tsx`.
-- **Repositories/services and selection hooks** (Phase 3 pattern) — `src/lib/family/familyService.test.ts`
-  mocks `@/lib/supabase/client`'s `.from()`/`.rpc()` chains to test row-mapping and SQLSTATE
-  normalization; `src/domain/family/hooks.test.tsx` uses RNTL's `renderHook` (which is
-  `async` — must be awaited, unlike `render`/`fireEvent` which merely _return_ promises) with
-  a `QueryClientProvider` wrapper to test `useActiveFamily()`'s fallback-selection logic.
+- **Repositories/services and selection hooks** (Phase 3 pattern, confirmed again in Phase 4)
+  — `src/lib/{family,tasks,categories}/*Service.test.ts` mock `@/lib/supabase/client`'s
+  `.from()`/`.rpc()` chains to test row-mapping and SQLSTATE normalization;
+  `src/domain/{family,tasks}/hooks.test.tsx` use RNTL's `renderHook` (which is `async` — must
+  be awaited, unlike `render`/`fireEvent` which merely _return_ promises) with a
+  `QueryClientProvider` wrapper. `src/domain/tasks/hooks.test.tsx` specifically proves
+  `useCompletePersonalTask`'s optimistic update rolls back **deterministically to the exact
+  pre-mutation cache state** on a simulated server failure — the concrete test the
+  optimistic-update architecture rule (see [system-architecture](system-architecture.md))
+  requires before any hook is allowed to use one.
 - **RLS/privacy tests** — pgTAP via `supabase test db`, against a real local Postgres
-  instance with RLS enabled. `supabase/tests/*.sql` (8 files, 136 assertions), including a
-  dedicated secret-marker privacy-regression test (`060_privacy_regression_test.sql`) and the
-  full family/invitation/child-profile RPC suite (`080_family_management_test.sql`).
-  **Verified: all 136 assertions pass** against a real local instance (`supabase db reset &&
-supabase test db`), plus a real curl-driven three-user flow (owner/member/outsider, real
-  `auth.users` accounts, not simulated `set local role`) — see
-  [`knowledge/raw/sessions/2026-09-03-phase3-family-space.md`](../../raw/sessions/2026-09-03-phase3-family-space.md).
+  instance with RLS enabled. `supabase/tests/*.sql` (9 files, 192 assertions), including a
+  dedicated secret-marker privacy-regression test (`060_privacy_regression_test.sql`), the
+  full family/invitation/child-profile RPC suite (`080_family_management_test.sql`), and the
+  personal-task RPC suite (`090_personal_task_management_test.sql`, itself extending the
+  secret-marker sweep to the new RPC-only task write path).
+  **Verified: all 192 assertions pass** against a real local instance (`supabase db reset &&
+supabase test db`), plus real curl-driven multi-user flows for both Family Space and personal
+  tasks (real `auth.users` accounts, not simulated `set local role`) — see
+  [`knowledge/raw/sessions/2026-09-03-phase3-family-space.md`](../../raw/sessions/2026-09-03-phase3-family-space.md)
+  and
+  [`knowledge/raw/sessions/2026-09-03-phase4-personal-tasks.md`](../../raw/sessions/2026-09-03-phase4-personal-tasks.md).
   Running the Phase 2 suite for real surfaced and fixed one migration-ordering bug and two
-  test-assertion bugs; the Phase 3 audit surfaced a real `anon`-EXECUTE-grant gap (see
+  test-assertion bugs; the Phase 3 audit surfaced a real `anon`-EXECUTE-grant gap and the
+  Phase 4 audit surfaced a real `tasks`-direct-`UPDATE` gap (see
   [security-model](security-model.md)) — none of these were caught by static review alone.
   CI's `database` job also runs them on every push/PR.
 - **Build/bundle smoke test** — `npx expo export --platform ios|android`, `npx expo config`,
@@ -69,6 +85,20 @@ supabase test db`), plus a real curl-driven three-user flow (owner/member/outsid
   simulated via `set local role authenticated;` + `set_config('request.jwt.claims', ...)`;
   expect exact Postgres SQLSTATEs (`23503`/`23505`/`23514`/`42501`) with `throws_ok`. Full
   convention: [`docs/TEST_STRATEGY.md`, "RLS test-writing conventions"](../../../docs/TEST_STRATEGY.md).
+- **A real Jest/TZ quirk (Phase 4)**: `process.env.TZ` reassignment at runtime changes
+  `Date`'s local-time output in plain Node (confirmed) but is **not** reliably honored inside
+  this project's `jest-expo` test environment. Write timezone-dependent code to take "now" as
+  an explicit already-local `Date` (built via the local constructor) rather than reading
+  ambient timezone state, and it won't matter either way — see
+  `src/domain/tasks/dateUtils.ts`/`.test.ts`.
+- **Wrap an imperative call on a `renderHook` result in `act(async () => {...})`** — e.g.
+  `result.current.mutate(...)` — or a subsequent `waitFor` can fail to observe the state
+  update. See `src/domain/tasks/hooks.test.tsx`.
+- **A `renderHook`/mutation test that seems to hang in a piped or backgrounded shell often
+  isn't** — this project has repeatedly seen a suite finish internally in well under a second,
+  then take much longer to report completion, printing Jest's own "did not exit one second
+  after the test run" warning. Check for the suite's actual pass/fail summary before assuming
+  a real deadlock.
 
 ## Running
 

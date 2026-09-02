@@ -186,6 +186,17 @@ database logs) must follow the same rule once they exist: log row ids, not row c
   functions this was a real (not just theoretical) gap for. **Before adding any new
   `SECURITY DEFINER` function**, confirm its ACL with a query like the one in that entry
   rather than trusting a `revoke ... from public` statement alone.
+- ⚠️ **`tasks` had a direct-`UPDATE` gap, closed in Phase 4 by moving to RPC-only writes.**
+  The Phase 2 `UPDATE` policy's `WITH CHECK` protected `owner_profile_id` but nothing else —
+  a client could rewrite `family_id`/`assignee_member_id`/`assignment_status` on their own
+  task directly, bypassing the `task_assignments` audit trail and (since the sanitized view's
+  authorization is the _viewer's_ membership, not the _owner's_) potentially exposing a task
+  to a family the owner was never actually part of. `INSERT`/`UPDATE`/`DELETE` on `tasks` are
+  now revoked entirely for `authenticated`; every mutation goes through a `SECURITY DEFINER`
+  RPC in `supabase/migrations/20260904120000_personal_task_management.sql`. See
+  [DECISIONS.md, "Phase 4"](DECISIONS.md) for the full writeup — the same audit-then-fix
+  workflow as the entry above, applied to a different mechanism (grants, not RLS policies or
+  function ACLs).
 
 ## Non-goals for MVP
 

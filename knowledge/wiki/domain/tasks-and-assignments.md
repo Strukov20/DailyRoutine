@@ -1,11 +1,12 @@
 ---
 title: Tasks and assignments
 status: current
-updated: 2026-09-02
+updated: 2026-09-03
 sources:
   - ../../../docs/PRODUCT.md
   - ../../../docs/DATA_MODEL.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
+  - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
 tags: [domain, tasks, assignments]
 ---
 
@@ -42,11 +43,16 @@ assignee must belong to the task's own family (composite FK). See
 
 ## Current implementation
 
-**Schema, RLS, and the assignment-action trigger exist** — proven by pgTAP (not yet run
-against a live instance this session, see
-[authentication](../engineering/authentication.md)). **UI still doesn't** — `app/task/new.tsx`
-only proves the title-required validated-form path (`src/domain/tasks/schemas.ts`); no
-assignment UI, no "Take task" button, no notifications yet.
+**Schema, RLS, and the assignment-action trigger exist and are proven by pgTAP against a real
+local instance** (`supabase/tests/040_tasks_and_assignments_test.sql`). **Personal-task CRUD
+now exists too** (Phase 4 — see [personal-planning](personal-planning.md)), but it is a
+completely separate surface: none of the Phase 4 RPCs
+(`create_personal_task`/`update_personal_task`/etc.) ever accept or set
+`assignee_member_id`/`assignment_status`, and Phase 4's own RLS/grant audit _tightened_ the
+`tasks` table's write path (see [security model](../engineering/security-model.md)) without
+touching `task_assignments` at all. **Assignment UI still doesn't exist** — no "Take task"
+button, no accept/decline UI, no notifications. This remains the next natural phase once
+personal tasks are solid.
 
 ## See also
 

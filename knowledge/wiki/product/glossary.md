@@ -5,6 +5,7 @@ updated: 2026-09-03
 sources:
   - ../../../docs/PRODUCT.md
   - ../../../docs/DATA_MODEL.md
+  - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
 tags: [product, glossary]
 ---
 
@@ -25,10 +26,18 @@ Fast lookup for domain terms. Each links to the wiki page or doc with full detai
   email provider) an owner generates and shares via native Share/copy-link; whoever holds a
   valid, unexpired, still-pending token can accept it, regardless of their account's email
   address. See [family-spaces](../domain/family-spaces.md).
-- **Inbox** — tasks with no `date` set.
-- **Today / Tomorrow** — date-scoped personal views.
-- **Family Today** — the combined, cross-member family schedule for the current day.
-- **Task** — only `title` is mandatory; see [tasks-and-assignments](../domain/tasks-and-assignments.md).
+- **Inbox** — active personal tasks with no `date` set. See
+  [personal-planning](../domain/personal-planning.md).
+- **Today / Tomorrow** — date-scoped personal views, each split into **Overdue** (Today
+  only — active tasks dated before today), **Timed** (has a `start_time`, sorted earliest
+  first), **Anytime** (date set, no time, sorted by priority then creation order), and
+  **Completed**. See [personal-planning](../domain/personal-planning.md) and
+  `src/domain/tasks/sections.ts`.
+- **Family Today** — the combined, cross-member family schedule for the current day. Not
+  built yet — Phase 4 is personal tasks only.
+- **Task** — only `title` is mandatory; see [personal-planning](../domain/personal-planning.md)
+  (personal tasks) and [tasks-and-assignments](../domain/tasks-and-assignments.md) (the
+  family-facing assignment half, not yet built).
 - **Event** — has a start/end time; never carries a responsibility as a text field. See
   [events-and-responsibilities](../domain/events-and-responsibilities.md).
 - **Responsibility** — a discrete, assignable duty tied to an event (e.g. drop-off, pickup),

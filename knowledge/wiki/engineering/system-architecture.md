@@ -6,6 +6,7 @@ sources:
   - ../../../docs/ARCHITECTURE.md
   - ../../../docs/DECISIONS.md
   - ../../raw/sessions/2026-09-03-phase3-family-space.md
+  - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
 tags: [engineering, architecture]
 ---
 
@@ -33,14 +34,30 @@ drifted out of scope for that store. `useActiveFamily()`
 reconciles the TanStack-Query-owned family list with the Zustand-owned selection and writes
 the resolved fallback back into the store, rather than either side owning both.
 
-**Layering, established by the family feature (Phase 3), now the pattern for every feature**:
-screens (`app/**`) → hooks (`src/domain/<feature>/hooks.ts`, TanStack Query) →
-repositories/services (`src/lib/<feature>/<feature>Service.ts`, the only module calling
+**Layering, established by the family feature (Phase 3), confirmed as the pattern for every
+feature by Phase 4's task feature**: screens (`app/**`) → hooks
+(`src/domain/<feature>/hooks.ts`, TanStack Query) → repositories/services
+(`src/lib/<feature>/<feature>Service.ts`, the only module calling
 `supabase.rpc`/`supabase.from`, normalizing errors to a typed `<Feature>ServiceError`) → the
 Supabase client. `src/domain/family/{types,mappers,schemas,errorMessages}.ts` +
-`src/lib/family/familyService.ts` is the reference implementation — see
-[ARCHITECTURE.md, "Layering"](../../../docs/ARCHITECTURE.md) for the full write-up and
-[Family Spaces](../domain/family-spaces.md) for the feature it was built for.
+`src/lib/family/familyService.ts` and `src/domain/tasks/*` + `src/lib/tasks/taskService.ts`
+are the two reference implementations — see
+[ARCHITECTURE.md, "Layering"](../../../docs/ARCHITECTURE.md) for the full write-up,
+[Family Spaces](../domain/family-spaces.md) and
+[Personal planning](../domain/personal-planning.md) for the features they were built for.
+Phase 4 adds one more piece to this pattern: `src/domain/tasks/sections.ts` is pure
+bucketing/sorting logic that hooks compose over query results, kept fully separate from both
+the transport layer and the presentation components — a third layer worth naming explicitly
+when a feature has meaningful client-side derivation logic, not just fetch/mutate.
+
+**Optimistic updates are the exception, not the default.** Only
+`useCompletePersonalTask`/`useRestorePersonalTask` (`src/domain/tasks/hooks.ts`) use them —
+`onMutate` snapshots every mounted task-list query and patches the target task, `onError`
+restores that exact snapshot on failure (tested, including the failure case, in
+`src/domain/tasks/hooks.test.tsx`). Every other task mutation (create, update, schedule,
+move-to-inbox, delete) waits for server confirmation with no optimistic update — completion
+has an obviously safe inverse; most writes don't, and guessing wrong here risks real data
+loss, not just a UX rough edge.
 
 **Provider stack** (`app/_layout.tsx`): `GestureHandlerRootView` → `SafeAreaProvider` →
 `AppThemeProvider` → `QueryProvider` → `AuthProvider` → `ErrorBoundary` → Expo Router `Stack`

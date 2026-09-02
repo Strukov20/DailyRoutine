@@ -127,3 +127,53 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     really does get `401` calling the invitation-preview RPC now, the real-world proof the
     EXECUTE-grant fix above actually holds.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-03T00:00:00Z — Phase 4: Personal Tasks, Inbox, Today, Tomorrow
+
+- **Operation type:** security audit + implementation + wiki update
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-03-phase4-personal-tasks.md`](../raw/sessions/2026-09-03-phase4-personal-tasks.md).
+- **Wiki pages updated:** `domain/personal-planning.md` (rewritten — no longer describes
+  placeholder screens), `domain/tasks-and-assignments.md`,
+  `domain/privacy-and-availability.md`, `engineering/security-model.md`,
+  `engineering/data-model.md`, `engineering/system-architecture.md`,
+  `engineering/testing-strategy.md`, `product/roadmap.md`, `product/mvp-definition.md`,
+  `product/glossary.md`.
+- **Decisions/contradictions recorded:**
+  - The mandatory pre-implementation security audit found and fixed a real gap before it
+    shipped: `tasks` granted raw `INSERT`/`UPDATE`/`DELETE` to `authenticated`, and the
+    `UPDATE` policy's `WITH CHECK` protected only `owner_profile_id` — a client could rewrite
+    `family_id`/`assignee_member_id`/`assignment_status` on their own task directly, bypassing
+    the `task_assignments` audit trail and (since the sanitized view's authorization is the
+    viewer's family membership, not the owner's) potentially exposing a task to a family its
+    owner was never in. Fixed by revoking those grants entirely and moving every task
+    mutation to a `SECURITY DEFINER` RPC, the same pattern Phase 3 established for families.
+    One pre-existing Phase 2 pgTAP assertion was updated to match (a _stronger_, not weaker,
+    guarantee) — documented inline at the change site, not silently altered.
+  - Two smaller schema gaps closed alongside it: a task could have a `start_time` with no
+    `date` at all (now a `CHECK`), and `duration_minutes` had no upper bound (now capped at
+    1440). Explicitly **not** changed: `visibility = 'family'` with `family_id IS NULL`
+    remains valid-but-ignored, per `docs/DATA_MODEL.md`'s prior, deliberate documentation of
+    that state — the audit did not silently override it.
+  - Recurring tasks and reminder scheduling are both MVP-scope (not V2) but still not built —
+    each now has a concrete implementation proposal recorded in `docs/ROADMAP.md` rather than
+    being left as a vague gap, and the task editor deliberately has no UI for either so as not
+    to imply either works.
+  - `src/domain/tasks/dateUtils.ts` never round-trips a date-only value through `Date`'s
+    UTC-based ISO parsing/formatting, by construction — confirmed with deterministic tests
+    across UTC/Europe-Kyiv/a negative offset/a DST transition/midnight boundaries. A real
+    `jest-expo` environment quirk was found and recorded while writing those tests:
+    `process.env.TZ` reassignment at runtime is not reliably honored inside this project's
+    Jest environment, unlike plain Node — doesn't affect this module's correctness (it never
+    reads ambient timezone state), but is now documented so a future timezone-dependent test
+    doesn't rely on the same trick blind.
+  - **192/192 pgTAP assertions and 127/127 Jest tests pass**, and the full personal-task
+    lifecycle was additionally verified against two real `auth.users` accounts via direct
+    PostgREST calls (not simulated personas) — 20/20 checks, including the same
+    secret-marker-never-leaks proof Phase 3 used, extended to the new task RPC write path.
+  - Native runtime smoke testing (Section 18 of the brief) was **not performed** this session
+    and is reported as such rather than inferred from `expo export`/`expo-doctor` passing —
+    those check bundling, not runtime behavior on a simulator or device.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

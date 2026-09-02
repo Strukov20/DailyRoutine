@@ -8,18 +8,20 @@ sources:
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
   - ../../raw/sessions/2026-09-02-phase2-docker-resolved.md
   - ../../raw/sessions/2026-09-03-phase3-family-space.md
+  - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
 tags: [engineering, security, rls, privacy]
 ---
 
 ## Status: implemented and verified (Mechanisms 1, 2, 5) / not yet implemented (3, 4)
 
-`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 136 assertions
+`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 192 assertions
 passing against a real local Postgres instance) proves it, particularly
-`060_privacy_regression_test.sql` and `080_family_management_test.sql`. See
+`060_privacy_regression_test.sql`, `080_family_management_test.sql`, and
+`090_personal_task_management_test.sql`. See
 [privacy-and-availability](../domain/privacy-and-availability.md) for the domain-facing
 version of this same content; this page is the engineering-facing index.
 
-**Two real gaps have been found and fixed while implementing this, not bugs shipped and
+**Three real gaps have been found and fixed while implementing this, not bugs shipped and
 later caught** — design corrections made during the same phase that built the feature:
 
 - Mechanism 2 (sanitized views, Phase 2):
@@ -33,6 +35,15 @@ later caught** — design corrections made during the same phase that built the 
   `anon`) but a real hole for two Phase 3 invitation RPCs with no internal auth check. Fixed
   everywhere. Full writeup:
   [DECISIONS.md, "Phase 3"](../../../docs/DECISIONS.md).
+- **`tasks` had a direct-`UPDATE` gap (Phase 4)** — the Phase 2 `UPDATE` policy's `WITH
+CHECK` protected only `owner_profile_id`; a client could rewrite `family_id`,
+  `assignee_member_id`, or `assignment_status` on their own task via a plain `PATCH`,
+  bypassing the `task_assignments` audit trail and — since `family_task_board`'s
+  authorization is the _viewer's_ family membership, not the _owner's_ — potentially exposing
+  a task to a family its owner was never actually in. Fixed by revoking
+  `INSERT`/`UPDATE`/`DELETE` on `tasks` entirely and moving every mutation to a
+  `SECURITY DEFINER` RPC, continuing the Phase 3 RPC-only pattern. Full writeup:
+  [DECISIONS.md, "Phase 4"](../../../docs/DECISIONS.md).
 
 ## The five mechanisms
 
@@ -91,6 +102,19 @@ to remove a `role = 'owner'` row), invitation-token validity, child-profile fiel
 [Family Spaces](../domain/family-spaces.md) for the full RPC list and
 [DECISIONS.md, "Phase 3"](../../../docs/DECISIONS.md) for why the table-write boundary from
 Phase 2 was kept rather than opened up.
+
+## Personal-task mutations are RPC-only too (Phase 4)
+
+`tasks` has no direct `INSERT`/`UPDATE`/`DELETE` grant for `authenticated` — every mutation
+(`create_personal_task`, `update_personal_task`, `complete_personal_task`/
+`restore_personal_task`, `schedule_personal_task`, `move_task_to_inbox`,
+`delete_or_archive_personal_task`, plus `create_custom_category` on `categories`) is a
+`SECURITY DEFINER` RPC, same pattern as Family Space. `SELECT` remains direct/RLS-governed
+(reads never had the write-path problem). See
+[Personal planning](../domain/personal-planning.md) for the full RPC list and
+[DECISIONS.md, "Phase 4"](../../../docs/DECISIONS.md) for the audit finding that motivated
+closing this table's write grant specifically (it wasn't closed proactively — it was Phase
+2's original design, tightened here after finding a real gap).
 
 ## Before enabling Realtime on any table
 

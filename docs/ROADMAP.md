@@ -7,6 +7,31 @@ V2/V3 and how the current architecture leaves room for them without a rewrite.
 
 See [MVP_SCOPE.md](MVP_SCOPE.md).
 
+### MVP-scope items not yet built, with a concrete plan
+
+Both of these are in `MVP_SCOPE.md`'s in-scope list — unlike the V2/V3 items below, they are
+not deferred to a later horizon on purpose, just not yet implemented, and each needed a
+decision recorded before Phase 4 could safely leave them out of the task editor (see
+`docs/DECISIONS.md`, "Phase 4," and `docs/DATA_MODEL.md`, "tasks").
+
+- **Recurring tasks.** `recurrence_rules` exists but has zero grants/policies, and no
+  personal-task RPC accepts a `recurrence_rule_id` — fully closed, not just unused. The
+  current schema (one `tasks` row per recurring series) can't preserve per-occurrence
+  completion history or prevent duplicate "next occurrence" generation without a schema
+  change: the anticipated shape is a `task_occurrences` table (one row per generated
+  occurrence, its own `completed_at`, `date`, and a FK back to the series' `tasks` row for the
+  shared title/description/priority/etc.), generated either N-ahead on a schedule or lazily on
+  read — same open question `recurrence_rules`' own migration comment already flagged.
+  Explicitly **not** implementable by just rewriting `tasks.date` on the same row when it's
+  completed — that destroys occurrence history, which the brief for this exact feature calls
+  out as unacceptable.
+- **Reminder scheduling.** `reminders` rows can already be created safely (the table's grants
+  are fine), but nothing schedules an actual `expo-notifications` delivery from one. Needs: a
+  background task or Edge Function that scans `reminders` for `remind_at` in the near future
+  and calls Expo's push API, plus `notification_tokens` registration on the client (the table
+  already exists, unused). The task editor deliberately has no reminder control until this
+  exists, rather than saving a reminder that silently never fires.
+
 ## V2 — not implemented, architecturally anticipated
 
 | Feature                                      | Where the architecture leaves room                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
