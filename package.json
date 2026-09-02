@@ -22,6 +22,7 @@
     "expo-splash-screen": "~57.0.8",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.3",
+    "expo-web-browser": "~57.0.2",
     "i18next": "^26.4.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -54,6 +55,7 @@
     "jest-expo": "^57.0.5",
     "prettier": "^3.9.6",
     "react-test-renderer": "^19.2.3",
+    "supabase": "^2.116.0",
     "typescript": "^6.0.3"
   },
   "scripts": {
@@ -68,6 +70,11 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "wiki:lint": "node scripts/wiki-lint.mjs",
-    "verify": "npm run lint && npm run typecheck && npm run test && npm run wiki:lint"
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run wiki:lint",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:test": "supabase test db",
+    "db:types": "supabase gen types typescript --local > src/lib/supabase/types.ts"
   }
 }
