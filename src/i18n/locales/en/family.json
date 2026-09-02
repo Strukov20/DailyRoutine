@@ -1,0 +1,97 @@
+{
+  "title": "Family",
+  "emptyTitle": "No family yet",
+  "emptyDescription": "Create a Family Space or accept an invitation to see the shared schedule.",
+  "createFamily": "Create a Family Space",
+  "createAnother": "Create another family",
+  "inviteAction": "Invite someone",
+  "addChildAction": "Add a child",
+  "members": "Members",
+  "pendingInvitations": "Pending invitations",
+  "role": {
+    "owner": "Owner",
+    "adult": "Adult",
+    "child": "Child"
+  },
+  "create": {
+    "title": "Create a Family Space",
+    "nameField": "Family name",
+    "namePlaceholder": "e.g. The Smiths",
+    "submit": "Create",
+    "errors": {
+      "nameRequired": "Enter a family name."
+    }
+  },
+  "invite": {
+    "title": "Invite someone",
+    "description": "Send an invitation by email, then share the link that's generated — there's no automatic email delivery yet.",
+    "emailField": "Email address",
+    "submit": "Create invitation",
+    "linkReady": "Invitation created. Share this link with them:",
+    "share": "Share",
+    "copyLink": "Copy link",
+    "copied": "Copied!",
+    "shareMessage": "You're invited to join a family on FamilyFlow: {{link}}",
+    "errors": {
+      "emailRequired": "Enter an email address.",
+      "emailInvalid": "Enter a valid email address.",
+      "forbidden": "Only the family owner can send invitations.",
+      "acceptFailed": "Couldn't accept this invitation. Please try again.",
+      "declineFailed": "Couldn't decline this invitation. Please try again."
+    },
+    "signedOut": {
+      "title": "You've been invited to a family",
+      "description": "Sign in or create an account to view the invitation and respond.",
+      "createAccount": "Create account",
+      "signIn": "Sign in"
+    },
+    "declined": {
+      "title": "Invitation declined.",
+      "action": "Go to FamilyFlow"
+    },
+    "noLongerValid": {
+      "title": "This invitation is no longer available"
+    },
+    "notFound": {
+      "title": "Invitation not found",
+      "description": "This link may be broken or the invitation may no longer exist."
+    },
+    "status": {
+      "pending": "Waiting for a response",
+      "accepted": "Already accepted",
+      "declined": "Already declined",
+      "expired": "Expired",
+      "revoked": "No longer available"
+    },
+    "preview": {
+      "title": "Join {{familyName}} on FamilyFlow",
+      "description": "Invited by {{inviter}}.",
+      "accept": "Accept",
+      "decline": "Decline"
+    }
+  },
+  "addChild": {
+    "title": "Add a child",
+    "nameField": "Child's name",
+    "dateOfBirthField": "Date of birth (optional)",
+    "submit": "Add",
+    "errors": {
+      "nameRequired": "Enter the child's name."
+    }
+  },
+  "member": {
+    "title": "Member",
+    "notFound": "This family member could not be found.",
+    "remove": "Remove from family",
+    "removeConfirm": {
+      "title": "Remove this member?",
+      "message": "They will lose access to this family's shared schedule."
+    }
+  },
+  "errors": {
+    "forbidden": "You don't have permission to do that.",
+    "alreadyMember": "This person is already a member of the family.",
+    "invalidOrExpiredInvitation": "This invitation is no longer valid.",
+    "generic": "Something went wrong. Please try again."
+  }
+}

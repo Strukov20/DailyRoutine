@@ -14,12 +14,6 @@
     "emptyTitle": "Inbox zero",
     "emptyDescription": "Tasks without a date live here until you schedule or complete them."
   },
-  "family": {
-    "title": "Family",
-    "emptyTitle": "No family yet",
-    "emptyDescription": "Create a Family Space or accept an invitation to see the shared schedule.",
-    "createFamily": "Create a Family Space"
-  },
   "profile": {
     "title": "Profile",
     "language": "Language",

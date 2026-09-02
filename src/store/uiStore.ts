@@ -19,6 +19,16 @@ interface UIState {
    */
   activeFamilyId: string | null;
   setActiveFamilyId: (familyId: string | null) => void;
+
+  /**
+   * An invitation token the user opened while signed out — set by
+   * app/invite/[token].tsx, consumed by app/_layout.tsx's redirect effect
+   * once auth completes, then cleared. Not persisted across app restarts
+   * (there is no persist middleware on this store), which is the intended
+   * lifetime for a mid-flow value like this one.
+   */
+  pendingInviteToken: string | null;
+  setPendingInviteToken: (token: string | null) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -27,4 +37,7 @@ export const useUIStore = create<UIState>((set) => ({
 
   activeFamilyId: null,
   setActiveFamilyId: (familyId) => set({ activeFamilyId: familyId }),
+
+  pendingInviteToken: null,
+  setPendingInviteToken: (token) => set({ pendingInviteToken: token }),
 }));

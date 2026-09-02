@@ -1,5 +1,6 @@
-import { Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -9,6 +10,7 @@ import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { initI18n } from '@/i18n';
 import { AuthProvider, useAuth } from '@/lib/auth/AuthProvider';
 import { QueryProvider } from '@/lib/query/QueryProvider';
+import { useUIStore } from '@/store/uiStore';
 import { AppThemeProvider, useAppTheme } from '@/theme';
 
 // Synchronous — resources are bundled, not fetched — so translations are
@@ -36,6 +38,20 @@ export default function RootLayout() {
 function RootNavigator() {
   const theme = useAppTheme();
   const { status } = useAuth();
+  const pendingInviteToken = useUIStore((state) => state.pendingInviteToken);
+  const setPendingInviteToken = useUIStore((state) => state.setPendingInviteToken);
+
+  // A signed-out visitor who opened an invitation deep link
+  // (app/invite/[token].tsx) was sent to sign in/up with no way to carry
+  // the token through that flow's own navigation. Once they're signed in,
+  // send them straight back to the invite screen instead of the default
+  // (app) tab.
+  useEffect(() => {
+    if (status === 'signed-in' && pendingInviteToken) {
+      setPendingInviteToken(null);
+      router.replace(`/invite/${pendingInviteToken}`);
+    }
+  }, [status, pendingInviteToken, setPendingInviteToken]);
 
   if (status === 'loading') {
     // Nothing renders behind this while the session restores — prevents a
@@ -59,10 +75,24 @@ function RootNavigator() {
         <Stack.Protected guard={status === 'signed-in'}>
           <Stack.Screen name="(app)" />
           <Stack.Screen name="task/new" options={{ presentation: 'modal', headerShown: true }} />
+          <Stack.Screen
+            name="family/create"
+            options={{ presentation: 'modal', headerShown: true }}
+          />
+          <Stack.Screen
+            name="family/invite"
+            options={{ presentation: 'modal', headerShown: true }}
+          />
+          <Stack.Screen
+            name="family/add-child"
+            options={{ presentation: 'modal', headerShown: true }}
+          />
+          <Stack.Screen name="family/member/[id]" options={{ headerShown: true }} />
         </Stack.Protected>
         <Stack.Screen name="index" />
         <Stack.Screen name="reset-password" />
         <Stack.Screen name="auth-callback" />
+        <Stack.Screen name="invite/[token]" />
         <Stack.Screen name="+not-found" />
       </Stack>
     </>
