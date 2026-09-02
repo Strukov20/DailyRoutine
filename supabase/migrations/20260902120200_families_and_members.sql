@@ -90,6 +90,93 @@ create index family_members_profile_id_idx on public.family_members (profile_id)
   where profile_id is not null;
 
 -- ---------------------------------------------------------------------------
+-- Family-membership helpers (anti-recursion pattern for RLS)
+-- ---------------------------------------------------------------------------
+-- family_members' own RLS policies (below) need to answer "is the current
+-- user a member of family X?" — but a policy on family_members that
+-- subqueries family_members directly recurses infinitely when Postgres
+-- evaluates it.
+--
+-- The fix: SECURITY DEFINER functions owned by the migration role (postgres,
+-- which owns every table it creates) bypass RLS on tables that role owns
+-- when executing their own internal queries. A SECURITY DEFINER function can
+-- therefore safely query family_members from *inside* a family_members (or
+-- any other) RLS policy without recursing. This is the standard Supabase
+-- pattern for this problem — see docs/SECURITY_AND_PRIVACY.md and
+-- docs/DECISIONS.md, "RLS anti-recursion helpers". Defined here, not in
+-- 20260902120000_extensions_and_helpers.sql, because PostgreSQL resolves
+-- table references inside a LANGUAGE SQL function body at CREATE FUNCTION
+-- time — confirmed against a real local instance — so these can't be
+-- defined before family_members exists.
+--
+-- `stable` (not `immutable`) because the result depends on table contents,
+-- not just arguments — lets Postgres cache the result once per statement
+-- without allowing it to be folded away entirely.
+
+create function public.is_family_member(p_family_id uuid, p_profile_id uuid default auth.uid())
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.family_members fm
+    where fm.family_id = p_family_id
+      and fm.profile_id = p_profile_id
+  );
+$$;
+
+comment on function public.is_family_member(uuid, uuid) is
+  'True if p_profile_id (default: caller) is any member (adult or linked child) of p_family_id. '
+  'SECURITY DEFINER to avoid recursive RLS — see comment above.';
+
+create function public.is_family_owner(p_family_id uuid, p_profile_id uuid default auth.uid())
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.family_members fm
+    where fm.family_id = p_family_id
+      and fm.profile_id = p_profile_id
+      and fm.role = 'owner'
+  );
+$$;
+
+comment on function public.is_family_owner(uuid, uuid) is
+  'True if p_profile_id (default: caller) is the owner of p_family_id.';
+
+create function public.current_family_ids()
+returns setof uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select fm.family_id
+  from public.family_members fm
+  where fm.profile_id = auth.uid();
+$$;
+
+comment on function public.current_family_ids() is
+  'All family_id values the caller is an adult member of. Use as '
+  '`family_id in (select public.current_family_ids())` in RLS policies instead of joining '
+  'family_members directly, to avoid recursive policy evaluation.';
+
+revoke all on function public.is_family_member(uuid, uuid) from public;
+revoke all on function public.is_family_owner(uuid, uuid) from public;
+revoke all on function public.current_family_ids() from public;
+
+grant execute on function public.is_family_member(uuid, uuid) to authenticated;
+grant execute on function public.is_family_owner(uuid, uuid) to authenticated;
+grant execute on function public.current_family_ids() to authenticated;
+
+-- ---------------------------------------------------------------------------
 -- Owner consistency: families.owner_id must match the single 'owner' row's
 -- profile_id (when one exists). A validating (not syncing) trigger — see the
 -- comment on families.owner_id for why write-ordering makes this safe
