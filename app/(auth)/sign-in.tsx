@@ -1,18 +1,27 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link, Stack } from 'expo-router';
+import { useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, View } from 'react-native';
-import { Button, HelperText, Text, TextInput } from 'react-native-paper';
+import { Button, Divider, HelperText, Text, TextInput } from 'react-native-paper';
 
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { signInSchema, type SignInInput } from '@/domain/auth/schemas';
+import { authErrorMessageKey } from '@/domain/auth/errorMessages';
+import { AuthServiceError, signInWithPassword } from '@/lib/auth/authService';
+import {
+  isAppleAuthEnabled,
+  isGoogleAuthEnabled,
+  signInWithApple,
+  signInWithGoogle,
+} from '@/lib/auth/oauth';
 import { createLogger } from '@/lib/logger/logger';
 import { useAppTheme } from '@/theme';
 
 const logger = createLogger('sign-in');
 
-const ERROR_MESSAGE_KEYS: Record<string, string> = {
+const FIELD_ERROR_MESSAGE_KEYS: Record<string, string> = {
   email_required: 'signIn.errors.emailRequired',
   email_invalid: 'signIn.errors.emailInvalid',
   password_too_short: 'signIn.errors.passwordTooShort',
@@ -21,6 +30,8 @@ const ERROR_MESSAGE_KEYS: Record<string, string> = {
 export default function SignInScreen() {
   const { t } = useTranslation(['auth', 'common']);
   const theme = useAppTheme();
+  const [formError, setFormError] = useState<string | null>(null);
+  const [oauthLoading, setOauthLoading] = useState<'google' | 'apple' | null>(null);
   const {
     control,
     handleSubmit,
@@ -31,15 +42,36 @@ export default function SignInScreen() {
   });
 
   const onSubmit = handleSubmit(async (values) => {
-    // Real sign-in (Supabase Auth) is a later phase — see docs/ROADMAP.md.
-    // This proves the validated-form path end to end without persisting
-    // anything or claiming a session was created.
-    logger.info('sign-in submitted (not yet wired to Supabase)', { email: values.email });
+    setFormError(null);
+    try {
+      await signInWithPassword(values);
+      // No navigation call needed: AuthProvider's onAuthStateChange flips
+      // status to 'signed-in', and the root Stack.Protected guard (see
+      // app/_layout.tsx) automatically swaps in the (app) tabs.
+    } catch (error) {
+      const code = error instanceof AuthServiceError ? error.code : 'unknown';
+      logger.warn('sign-in failed', { code });
+      setFormError(t(authErrorMessageKey(code)));
+    }
   });
+
+  const onOAuthPress = async (provider: 'google' | 'apple') => {
+    setFormError(null);
+    setOauthLoading(provider);
+    try {
+      await (provider === 'google' ? signInWithGoogle() : signInWithApple());
+    } catch (error) {
+      const code = error instanceof AuthServiceError ? error.code : 'unknown';
+      logger.warn(`${provider} sign-in failed`, { code });
+      setFormError(t(authErrorMessageKey(code)));
+    } finally {
+      setOauthLoading(null);
+    }
+  };
 
   const errorMessage = (field: keyof SignInInput): string | undefined => {
     const key = errors[field]?.message;
-    return key ? t(`auth:${ERROR_MESSAGE_KEYS[key] ?? key}`) : undefined;
+    return key ? t(`auth:${FIELD_ERROR_MESSAGE_KEYS[key] ?? key}`) : undefined;
   };
 
   return (
@@ -99,13 +131,54 @@ export default function SignInScreen() {
           )}
         />
 
+        <Link href="/(auth)/forgot-password" style={styles.forgotLink}>
+          <Text style={{ color: theme.colors.primary }}>{t('auth:signIn.forgotPassword')}</Text>
+        </Link>
+
+        <HelperText type="error" visible={Boolean(formError)}>
+          {formError}
+        </HelperText>
+
         <Button mode="contained" onPress={onSubmit} loading={isSubmitting} style={styles.submit}>
           {t('auth:signIn.submit')}
         </Button>
 
-        <Text style={[styles.notice, { color: theme.colors.onSurfaceVariant }]}>
-          {t('auth:notImplemented')}
-        </Text>
+        {(isGoogleAuthEnabled || isAppleAuthEnabled) && (
+          <>
+            <View style={styles.dividerRow}>
+              <Divider style={styles.dividerLine} />
+              <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                {t('auth:signIn.orDivider')}
+              </Text>
+              <Divider style={styles.dividerLine} />
+            </View>
+
+            {isGoogleAuthEnabled && (
+              <Button
+                mode="outlined"
+                icon="google"
+                onPress={() => void onOAuthPress('google')}
+                loading={oauthLoading === 'google'}
+                disabled={oauthLoading !== null}
+                style={styles.oauthButton}
+              >
+                {t('auth:signIn.continueWithGoogle')}
+              </Button>
+            )}
+            {isAppleAuthEnabled && (
+              <Button
+                mode="outlined"
+                icon="apple"
+                onPress={() => void onOAuthPress('apple')}
+                loading={oauthLoading === 'apple'}
+                disabled={oauthLoading !== null}
+                style={styles.oauthButton}
+              >
+                {t('auth:signIn.continueWithApple')}
+              </Button>
+            )}
+          </>
+        )}
 
         <View style={styles.footer}>
           <Text style={{ color: theme.colors.onSurfaceVariant }}>{t('auth:signIn.noAccount')}</Text>
@@ -132,13 +205,24 @@ const styles = StyleSheet.create({
   field: {
     marginBottom: 4,
   },
+  forgotLink: {
+    alignSelf: 'flex-end',
+  },
   submit: {
     marginTop: 8,
   },
-  notice: {
-    marginTop: 16,
-    fontSize: 12,
-    textAlign: 'center',
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 20,
+    marginBottom: 12,
+  },
+  dividerLine: {
+    flex: 1,
+  },
+  oauthButton: {
+    marginTop: 8,
   },
   footer: {
     flexDirection: 'row',
