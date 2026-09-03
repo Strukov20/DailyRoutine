@@ -142,16 +142,22 @@ select is(
   'owner A sees all 3 of their own tasks regardless of visibility'
 );
 
--- Owner cannot write an assignee_member_id from outside their own family
--- through a client-facing UPDATE either (same composite FK applies to UPDATE).
+-- Phase 4: authenticated has no direct UPDATE grant on tasks at all anymore
+-- (every mutation is a SECURITY DEFINER RPC — see
+-- supabase/migrations/20260904120000_personal_task_management.sql), so a
+-- raw client-facing UPDATE fails on the grant before it would ever reach
+-- the composite FK. This is a stricter, not weaker, guarantee than the
+-- FK-violation this test originally asserted: it used to prove a
+-- cross-family assignee_member_id specifically couldn't be written via
+-- UPDATE; it now proves *no* field can be written via UPDATE at all.
 select throws_ok(
   format(
     $$ update public.tasks set assignee_member_id = %L where id = %L $$,
     :'owner_d_member_id', :'family_task_id'
   ),
-  '23503',
+  '42501',
   null,
-  'UPDATE cannot set a cross-family assignee either — the FK applies to updates too'
+  'no direct UPDATE grant on tasks at all (Phase 4) — a fortiori, no cross-family assignee via UPDATE'
 );
 
 -- ---------------------------------------------------------------------------

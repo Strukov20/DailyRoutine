@@ -145,25 +145,48 @@ custom categories are a V2 nice-to-have, not blocked by this schema).
 ## tasks
 
 **Owned by a user** (personal) **or a family** (shared) — never both; see "Ownership and
-authorization." Only `title` is required, matching `src/domain/tasks/schemas.ts`.
+authorization." Only `title` is required, matching `src/domain/tasks/schemas.ts`. Every
+mutation is RPC-only (`create_personal_task` and friends —
+`supabase/migrations/20260904120000_personal_task_management.sql`); `authenticated` has no
+direct `INSERT`/`UPDATE`/`DELETE` grant. See [DECISIONS.md, "Phase
+4"](DECISIONS.md) for why.
 
-| column               | type                                   | notes                                                                                                                                                                                     |
-| -------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`                 | uuid                                   |                                                                                                                                                                                           |
-| `owner_profile_id`   | uuid → `profiles.id`                   | who created it                                                                                                                                                                            |
-| `family_id`          | uuid → `families.id`, nullable         | null = personal task                                                                                                                                                                      |
-| `title`              | text                                   | **required, only mandatory field**                                                                                                                                                        |
-| `description`        | text                                   | nullable                                                                                                                                                                                  |
-| `date`               | date                                   | nullable — null means "Inbox"                                                                                                                                                             |
-| `start_time`         | time                                   | nullable — a task can have a date without a time                                                                                                                                          |
-| `duration_minutes`   | integer                                | nullable                                                                                                                                                                                  |
-| `priority`           | text                                   | `'normal' \| 'important' \| 'critical'` — matches `src/domain/tasks/priority.ts` exactly; that module's ordering logic is the client-side mirror of this column, not a redefinition of it |
-| `category_id`        | uuid → `categories.id`, nullable       |                                                                                                                                                                                           |
-| `recurrence_rule_id` | uuid → `recurrence_rules.id`, nullable |                                                                                                                                                                                           |
-| `visibility`         | text                                   | `'private' \| 'family'` — meaningless (ignored) when `family_id IS NULL`                                                                                                                  |
-| `completed_at`       | timestamptz                            | nullable; presence = completed. Not a boolean, so "when" is never lost                                                                                                                    |
-| `assignee_member_id` | uuid → `family_members.id`, nullable   | current assignee, family tasks only                                                                                                                                                       |
-| `assignment_status`  | text                                   | `'unassigned' \| 'pending_acceptance' \| 'accepted' \| 'declined'` — see `task_assignments` for the auditable history this field is a snapshot of                                         |
+| column               | type                                   | notes                                                                                                                                                                                                                                  |
+| -------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                 | uuid                                   |                                                                                                                                                                                                                                        |
+| `owner_profile_id`   | uuid → `profiles.id`                   | who created it — never a parameter to any RPC, always the caller                                                                                                                                                                       |
+| `family_id`          | uuid → `families.id`, nullable         | null = personal task                                                                                                                                                                                                                   |
+| `title`              | text                                   | **required, only mandatory field**                                                                                                                                                                                                     |
+| `description`        | text                                   | nullable                                                                                                                                                                                                                               |
+| `date`               | date                                   | nullable — null means "Inbox"                                                                                                                                                                                                          |
+| `start_time`         | time                                   | nullable — a task can have a date without a time, but not the reverse (`tasks_time_requires_date` CHECK, Phase 4)                                                                                                                      |
+| `duration_minutes`   | integer                                | nullable; `1`–`1440` (one day) when set — `tasks_duration_minutes_bounded` CHECK, Phase 4                                                                                                                                              |
+| `priority`           | text                                   | `'normal' \| 'important' \| 'critical'` — matches `src/domain/tasks/priority.ts` exactly; that module's ordering logic is the client-side mirror of this column, not a redefinition of it                                              |
+| `category_id`        | uuid → `categories.id`, nullable       |                                                                                                                                                                                                                                        |
+| `recurrence_rule_id` | uuid → `recurrence_rules.id`, nullable | not settable via any RPC this phase — see "Recurrence" below                                                                                                                                                                           |
+| `visibility`         | text                                   | `'private' \| 'family'` — meaningless (ignored) when `family_id IS NULL`                                                                                                                                                               |
+| `completed_at`       | timestamptz                            | nullable; presence = completed. Not a boolean, so "when" is never lost. Toggled by `complete_personal_task`/`restore_personal_task`, both idempotent                                                                                   |
+| `deleted_at`         | timestamptz                            | nullable; soft delete/archive (Phase 4) — set only by `delete_or_archive_personal_task`, idempotent. Excluded from the owner's own `SELECT` policy and from `family_task_board`, not just filtered client-side; no undelete this phase |
+| `assignee_member_id` | uuid → `family_members.id`, nullable   | current assignee, family tasks only — not settable via any personal-task RPC this phase                                                                                                                                                |
+| `assignment_status`  | text                                   | `'unassigned' \| 'pending_acceptance' \| 'accepted' \| 'declined'` — see `task_assignments` for the auditable history this field is a snapshot of                                                                                      |
+
+### Recurrence — deliberately not exposed this phase
+
+`recurrence_rules` has zero grants/policies for `authenticated` (see that table's own section
+below) and no personal-task RPC accepts a `recurrence_rule_id` parameter — the read/write
+surface is fully closed, not just unused by the UI. A correct implementation needs to preserve
+completion history per occurrence and prevent duplicate "next occurrence" generation, which the
+current schema (one `tasks` row per recurring series, sharing a `recurrence_rule_id`) cannot do
+without generating a new task row per occurrence — a schema change, not just new UI. See
+[ROADMAP.md](ROADMAP.md) for the concrete proposal.
+
+### Reminders — data layer only, no notification scheduling
+
+`reminders` rows can be created (the table's grants are already safe — see
+[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md)), but nothing in this phase schedules an
+actual Expo notification from one. The task editor does not expose reminder controls this
+phase, specifically to avoid implying a reminder does anything once saved — see
+[ROADMAP.md](ROADMAP.md).
 
 ## task_assignments
 
@@ -302,6 +325,11 @@ its "audit" story) gets:
 | `task_assignments`, `event_participants`, `responsibilities` | the family                         | family adults                                                                                                                                |
 | `reminders`                                                  | the user                           | owner only — never visible to other family members, even for a shared task                                                                   |
 | `notification_tokens`                                        | the user                           | owner only; never exposed to any other user, including family members                                                                        |
+
+This table describes **reads**, governed by RLS `SELECT` policies on both tables alike. Writes
+diverge: `tasks` is RPC-only (Phase 4, see above); `events` still has no CRUD UI or RPCs at
+all this phase (see [MVP_SCOPE.md](MVP_SCOPE.md)) — its own write-path decision is therefore
+still open, not settled by this table.
 
 This table is the plain-language summary; the enforceable version is Postgres RLS policies,
 designed in [SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md) and written before any

@@ -1,11 +1,12 @@
 ---
 title: Privacy and availability
 status: current
-updated: 2026-09-02
+updated: 2026-09-03
 sources:
   - ../../../docs/SECURITY_AND_PRIVACY.md
   - ../../../docs/DATA_MODEL.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
+  - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
 tags: [domain, privacy, security, critical-rule]
 ---
 
@@ -21,13 +22,20 @@ called out explicitly as the easiest way to get this wrong by accident.
 
 ## Status: implemented (mechanisms 1, 2, 5) / not yet implemented (3, 4)
 
-`supabase/migrations/` implements and `supabase/tests/060_privacy_regression_test.sql`
-proves mechanisms 1, 2, and 5 below — a secret marker planted in every sensitive field of a
-private event/task is asserted absent from every non-owner query path. Mechanisms 3
-(Realtime) and 4 (notifications) remain undone, by design (out of Phase 2 scope).
-**Verified against a real local Postgres instance** (`supabase test db`, all 88 assertions
-passing) — see
-[`knowledge/raw/sessions/2026-09-02-phase2-docker-resolved.md`](../../raw/sessions/2026-09-02-phase2-docker-resolved.md).
+`supabase/migrations/` implements and `supabase/tests/060_privacy_regression_test.sql` +
+`090_personal_task_management_test.sql` (Phase 4's own secret-marker sweep, extended to the
+personal-task RPC write path) prove mechanisms 1, 2, and 5 below — a secret marker planted in
+every sensitive field of a private event/task is asserted absent from every non-owner query
+path. Mechanisms 3 (Realtime) and 4 (notifications) remain undone, by design (still out of
+scope through Phase 4). **Verified against a real local Postgres instance**
+(`supabase test db`, all 192 assertions passing as of Phase 4) — see
+[`knowledge/raw/sessions/2026-09-02-phase2-docker-resolved.md`](../../raw/sessions/2026-09-02-phase2-docker-resolved.md)
+and
+[`knowledge/raw/sessions/2026-09-03-phase4-personal-tasks.md`](../../raw/sessions/2026-09-03-phase4-personal-tasks.md).
+Phase 4 also found and closed a real gap in Mechanism 1 for `tasks` specifically: the direct
+`UPDATE` grant let a client rewrite `family_id` on their own task without revalidating family
+membership the way `INSERT` did — see
+[security-model](../engineering/security-model.md) for the fix (RPC-only writes).
 
 ## Mechanisms
 

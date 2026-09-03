@@ -565,3 +565,145 @@ clearing the field immediately after. This is `uiStore`'s only Phase 3 addition 
 `activeFamilyId`, and it fits the same "genuinely UI-only, no server owner" test — it's not
 persisted (no persist middleware on this store), which is the right lifetime for a value that
 should not survive an app restart.
+
+## Phase 4 (Personal Tasks, Inbox, Today, Tomorrow)
+
+The entries below were made implementing
+`supabase/migrations/20260904120000_personal_task_management.sql`, `src/lib/tasks/`,
+`src/domain/tasks/`, `src/lib/categories/`, `src/domain/categories/`, and
+`app/(app)/{inbox,today}.tsx` / `app/tomorrow.tsx` / `app/task/**`. Like Phase 3, this began
+with a security audit of the existing task-related schema before writing any application code.
+
+### Audit finding: `tasks` granted raw `INSERT`/`UPDATE`/`DELETE` to `authenticated`
+
+The Phase 2 `tasks_update_own` policy's `WITH CHECK` only pinned `owner_profile_id =
+auth.uid()` — nothing stopped a client from directly rewriting `family_id`,
+`assignee_member_id`, or `assignment_status` on their own task via a plain `PATCH`, bypassing
+the `task_assignments` audit trail entirely, and nothing revalidated `is_family_member` on
+`UPDATE` the way the `INSERT` policy did (an owner could set `family_id` to a family they
+don't belong to, and — since the sanitized-view WHERE clause only checks the _viewer's_
+membership, not the _owner's_ — that family's real members would then see the task on
+`family_task_board`). **Decision:** revoke `INSERT`/`UPDATE`/`DELETE` on `tasks` entirely and
+replace every mutation with the seven RPCs this migration adds (see below), continuing the
+Phase 3 RPC-only pattern rather than trying to patch the policy. `SELECT` stays a direct,
+RLS-governed table read (reads are already safe and don't multiply into a business-invariant
+problem the way writes did). The one existing pgTAP assertion this changed
+(`040_tasks_and_assignments_test.sql`'s cross-family-assignee-via-UPDATE test) now expects
+`42501` instead of `23503` — a strictly stronger guarantee (no field at all can be written via
+`UPDATE`, not just that specific one), documented inline at the change site.
+
+### Two new CHECK constraints, additive to Phase 2's
+
+`tasks_time_requires_date` (`start_time is null or date is not null`) and
+`tasks_duration_minutes_bounded` (replacing the old unbounded `> 0` check with `> 0 and <=
+1440`) close two real gaps: a task could previously have a start time with no date at all
+(ambiguous — which day does that time belong to?), and duration had no upper bound. Both are
+table-level constraints, not re-implemented per-RPC, so they hold regardless of write path.
+**Not changed**, on purpose: `DATA_MODEL.md` already documents `visibility = 'family'` with
+`family_id IS NULL` as an intentional "ignored, not invalid" state (also reconfirmed via
+`family_task_board`'s own `WHERE family_id IS NOT NULL` clause, which already makes that
+combination inert) — no constraint was added against it, since doing so would silently
+override a prior, deliberate design decision rather than close an audit gap.
+
+### Soft delete: `tasks.deleted_at`, not a status column
+
+`docs/DATA_MODEL.md` had no delete/archive story for tasks yet. Per this phase's own brief
+("prefer soft deletion using an approved field such as `deleted_at`"), added `deleted_at
+timestamptz` and folded `deleted_at is null` directly into the `tasks_select_owner_or_family_visible`
+RLS policy and into `family_task_board`'s `WHERE` clause — an archived task disappears from
+every normal read path **including the owner's own**, not just from a client-side filter, and
+including the sanitized family view. `delete_or_archive_personal_task` is the only way to set
+it (idempotent — archiving an already-archived task is a no-op, not an error) and there is no
+undelete/unarchive RPC or UI this phase — a deliberate, explicit scope trim ("Do not add
+permanent deletion UI unless explicitly documented"), not an oversight; see
+[ROADMAP.md](ROADMAP.md) for the "trash view" it would take to change that.
+
+### Seven personal-task RPCs, each with one clear responsibility
+
+`create_personal_task` (accepts the full optional field set, including an initial schedule —
+covers both "quick add" and "full create" in one call), `update_personal_task` (content fields
+only: title/description/priority/category/visibility/family_id — unsupplied parameters leave
+the field unchanged, matching "editing does not overwrite unchanged fields"; `description`/
+`category_id` use an explicit clear flag, same pattern as `update_child_profile`'s
+`p_clear_avatar` in Phase 3, because `null` already means "unchanged" for them),
+`complete_personal_task`/`restore_personal_task` (both idempotent — a repeat call is a no-op,
+not an error), `schedule_personal_task` (requires `date`; wholesale-replaces
+`start_time`/`duration_minutes`/`timezone` rather than merging them, so "Today, Anytime" →
+"Today, 14:00 for 30m" → "Tomorrow, Anytime" is always a clean atomic state with no stale
+leftover field — also how "move to Today"/"move to Tomorrow" and manual reschedule are all the
+same RPC, the client just picks the date), and `move_task_to_inbox` (clears all four
+scheduling fields). None of the seven ever accepts `owner_profile_id`, `assignee_member_id`,
+or `assignment_status` as a parameter — not merely unvalidated, structurally absent from every
+function signature.
+
+### `create_custom_category`: closes a Phase 2 dead-policy gap
+
+`categories_family_owner_manages_custom`, from Phase 2, was a `for all` policy with zero
+backing grant — the exact dead-policy pattern Phase 3 already found and fixed for
+`family_members`/`family_invitations`. Custom category creation never actually worked before
+this RPC. Owner-only, mirroring the family-administrative-action convention already
+established for invitations/child profiles.
+
+### Category identity: `color_token`, never `name`
+
+A system category's localized label is looked up via `common:category.<colorToken>`
+(`src/components/tasks/CategoryBadge.tsx`) — `name` (stored as plain English, e.g. `'Work'`,
+in `supabase/seed.sql`) is shown only for a _custom_ category, which has no translation key by
+definition. This is the concrete implementation of "don't store localized display text as the
+immutable category identity."
+
+### Date-only tasks: a dependency-free, UTC-round-trip-free utility module
+
+`src/domain/tasks/dateUtils.ts` never calls `new Date(dateOnlyString)` or
+`date.toISOString()` — both interpret/emit as UTC midnight, which is a different calendar day
+from local midnight in any non-zero-offset timezone (the exact bug class this phase's brief
+calls out by name). Every function instead builds/reads a `Date` via the local 4-argument
+constructor and local getters (`getFullYear`/`getMonth`/`getDate`), which by construction never
+depends on UTC conversion at all — and "YYYY-MM-DD" strings are compared lexicographically
+rather than parsed back into `Date` objects at all where possible
+(`compareDateOnlyStrings`/`isOverdue`). **A real environment quirk found while testing this**:
+`process.env.TZ` reassignment at runtime reliably changes `Date`'s local-time output in plain
+Node (confirmed via `node -e`), but does **not** reliably do so inside this project's
+`jest-expo` test environment. Since every function here takes its "now" as an explicit
+already-local `Date` rather than reading ambient timezone state, this doesn't affect
+correctness — but it means `src/domain/tasks/dateUtils.test.ts`'s per-zone test wrappers are
+there to guard against a _future_ implementation that does start reading ambient state, not
+because today's implementation needs them to pass. Don't assume a `process.env.TZ` trick will
+work for verifying other timezone-dependent code in this test environment without checking
+first.
+
+### Optimistic UI: completion only, with deterministic rollback
+
+Per `docs/ARCHITECTURE.md`'s rule ("optimistic completion may be used only with deterministic
+rollback, duplicate-tap prevention, and tests for server failure"), only
+`complete_personal_task`/`restore_personal_task` are optimistic
+(`src/domain/tasks/hooks.ts`) — `onMutate` snapshots every currently-mounted task-list query,
+patches the target task in place, and `onError` restores the exact snapshot on failure (tested
+in `src/domain/tasks/hooks.test.tsx`, including the failure-rollback case). Create, update,
+schedule, move-to-inbox, and delete all wait for server confirmation with no optimistic
+update — per that same rule, since none of them has a trivially safe rollback the way toggling
+a boolean-shaped field does. Duplicate-tap prevention for completion is at the component level
+(`TaskRow`'s `isTogglingComplete` prop disables the checkbox while its mutation is in flight);
+for quick-add creation, `QuickAddInput` guards re-entrancy with its own `isPending` check
+before calling `mutate` (`useMutation` does not dedupe concurrent `mutate()` calls on its own).
+
+### Query invalidation scoped to four keys, not the whole cache
+
+`invalidateTaskLists()` (`src/domain/tasks/hooks.ts`) invalidates exactly Inbox, today's
+overdue bucket, and the `forDate` queries for today and tomorrow — the only lists this phase's
+UI actually mounts — rather than a blanket `invalidateQueries({ queryKey: ['tasks'] })`, per
+`docs/ARCHITECTURE.md`'s "query invalidation limited to affected lists." The one gap this
+leaves: a manual reschedule to some date other than today/tomorrow has no mounted list to
+invalidate, since no screen shows an arbitrary date this phase — not a bug, just nothing to
+keep fresh yet.
+
+### Native pickers added, on-device testing deferred (same situation as Phase 3's clipboard)
+
+`@react-native-community/datetimepicker` (date/time fields in the task editor) and
+`@react-native-community/netinfo` (the offline banner, and TanStack Query's `onlineManager`
+wiring — see `src/lib/query/onlineManager.ts`, the official React Native integration recipe)
+were both added via `npx expo install`. Both are real native modules requiring a native
+rebuild before they're testable on a simulator/device — not done this session, same situation
+as `expo-clipboard` in Phase 3. `datetimepicker` additionally needed its Expo config plugin
+added by hand to `app.config.ts` (the `expo install` command couldn't write to the dynamic
+TypeScript config automatically).

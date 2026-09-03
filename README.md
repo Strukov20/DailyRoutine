@@ -27,11 +27,20 @@ Full product/architecture documentation lives in [`docs/`](docs/):
   authentication (sign-up, sign-in, sign-out, password reset, email confirmation — see
   [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), "Authentication"), Google/Apple sign-in
   architecturally complete but config-gated off by default.
+- **Phase 3 (Family Space)**: family creation, hashed-token invitations (deep-link/Share/
+  copy-link delivery, no email provider), Owner/Adult/Child permissions, child profiles — all
+  RPC-only writes. See [docs/DECISIONS.md](docs/DECISIONS.md), "Phase 3."
+- **Phase 4 (Personal Tasks)**: full personal-task lifecycle (create, edit, complete, restore,
+  schedule, archive) via RPC-only writes; Inbox, Today (overdue/timed/anytime/completed), and
+  Tomorrow screens with quick-add and a full editor; categories (system defaults + basic
+  custom creation). Recurring tasks and reminder scheduling remain MVP-scope but not yet
+  built — see [docs/ROADMAP.md](docs/ROADMAP.md), "MVP-scope items not yet built." See
+  [docs/DECISIONS.md](docs/DECISIONS.md), "Phase 4."
 
-Still not implemented: task/event CRUD UI, family creation/invitations UI, calendar UI,
-Realtime sync, notifications — see [docs/MVP_SCOPE.md](docs/MVP_SCOPE.md) for the exact
-boundary and [docs/DECISIONS.md](docs/DECISIONS.md) for why things were built the way they
-were.
+Still not implemented: shared task assignment UI, event/calendar CRUD UI, Family Today,
+recurring-task generation, reminder scheduling, Realtime sync, push notifications — see
+[docs/MVP_SCOPE.md](docs/MVP_SCOPE.md) for the exact boundary and
+[docs/DECISIONS.md](docs/DECISIONS.md) for why things were built the way they were.
 
 ## Getting started
 

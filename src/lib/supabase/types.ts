@@ -691,6 +691,7 @@ export type Database = {
           created_at: string
           created_by: string
           date: string | null
+          deleted_at: string | null
           description: string | null
           duration_minutes: number | null
           family_id: string | null
@@ -712,6 +713,7 @@ export type Database = {
           created_at?: string
           created_by: string
           date?: string | null
+          deleted_at?: string | null
           description?: string | null
           duration_minutes?: number | null
           family_id?: string | null
@@ -733,6 +735,7 @@ export type Database = {
           created_at?: string
           created_by?: string
           date?: string | null
+          deleted_at?: string | null
           description?: string | null
           duration_minutes?: number | null
           family_id?: string | null
@@ -919,6 +922,10 @@ export type Database = {
           family_member_id: string
         }[]
       }
+      complete_personal_task: {
+        Args: { p_task_id: string }
+        Returns: undefined
+      }
       create_child_profile: {
         Args: {
           p_avatar_url?: string
@@ -926,6 +933,10 @@ export type Database = {
           p_display_name: string
           p_family_id: string
         }
+        Returns: string
+      }
+      create_custom_category: {
+        Args: { p_color_token: string; p_family_id: string; p_name: string }
         Returns: string
       }
       create_family_invitation: {
@@ -947,10 +958,29 @@ export type Database = {
           family_member_id: string
         }[]
       }
+      create_personal_task: {
+        Args: {
+          p_category_id?: string
+          p_date?: string
+          p_description?: string
+          p_duration_minutes?: number
+          p_family_id?: string
+          p_priority?: string
+          p_start_time?: string
+          p_timezone?: string
+          p_title: string
+          p_visibility?: string
+        }
+        Returns: string
+      }
       current_family_ids: { Args: never; Returns: string[] }
       current_profile_id: { Args: never; Returns: string }
       decline_family_invitation: {
         Args: { p_token: string }
+        Returns: undefined
+      }
+      delete_or_archive_personal_task: {
+        Args: { p_task_id: string }
         Returns: undefined
       }
       get_family_invitation_preview: {
@@ -971,12 +1001,24 @@ export type Database = {
         Args: { p_family_id: string; p_profile_id?: string }
         Returns: boolean
       }
+      move_task_to_inbox: { Args: { p_task_id: string }; Returns: undefined }
       remove_family_member: {
         Args: { p_member_id: string }
         Returns: undefined
       }
+      restore_personal_task: { Args: { p_task_id: string }; Returns: undefined }
       revoke_family_invitation: {
         Args: { p_invitation_id: string }
+        Returns: undefined
+      }
+      schedule_personal_task: {
+        Args: {
+          p_date: string
+          p_duration_minutes?: number
+          p_start_time?: string
+          p_task_id: string
+          p_timezone?: string
+        }
         Returns: undefined
       }
       update_child_profile: {
@@ -986,6 +1028,20 @@ export type Database = {
           p_date_of_birth?: string
           p_display_name?: string
           p_member_id: string
+        }
+        Returns: undefined
+      }
+      update_personal_task: {
+        Args: {
+          p_category_id?: string
+          p_clear_category?: boolean
+          p_clear_description?: boolean
+          p_description?: string
+          p_family_id?: string
+          p_priority?: string
+          p_task_id: string
+          p_title?: string
+          p_visibility?: string
         }
         Returns: undefined
       }

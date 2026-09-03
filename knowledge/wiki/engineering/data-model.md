@@ -8,12 +8,13 @@ sources:
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
   - ../../raw/sessions/2026-09-02-phase2-docker-resolved.md
   - ../../raw/sessions/2026-09-03-phase3-family-space.md
+  - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
 tags: [engineering, data-model, supabase]
 ---
 
 ## Status: implemented
 
-`supabase/migrations/` (10 files) implements this schema against a local Supabase project
+`supabase/migrations/` (11 files) implements this schema against a local Supabase project
 only — no hosted/production project connected. See [`docs/DATA_MODEL.md`](../../../docs/DATA_MODEL.md)
 for the normative description; the migrations are the source of truth for exact syntax.
 
@@ -49,6 +50,14 @@ story).
 
 Full reasoning for each: [DECISIONS.md, "Phase 2"](../../../docs/DECISIONS.md).
 
+**Phase 4 additions**: `tasks.deleted_at` (soft delete — see
+[personal-planning](../domain/personal-planning.md)) plus two new `CHECK` constraints closing
+real gaps (`tasks_time_requires_date`: a start time can no longer exist without a date;
+`tasks_duration_minutes_bounded`: duration is now capped at 1440 minutes, not just positive).
+`tasks`' `INSERT`/`UPDATE`/`DELETE` grants for `authenticated` were revoked entirely — see
+[security model](security-model.md). Full reasoning:
+[DECISIONS.md, "Phase 4"](../../../docs/DECISIONS.md).
+
 ## Ownership summary (who owns what, who can read it)
 
 See [`docs/DATA_MODEL.md`, "Ownership and authorization
@@ -64,10 +73,15 @@ table. Key points not to get wrong:
 
 ## Unresolved
 
-- Personal (non-family) custom categories — deferred, not decided. See
+- Personal (non-family) custom categories — still deferred, not decided. Phase 4 implemented
+  basic custom-category creation, but family-scoped only (`create_custom_category`,
+  owner-only) — a personal-scope column (e.g. `owner_profile_id`) was not added. See
   [personal-planning](../domain/personal-planning.md).
-- Recurrence materialization strategy (generate-ahead vs. on-read) — left as an
-  implementation-phase decision in `docs/DATA_MODEL.md`, "recurrence_rules."
+- Recurrence materialization strategy (generate-ahead vs. on-read) — still open, and now has
+  a concrete blocker recorded: the current one-row-per-series schema can't preserve
+  per-occurrence completion history without a schema change (a `task_occurrences` table is
+  the anticipated shape). See [roadmap](../product/roadmap.md), "MVP-scope items not yet
+  built."
 - ~~No family-creation RPC exists yet~~ — resolved in Phase 3: `create_family_with_owner`
   atomically creates the family row and its owner's membership row; `families`/
   `family_members` still have no direct INSERT grant for `authenticated` by design. See

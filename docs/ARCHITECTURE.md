@@ -144,16 +144,26 @@ project; Google/Apple OAuth architecturally complete but config-gated (see
 This is the rule the brief asked to be explicit about, because getting it wrong is the
 single most common React Native architecture mistake:
 
-- **Anything that has a server owner (Supabase) is TanStack Query state.** Tasks, events,
-  family data, assignments — all of it, once the backend exists. Query keys, caching,
-  retries, and optimistic updates live here, not in Zustand.
+- **Anything that has a server owner (Supabase) is TanStack Query state.** Tasks (implemented,
+  Phase 4 — `src/domain/tasks/hooks.ts`), events, family data, assignments — all of it. Query
+  keys, caching, retries, and optimistic updates live here, not in Zustand.
 - **Zustand holds only state that has no server owner and is genuinely UI-only.**
-  `src/store/uiStore.ts` currently holds exactly two things: a light/dark override
-  (`colorSchemeOverride`) and which family is currently "active" in the UI
-  (`activeFamilyId` — _which_ family to look at, not family membership data itself, which is
-  server state). If a future addition to this store starts needing to survive a backend
-  round-trip or be visible to another device, it has drifted into query territory and should
-  move.
+  `src/store/uiStore.ts` holds a light/dark override (`colorSchemeOverride`), which family is
+  currently "active" in the UI (`activeFamilyId` — _which_ family to look at, not family
+  membership data itself, which is server state), and a transient invitation token mid-flow
+  (`pendingInviteToken`, Phase 3). If a future addition to this store starts needing to
+  survive a backend round-trip or be visible to another device, it has drifted into query
+  territory and should move.
+- **Optimistic updates are the exception, not the default, and only where rollback is
+  trivially safe.** `useCompletePersonalTask`/`useRestorePersonalTask`
+  (`src/domain/tasks/hooks.ts`) are the one Phase 4 example: `onMutate` snapshots every
+  currently-mounted task-list query before patching the target task, `onError` restores that
+  exact snapshot, and the calling component (`TaskRow`) disables its own trigger while the
+  mutation is in flight to prevent a duplicate tap. Creation, deletion, scheduling, and any
+  other write with a multi-field or security-sensitive effect wait for server confirmation
+  with no optimistic update at all — a completion toggle has an obviously safe inverse; most
+  other mutations don't, and guessing wrong here is a real-data-loss bug waiting to happen,
+  not a minor UX rough edge.
 - **React Hook Form owns in-progress form state**, validated by Zod schemas that live in
   `src/domain/*/schemas.ts` (not inline in the screen) so the same validation is reusable and
   unit-testable independent of any component.

@@ -1,34 +1,123 @@
-import { useRouter } from 'expo-router';
+import { router } from 'expo-router';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { StyleSheet } from 'react-native';
-import { FAB, Text } from 'react-native-paper';
+import { StyleSheet, View } from 'react-native';
+import { Button, FAB, Text } from 'react-native-paper';
 
-import { EmptyState } from '@/components/ui/EmptyState';
+import { QuickAddInput } from '@/components/tasks/QuickAddInput';
+import { TaskSectionList } from '@/components/tasks/TaskSectionList';
+import { ErrorState } from '@/components/ui/ErrorState';
+import { LoadingState } from '@/components/ui/LoadingState';
+import { OfflineBanner } from '@/components/ui/OfflineBanner';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
+import { useCategories } from '@/domain/categories/hooks';
+import { todayDateString, tomorrowDateString } from '@/domain/tasks/dateUtils';
+import {
+  useCompletePersonalTask,
+  useDeletePersonalTask,
+  useMoveTaskToInbox,
+  useRestorePersonalTask,
+  useSchedulePersonalTask,
+  useTodaySections,
+} from '@/domain/tasks/hooks';
+import type { Task } from '@/domain/tasks/types';
 import { useAppTheme } from '@/theme';
 
 export default function TodayScreen() {
-  const { t } = useTranslation('screens');
-  const router = useRouter();
+  const { t } = useTranslation(['tasks', 'screens']);
   const theme = useAppTheme();
+  const [togglingTaskId, setTogglingTaskId] = useState<string | null>(null);
+
+  const { sections, isLoading, isError, refetch } = useTodaySections();
+  const categoriesQuery = useCategories();
+  const completeTask = useCompletePersonalTask();
+  const restoreTask = useRestorePersonalTask();
+  const scheduleTask = useSchedulePersonalTask();
+  const moveToInbox = useMoveTaskToInbox();
+  const deleteTask = useDeletePersonalTask();
+
+  if (isLoading) {
+    return (
+      <ScreenContainer>
+        <LoadingState />
+      </ScreenContainer>
+    );
+  }
+
+  if (isError) {
+    return (
+      <ScreenContainer>
+        <ErrorState onRetry={refetch} />
+      </ScreenContainer>
+    );
+  }
+
+  const categoriesById = Object.fromEntries((categoriesQuery.data ?? []).map((c) => [c.id, c]));
+
+  const onToggleComplete = async (task: Task) => {
+    setTogglingTaskId(task.id);
+    try {
+      await (task.completedAt ? restoreTask.mutateAsync(task.id) : completeTask.mutateAsync(task.id));
+    } finally {
+      setTogglingTaskId(null);
+    }
+  };
 
   return (
-    <ScreenContainer>
-      <Text variant="headlineSmall" style={styles.title}>
-        {t('today.title')}
-      </Text>
-      <EmptyState title={t('today.emptyTitle')} description={t('today.emptyDescription')} />
+    <ScreenContainer noPadding>
+      <View style={styles.header}>
+        <View style={styles.titleRow}>
+          <Text variant="headlineSmall" style={styles.title}>
+            {t('screens:today.title')}
+          </Text>
+          <Button mode="text" icon="calendar-arrow-right" onPress={() => router.push('/tomorrow')}>
+            {t('screens:today.tomorrowLink')}
+          </Button>
+        </View>
+        <OfflineBanner />
+        <QuickAddInput date={todayDateString()} />
+      </View>
+
+      <TaskSectionList
+        sections={[
+          { key: 'overdue', title: t('tasks:sections.overdue'), data: sections.overdue, showOverdue: true },
+          { key: 'timed', title: t('tasks:sections.timed'), data: sections.timed },
+          { key: 'anytime', title: t('tasks:sections.anytime'), data: sections.anytime },
+          { key: 'completed', title: t('tasks:sections.completed'), data: sections.completed },
+        ]}
+        categoriesById={categoriesById}
+        onToggleComplete={(task) => void onToggleComplete(task)}
+        togglingTaskId={togglingTaskId}
+        onEdit={(task) => router.push({ pathname: '/task/[id]/edit', params: { id: task.id } })}
+        onMoveToTomorrow={(task) =>
+          void scheduleTask.mutateAsync({ taskId: task.id, date: tomorrowDateString() })
+        }
+        onMoveToInbox={(task) => void moveToInbox.mutateAsync(task.id)}
+        onArchive={(task) => void deleteTask.mutateAsync(task.id)}
+        emptyTitle={t('screens:today.emptyTitle')}
+        emptyDescription={t('screens:today.emptyDescription')}
+      />
+
       <FAB
         icon="plus"
         style={[styles.fab, { backgroundColor: theme.colors.primary }]}
         color={theme.colors.onPrimary}
-        onPress={() => router.push('/task/new')}
+        onPress={() => router.push({ pathname: '/task/new', params: { date: todayDateString() } })}
       />
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
+  header: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   title: {
     marginBottom: 8,
   },

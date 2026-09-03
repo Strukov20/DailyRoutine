@@ -1,10 +1,11 @@
 ---
 title: MVP definition
 status: current
-updated: 2026-09-02
+updated: 2026-09-03
 sources:
   - ../../../docs/MVP_SCOPE.md
   - ../../../docs/PRODUCT.md
+  - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
 tags: [product, mvp]
 ---
 
@@ -24,11 +25,14 @@ drop-off/pickup, changes sync across devices, reminders and assignment notificat
 
 ## Current implementation status
 
-**Foundation phase only** — see
-[foundation-build session](../../raw/sessions/2026-09-02-foundation-build.md). None of the
-MVP feature list above is implemented yet; what exists is the app shell, theming, i18n, env
-validation, an unconnected Supabase client, and the quality/CI tooling. This is a deliberate
-phase boundary from the original brief, not a scope cut.
+Four phases in: auth (Phase 2), Family Space/invitations/child profiles (Phase 3), and now
+personal tasks/Inbox/Today/Tomorrow (Phase 4 — see
+[personal-planning](../domain/personal-planning.md)) are all implemented and tested against a
+real local Supabase instance. **Still not implemented from the MVP list above**: scheduling
+reminders (data layer only, no actual notification delivery), recurring tasks (schema
+intentionally closed, needs a `task_occurrences`-shaped change), personal calendar, shared
+family calendar, shared task assignment UI, child events, drop-off/pickup responsibilities UI,
+Family Today. See [roadmap](roadmap.md) for the concrete status of each.
 
 ## Explicitly deferred (not MVP)
 
