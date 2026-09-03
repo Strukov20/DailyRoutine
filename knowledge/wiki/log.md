@@ -177,3 +177,50 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     and is reported as such rather than inferred from `expo export`/`expo-doctor` passing —
     those check bundling, not runtime behavior on a simulator or device.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+## 2026-09-05T00:00:00Z — Phase 5 (in progress): Shared Family Tasks, assignment workflow, native E2E foundation
+
+- **Operation type:** security audit + implementation + test-infrastructure investigation + wiki update (interim — not this phase's final pass)
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-05-phase5-shared-family-tasks.md`](../raw/sessions/2026-09-05-phase5-shared-family-tasks.md).
+- **Wiki pages updated:** `domain/tasks-and-assignments.md` (substantially rewritten — no
+  longer describes assignment UI as nonexistent), `domain/family-spaces.md` (soft-delete
+  member removal), `engineering/security-model.md` (new RPC grant pattern, zero-grant internal
+  helper), `engineering/testing-strategy.md` (Phase 5 test counts, two RNTL environment
+  limitations found and worked around).
+- **Decisions/contradictions recorded:**
+  - Resolved the Phase 4 custom-category contradiction: `create_custom_category` was already
+    correct and family-owner-scoped, just never wired into any UI. Wired into the shared task
+    editor's category menu, gated to match the RPC's own owner-only authorization.
+  - Found and fixed a real architectural gap before it shipped: none of the FKs referencing
+    `family_members` specify `ON DELETE`, and the new `task_assignments` audit rows are
+    permanent and `NOT NULL` — a hard `DELETE` in `remove_family_member` would raise a raw FK
+    violation the first time a removed member had ever been assigned a task. Fixed via soft
+    delete (`removed_at`), with every membership-check helper and sanitized view updated to
+    filter it.
+  - Self-caught a repeat of the Phase 3 `anon`-EXECUTE-grant lesson while authoring the new
+    migration: `set_task_assignment`'s revoke statement was missing from the first draft.
+    Fixed before applying, and made this function's grant policy stricter than the earlier
+    finding required — zero grants to any role at all, not just a corrected revoke.
+  - Two RN Testing Library / `react-test-renderer` environment limitations were investigated
+    to a firm conclusion rather than worked around blindly: `SectionList` cannot expand past
+    its initial render window without a real native layout engine (confirmed via an 8-second
+    real-timer wait that did not resolve it — a hard cutoff, not a slow render), and a
+    single-file Jest invocation reliably crashes/hangs on teardown due to a React 19
+    deferred-`act()`-flush racing Jest's module-registry teardown, triggered by
+    `react-native-paper` components that lazily construct an `Animated.Value`. Both are
+    documented as evidenced findings in `docs/DECISIONS.md`, not silently patched around;
+    the first was fixed at the test-harness level (a `SectionList` mock) after confirming a
+    production `initialNumToRender` change would have been a Jest-only workaround with a real
+    (if small) production cost; the second is documented as technical debt with an explicit
+    instruction on record not to mask it with `--forceExit` in `npm test`/CI.
+  - **172/172 Jest tests pass (28 suites, up from 144/24)** covering the new domain layer and
+    UI components (`AssigneeLabel`, `AssigneePicker`, `FamilyTaskRow`, `FamilyTaskBoard`,
+    `TaskEditorForm`'s shared-task mode). `71` new pgTAP assertions were added
+    (`263` total across the whole schema, pending a fresh full-suite re-run this same session
+    per its own verification checklist — not yet re-confirmed as of this log entry).
+  - **This wiki update is explicitly interim**, per this session's own instruction: the real
+    multi-user backend integration script and the Maestro E2E flows have not run yet, and both
+    this raw session file and the affected wiki pages will be updated again once they have,
+    before the phase is reported complete.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

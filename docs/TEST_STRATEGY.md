@@ -101,7 +101,14 @@ AsyncStorage is null` even though every call is mocked. Listing the exports expl
   under a second internally, then take much longer to report completion in a piped/backgrounded
   shell, printing Jest's own "did not exit one second after the test run" warning. Check the
   suite's own pass/fail summary in the output before assuming a real deadlock; only chase it as
-  a genuine bug if the summary itself never appears.
+  a genuine bug if the summary itself never appears. **Phase 5 root-caused the specific,
+  reproducible version of this for single-file invocations**: it's a real crash-on-teardown
+  race between React 19's deferred `act()` flush (a `setImmediate` callback) and Jest's
+  per-file module-registry teardown, triggered by `react-native-paper` components that lazily
+  construct an `Animated.Value` (e.g. `TextInput`) — see `docs/DECISIONS.md`, "Phase 5, known
+  technical debt," for the full bisection and evidence. `--detectOpenHandles` does not surface
+  it (it's a scheduled callback, not a tracked timer/socket handle). The full suite (`npm test`)
+  is unaffected and is the authoritative check; never add `--forceExit` to it or to CI.
 
 ## What "at least one test of each kind" means going forward
 

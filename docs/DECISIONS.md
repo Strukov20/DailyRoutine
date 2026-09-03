@@ -707,3 +707,126 @@ rebuild before they're testable on a simulator/device — not done this session,
 as `expo-clipboard` in Phase 3. `datetimepicker` additionally needed its Expo config plugin
 added by hand to `app.config.ts` (the `expo install` command couldn't write to the dynamic
 TypeScript config automatically).
+
+## Phase 5 (Shared Family Tasks, assignment workflow, and native Maestro E2E foundation)
+
+### Member removal: soft delete (`family_members.removed_at`), not a hard `DELETE`
+
+`task_assignments.assigned_to_member_id`/`assigned_by_member_id` are `NOT NULL` and the table
+is append-only audit history, and none of the FKs referencing `family_members` specify
+`ON DELETE` (defaulting to `NO ACTION`). Hard-deleting a `family_members` row that any
+assignment history references raises a raw FK violation — a real bug the Phase 4 `remove_family_member`
+implementation had, just never exercised until shared tasks created assignment history. Fixed
+by adding `family_members.removed_at timestamptz`, having `remove_family_member` set it instead
+of deleting the row, and updating `is_family_member`/`is_family_owner`/`current_family_ids` plus
+the `family_schedule`/`family_task_board` views' inline subqueries to filter
+`removed_at is null`. `supabase/tests/080_family_management_test.sql`'s "removed child row is
+gone" assertion was updated to assert `removed_at is not null` instead of a row-count of zero.
+
+### `set_task_assignment`: an internal helper with zero grants, not just `revoke ... from public`
+
+`assign_family_task` and `reassign_family_task` share almost all of their authorization/state
+logic, factored into `set_task_assignment(p_task_id, p_assignee_member_id, p_action)`. That
+function is `security definer` but has **no `grant execute` to any role at all** — not even
+`authenticated` — confirmed via `pg_proc.proacl`. It's callable only function-to-function from
+the two thin wrappers (same schema, same owner, no grant needed for that), never directly via
+PostgREST. This repeats — and this time was self-caught before shipping — the Phase 3 lesson
+that Supabase's role bootstrap grants `EXECUTE` to `anon`/`authenticated` directly at
+function-creation time, separate from `PUBLIC`: the first draft of this migration was missing
+its `revoke all ... from public, anon, authenticated` line for this function specifically.
+
+### `40001` (serialization_failure) repurposed as "stale/already-resolved state conflict"
+
+Every state-changing shared-task RPC (`take_family_task`, `accept_task_assignment`,
+`decline_task_assignment`, `assign_family_task`/`reassign_family_task` via
+`set_task_assignment`) locks the task row with `select ... for update` and raises `40001` when
+the caller's assumed prior state no longer holds (task already taken, assignment already
+resolved, reassigning an unassigned task). Mapped client-side to `TaskErrorCode = 'conflict'`
+(`src/lib/tasks/taskService.ts`) and a dedicated `tasks:errors.conflict` message ("this task's
+assignment just changed — pull to refresh") rather than the generic "something went wrong,"
+since the correct recovery action is specifically a refresh, not a blind retry. pgTAP proves
+each RPC's conflict path sequentially (a second call after the first commits); true concurrent
+transactions are out of scope for pgTAP (single transaction, sequential) and are deferred to
+the real backend integration script (Section 16 of the Phase 5 brief).
+
+### Shared task editor: one form, gated by a `sharedFamilyId` prop, not a second component
+
+`TaskEditorForm` (`src/components/tasks/TaskEditorForm.tsx`) gained an optional
+`sharedFamilyId` prop rather than a parallel `SharedTaskEditorForm`. When set: the
+Private/Family visibility toggle is replaced with a static notice (a shared task must never
+show a Private option that would trip `update_personal_task`'s "can't go Private while
+assigned" guard), and — create mode only — an optional Adult assignee picker appears, backed
+directly by `create_shared_family_task`'s `p_assignee_member_id` (not a separate
+`create`-then-`assign` call, avoiding a partial-failure window). Edit mode never offers the
+assignee field at all: reassigning an existing shared task is a board action
+(Take/Assign/Reassign/Unassign), routed through the state-machine RPCs, not something the
+generic edit form should be able to bypass.
+
+### Custom-category creation: wired into the shared task editor, owner-only, not a new screen
+
+Phase 4 shipped `create_custom_category` (family-owner-only, per its own `is_family_owner`
+check) with zero UI call sites — the contradiction this phase's brief asked to resolve. The
+RPC itself was correct and already family-scoped; only the UI was missing. Resolved by adding
+a "+ New category" item to the shared task editor's existing category `Menu`, gated on
+`callerMember?.role === 'owner'` to match the RPC's own authorization rather than showing an
+affordance that would just fail server-side for a non-owner adult. Deliberately not a
+standalone "manage categories" screen — out of scope for what this phase's brief asked for
+(shared-family-task needs only), and nothing else in the app creates categories yet.
+
+### `FamilyTaskBoard`'s `SectionList`: tests mock the list, production code is untouched
+
+Rendering `FamilyTaskBoard` in Jest with tasks spread across all five sections initially only
+showed the first section or two — `SectionList` (built on `VirtualizedList`) only expands its
+render window in response to real `onLayout`/scroll events, which never fire under
+`react-test-renderer` (no native layout engine backing the test environment). Confirmed by
+direct experiment that this is a hard cutoff, not a slow-render timing issue: waiting 8 real
+seconds via `waitFor` did not surface the missing content. The first fix attempt
+(`initialNumToRender={50}` on the production `SectionList`) was **reverted** — it only existed
+to satisfy Jest, would force a heavier synchronous initial render for a genuinely large board
+for no real benefit (RN's default of 10 already expands correctly via real scroll events on an
+actual device), and the user explicitly asked for it to be removed if that was its only
+justification. The real fix lives in the test file instead:
+`src/components/tasks/FamilyTaskBoard.test.tsx` mocks `react-native/Libraries/Lists/SectionList`
+(the specific source module, not the top-level `react-native` package — mocking the whole
+package broke jest-expo's own native-module setup, e.g. `TurboModuleRegistry.getEnforcing`
+failures for `DevMenu`) with a version that renders every section and row unconditionally. This
+keeps the test asserting our own bucketing/wiring logic (meaningful, ours to get right) rather
+than re-proving `VirtualizedList`'s windowing (a well-tested RN library concern, and not
+something `react-test-renderer` can meaningfully verify anyway, with or without a mock).
+
+### Known technical debt: a single-file `jest` invocation can crash/hang on teardown; the full suite does not
+
+Running one test file in isolation (`npx jest path/to/File.test.tsx`, with or without
+`--runInBand`) reliably hangs indefinitely with no output once the tests themselves have
+already completed and passed — confirmed via `script -q` (to defeat Node's non-TTY stdout
+buffering, which otherwise hides all Jest output until process exit and made this look like a
+pre-render hang before it was properly investigated). `npm test` (the full suite, 28 files)
+completes normally every time, with only a benign "a worker process has failed to exit
+gracefully... force exited" notice — Jest's own worker-pool teardown kills those child
+processes regardless of open handles inside them. A single/few-file invocation appears to run
+in Jest's main process with no such external killer, so it just hangs forever.
+
+Root-caused via bisection (`AppThemeProvider` alone: clean exit; bare `QueryClientProvider`
+alone: clean exit; `QuickAddInput` — which uses `react-native-paper`'s `TextInput`/`IconButton`
+— mounted with both: **crashes**, not hangs, with `ReferenceError: You are trying to
+`import` a file after the Jest environment has been torn down`, thrown from inside
+`react-native-paper`'s `TextInput` lazily constructing `React.useRef(new Animated.Value(...))`).
+The stack shows this firing from `Immediate._onImmediate` — a `setImmediate` callback
+React 19's concurrent scheduler queues via `recursivelyFlushAsyncActWork`/`flushActQueue` to
+finish flushing `act()` work _after_ the test function itself has already returned and Jest has
+begun tearing down that file's module registry. In a full-suite run this callback apparently
+still fires before its own worker process is reaped; in an isolated single-file run there's
+nothing forcing an equivalent wait, so the environment teardown and the deferred callback race,
+and the deferred callback loses.
+
+This is a framework-level interaction (React 19's async `act()` flush queue × `react-native-paper`'s
+lazy `Animated.Value` construction × Jest's per-file process lifecycle) — not fixable from
+individual test code, and not a real leaked resource in the sense `--detectOpenHandles` is
+built to find (it reported nothing across multiple runs, consistent with the culprit being a
+scheduled callback rather than a standard timer/socket handle). **Do not add `--forceExit` to
+`npm test`, `npm run verify`, or CI** — it would silently paper over a real future regression in
+this area. Treat it as: single-file/`-t`-filtered ad hoc runs during development may need a
+manually-appended `--forceExit` to get a prompt back (safe to do by hand, one-off, never
+committed to a script), but the full suite is the source of truth and needs no such flag. See
+`docs/TEST_STRATEGY.md`'s "slow-to-report" note, which describes the same family of symptom
+from Phase 4 and should be read together with this entry.

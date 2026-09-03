@@ -68,7 +68,13 @@ below):
   `profile_id` ever assigned.
 - `remove_family_member(member_id)` — owner-only, and **refuses unconditionally** to remove
   the `role = 'owner'` row (the DB-level owner-orphan guard). Ownership transfer and "the
-  owner leaves" have no RPC yet — deferred, see [roadmap](../product/roadmap.md).
+  owner leaves" have no RPC yet — deferred, see [roadmap](../product/roadmap.md). **Phase 5:
+  soft delete, not a hard `DELETE`** — sets `family_members.removed_at` instead. A hard delete
+  would violate the (Phase 5) `task_assignments` audit trail's `NOT NULL` FKs the moment a
+  removed member had ever taken/been assigned a task. `is_family_member`/`is_family_owner`/
+  `current_family_ids` and the sanitized views all filter `removed_at is null`, so access
+  disappears immediately even though the row persists — see
+  [tasks-and-assignments](tasks-and-assignments.md), "member removal."
 
 UI: `app/(app)/family.tsx` (roster + family switcher + pending-invitations list for owners),
 `app/family/{create,invite,add-child}.tsx`, `app/family/member/[id].tsx`,
