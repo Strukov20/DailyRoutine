@@ -19,12 +19,17 @@ jest.mock('@/lib/tasks/taskService', () => ({
 }));
 
 jest.mock('@/lib/auth/AuthProvider', () => ({
-  useAuth: () => ({ profile: { id: 'u1' }, session: null, status: 'signed-in', refreshProfile: jest.fn() }),
+  useAuth: () => ({
+    profile: { id: 'u1' },
+    session: null,
+    status: 'signed-in',
+    refreshProfile: jest.fn(),
+  }),
 }));
 
 function renderWithProviders(ui: React.ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-   
+
   const Wrapper = ({ children }: PropsWithChildren) => (
     <AppThemeProvider>
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -47,7 +52,9 @@ describe('QuickAddInput', () => {
     await fireEvent.changeText(input, 'Buy milk');
     await fireEvent(input, 'submitEditing');
 
-    await waitFor(() => expect(createPersonalTask).toHaveBeenCalledWith({ title: 'Buy milk', date: undefined }));
+    await waitFor(() =>
+      expect(createPersonalTask).toHaveBeenCalledWith({ title: 'Buy milk', date: undefined }),
+    );
     await waitFor(() => expect(input.props.value).toBe(''));
   });
 

@@ -28,6 +28,8 @@ const TASK: Task = {
   completedAt: null,
   createdAt: '2026-09-01T00:00:00.000Z',
   updatedAt: '2026-09-01T00:00:00.000Z',
+  assigneeMemberId: null,
+  assignmentStatus: 'unassigned' as const,
 };
 
 describe('TaskRow', () => {
@@ -42,7 +44,12 @@ describe('TaskRow', () => {
   it('calls onToggleComplete when the checkbox is pressed', async () => {
     const onToggleComplete = jest.fn();
     await renderWithTheme(
-      <TaskRow task={TASK} onToggleComplete={onToggleComplete} onEdit={jest.fn()} onArchive={jest.fn()} />,
+      <TaskRow
+        task={TASK}
+        onToggleComplete={onToggleComplete}
+        onEdit={jest.fn()}
+        onArchive={jest.fn()}
+      />,
     );
 
     await fireEvent.press(screen.getByRole('checkbox'));
@@ -93,7 +100,13 @@ describe('TaskRow', () => {
 
   it('shows the overdue indicator only when showOverdue is set', async () => {
     await renderWithTheme(
-      <TaskRow task={TASK} onToggleComplete={jest.fn()} onEdit={jest.fn()} onArchive={jest.fn()} showOverdue />,
+      <TaskRow
+        task={TASK}
+        onToggleComplete={jest.fn()}
+        onEdit={jest.fn()}
+        onArchive={jest.fn()}
+        showOverdue
+      />,
     );
 
     expect(screen.getByText('Overdue')).toBeOnTheScreen();
