@@ -26,7 +26,7 @@ const BASE_ROW: Tables<'tasks'> = {
 };
 
 describe('mapTaskRow', () => {
-  it('maps a row 1:1 for the normal case', () => {
+  it('maps a row 1:1 for the normal (personal, unassigned) case', () => {
     expect(mapTaskRow(BASE_ROW)).toEqual({
       id: 't1',
       ownerProfileId: 'u1',
@@ -43,6 +43,8 @@ describe('mapTaskRow', () => {
       completedAt: null,
       createdAt: '2026-09-01T00:00:00.000Z',
       updatedAt: '2026-09-01T00:00:00.000Z',
+      assigneeMemberId: null,
+      assignmentStatus: 'unassigned',
     });
   });
 
@@ -55,13 +57,21 @@ describe('mapTaskRow', () => {
     expect(mapTaskRow({ ...BASE_ROW, visibility: 'public' }).visibility).toBe('private');
   });
 
-  it('never surfaces assignee_member_id or assignment_status — not part of the domain Task shape', () => {
+  it('falls back safely to "unassigned" for an unrecognized assignment_status value', () => {
+    expect(mapTaskRow({ ...BASE_ROW, assignment_status: 'bogus' }).assignmentStatus).toBe(
+      'unassigned',
+    );
+  });
+
+  it('surfaces assignee_member_id and assignment_status for a shared task (Phase 5)', () => {
     const mapped = mapTaskRow({
       ...BASE_ROW,
+      family_id: 'f1',
+      visibility: 'family',
       assignee_member_id: 'm1',
       assignment_status: 'accepted',
     });
-    expect(mapped).not.toHaveProperty('assigneeMemberId');
-    expect(mapped).not.toHaveProperty('assignmentStatus');
+    expect(mapped.assigneeMemberId).toBe('m1');
+    expect(mapped.assignmentStatus).toBe('accepted');
   });
 });

@@ -24,6 +24,7 @@ describe('mapFamilyMemberRow', () => {
     avatar_url: null,
     date_of_birth: null,
     invited_by: null,
+    removed_at: null,
     created_at: '2026-01-01',
     updated_at: '2026-01-01',
     created_by: 'u1',

@@ -10,6 +10,13 @@ import type { TaskPriority } from './priority';
  */
 export type TaskVisibility = 'private' | 'family';
 
+/**
+ * The assignment state machine (Phase 5) — see docs/DECISIONS.md, "Phase 5"
+ * for the full diagram. `unassigned` is also the value for every personal
+ * (non-shared) task, which never has an assignee.
+ */
+export type AssignmentStatus = 'unassigned' | 'pending_acceptance' | 'accepted' | 'declined';
+
 export interface Task {
   id: string;
   ownerProfileId: string;
@@ -29,4 +36,7 @@ export interface Task {
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** family_members.id of the current assignee — only ever set on a shared (family) task. */
+  assigneeMemberId: string | null;
+  assignmentStatus: AssignmentStatus;
 }

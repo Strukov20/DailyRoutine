@@ -25,7 +25,12 @@ jest.mock('@/lib/tasks/taskService', () => ({
 }));
 
 jest.mock('@/lib/auth/AuthProvider', () => ({
-  useAuth: () => ({ profile: { id: 'u1' }, session: null, status: 'signed-in', refreshProfile: jest.fn() }),
+  useAuth: () => ({
+    profile: { id: 'u1' },
+    session: null,
+    status: 'signed-in',
+    refreshProfile: jest.fn(),
+  }),
 }));
 
 const TASK: Task = {
@@ -44,6 +49,8 @@ const TASK: Task = {
   completedAt: null,
   createdAt: '2026-09-01T00:00:00.000Z',
   updatedAt: '2026-09-01T00:00:00.000Z',
+  assigneeMemberId: null,
+  assignmentStatus: 'unassigned' as const,
 };
 
 function makeClientWithInbox(client: QueryClient) {

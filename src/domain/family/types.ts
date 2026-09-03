@@ -28,6 +28,14 @@ export interface FamilyMember {
   avatarUrl: string | null;
   /** Child profiles only. */
   dateOfBirth: string | null;
+  /**
+   * Set once remove_family_member() soft-deletes this row (Phase 5) — the
+   * row still exists (task_assignments audit history references it) but
+   * the person has lost all access. UI should exclude removed members from
+   * pickers (e.g. "assign this task to...") even though the RPCs already
+   * reject assigning to one server-side.
+   */
+  removedAt: string | null;
 }
 
 export type InvitationStatus = 'pending' | 'accepted' | 'declined' | 'expired' | 'revoked';
