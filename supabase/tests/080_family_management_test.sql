@@ -448,10 +448,16 @@ select lives_ok(
   'the owner can remove a child member'
 );
 
+-- Phase 5: remove_family_member soft-deletes (removed_at) rather than hard
+-- deleting — a hard delete is unsafe once task_assignments audit history
+-- can reference a family_members row (see docs/DECISIONS.md, "Phase 5").
+-- The row survives; is_family_member()/the roster policy still surface it
+-- (it's a direct table SELECT, not membership-gated per row), but the
+-- removed profile itself loses all access via is_family_member/is_family_owner.
 select is(
-  (select count(*)::int from public.family_members where id = :'child_id'),
-  0,
-  'the removed child row is gone'
+  (select removed_at is not null from public.family_members where id = :'child_id'),
+  true,
+  'the removed child row is soft-deleted (removed_at set), not hard-deleted'
 );
 
 select throws_ok(
