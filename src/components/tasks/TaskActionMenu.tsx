@@ -39,7 +39,11 @@ export function TaskActionMenu({
         />
       }
     >
-      <Menu.Item leadingIcon="pencil-outline" title={t('row.edit')} onPress={() => runAndClose(onEdit)} />
+      <Menu.Item
+        leadingIcon="pencil-outline"
+        title={t('row.edit')}
+        onPress={() => runAndClose(onEdit)}
+      />
       {onMoveToToday ? (
         <Menu.Item
           leadingIcon="calendar-today"

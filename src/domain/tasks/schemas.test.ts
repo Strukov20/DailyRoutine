@@ -40,7 +40,9 @@ describe('taskEditorSchema', () => {
     const result = taskEditorSchema.safeParse({ ...base, date: '2026-09-03', durationMinutes: 30 });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues.some((issue) => issue.path.includes('durationMinutes'))).toBe(true);
+      expect(result.error.issues.some((issue) => issue.path.includes('durationMinutes'))).toBe(
+        true,
+      );
     }
   });
 

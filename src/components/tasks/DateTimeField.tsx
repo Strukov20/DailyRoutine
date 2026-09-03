@@ -66,13 +66,24 @@ export function DateTimeField({
           accessibilityRole="button"
           accessibilityLabel={displayValue ?? placeholder}
         >
-          <Icon source={mode === 'date' ? 'calendar' : 'clock-outline'} size={18} color={theme.colors.onSurfaceVariant} />
-          <Text style={{ color: displayValue ? theme.colors.onSurface : theme.colors.onSurfaceVariant }}>
+          <Icon
+            source={mode === 'date' ? 'calendar' : 'clock-outline'}
+            size={18}
+            color={theme.colors.onSurfaceVariant}
+          />
+          <Text
+            style={{ color: displayValue ? theme.colors.onSurface : theme.colors.onSurfaceVariant }}
+          >
             {displayValue ?? placeholder}
           </Text>
         </Pressable>
         {onClear && displayValue ? (
-          <Pressable onPress={onClear} hitSlop={8} style={styles.clear} accessibilityLabel={placeholder}>
+          <Pressable
+            onPress={onClear}
+            hitSlop={8}
+            style={styles.clear}
+            accessibilityLabel={placeholder}
+          >
             <Icon source="close-circle-outline" size={18} color={theme.colors.onSurfaceVariant} />
           </Pressable>
         ) : null}

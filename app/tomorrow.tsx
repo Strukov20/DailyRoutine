@@ -63,7 +63,9 @@ export default function TomorrowScreen() {
   const onToggleComplete = async (task: Task) => {
     setTogglingTaskId(task.id);
     try {
-      await (task.completedAt ? restoreTask.mutateAsync(task.id) : completeTask.mutateAsync(task.id));
+      await (task.completedAt
+        ? restoreTask.mutateAsync(task.id)
+        : completeTask.mutateAsync(task.id));
     } finally {
       setTogglingTaskId(null);
     }

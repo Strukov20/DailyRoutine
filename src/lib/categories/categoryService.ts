@@ -41,7 +41,10 @@ function toCategoryServiceError(error: unknown): CategoryServiceError {
 
 /** System categories plus the categories of every family the caller belongs to. */
 export async function listCategories(): Promise<Category[]> {
-  const { data, error } = await supabase.from('categories').select('*').order('is_system', { ascending: false });
+  const { data, error } = await supabase
+    .from('categories')
+    .select('*')
+    .order('is_system', { ascending: false });
   if (error) throw toCategoryServiceError(error);
   return data.map(mapCategoryRow);
 }

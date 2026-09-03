@@ -11,7 +11,11 @@ interface CompletionCheckboxProps {
 }
 
 /** A >=44x44 touch target regardless of the visible icon's own size (accessibility). */
-export function CompletionCheckbox({ completed, onToggle, disabled = false }: CompletionCheckboxProps) {
+export function CompletionCheckbox({
+  completed,
+  onToggle,
+  disabled = false,
+}: CompletionCheckboxProps) {
   const { t } = useTranslation('tasks');
   const theme = useAppTheme();
 

@@ -50,7 +50,6 @@ describe('parseDateOnly / formatDateOnly round-trip', () => {
       });
     },
   );
-
 });
 
 describe('todayDateString / tomorrowDateString', () => {

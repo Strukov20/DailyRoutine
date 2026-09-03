@@ -25,7 +25,8 @@ export function CategoryBadge({ category }: CategoryBadgeProps) {
   const color = isKnownToken
     ? categoryColors[category.colorToken as keyof typeof categoryColors]
     : theme.colors.onSurfaceVariant;
-  const label = category.isSystem && isKnownToken ? t(`category.${category.colorToken}`) : category.name;
+  const label =
+    category.isSystem && isKnownToken ? t(`category.${category.colorToken}`) : category.name;
 
   return (
     <View style={styles.row} accessible accessibilityLabel={label}>

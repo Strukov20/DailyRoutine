@@ -57,7 +57,9 @@ export default function TodayScreen() {
   const onToggleComplete = async (task: Task) => {
     setTogglingTaskId(task.id);
     try {
-      await (task.completedAt ? restoreTask.mutateAsync(task.id) : completeTask.mutateAsync(task.id));
+      await (task.completedAt
+        ? restoreTask.mutateAsync(task.id)
+        : completeTask.mutateAsync(task.id));
     } finally {
       setTogglingTaskId(null);
     }
@@ -80,7 +82,12 @@ export default function TodayScreen() {
 
       <TaskSectionList
         sections={[
-          { key: 'overdue', title: t('tasks:sections.overdue'), data: sections.overdue, showOverdue: true },
+          {
+            key: 'overdue',
+            title: t('tasks:sections.overdue'),
+            data: sections.overdue,
+            showOverdue: true,
+          },
           { key: 'timed', title: t('tasks:sections.timed'), data: sections.timed },
           { key: 'anytime', title: t('tasks:sections.anytime'), data: sections.anytime },
           { key: 'completed', title: t('tasks:sections.completed'), data: sections.completed },
