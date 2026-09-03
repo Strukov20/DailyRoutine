@@ -24,8 +24,28 @@
     "submit": "Додати завдання",
     "error": "Не вдалося додати завдання. Спробуйте ще раз."
   },
+  "board": {
+    "awaitingMyResponse": "Очікують вашої відповіді",
+    "myFamilyTasks": "Мої сімейні завдання",
+    "unassignedSection": "Непризначені",
+    "assignedToOthers": "Призначені іншим",
+    "unassigned": "Не призначено",
+    "you": "вас",
+    "pendingOn": "Очікує на {{who}}",
+    "assignedTo": "Призначено: {{who}}",
+    "noAdultsToAssign": "Немає дорослих, яким можна призначити",
+    "take": "Взяти",
+    "accept": "Прийняти",
+    "decline": "Відхилити",
+    "assign": "Призначити",
+    "reassign": "Перепризначити",
+    "unassign": "Скасувати призначення",
+    "emptyTitle": "Ще немає сімейних завдань",
+    "emptyDescription": "Додайте спільне завдання нижче — усі члени сім'ї зможуть його побачити."
+  },
   "editor": {
     "createTitle": "Нове завдання",
+    "createSharedTitle": "Нове сімейне завдання",
     "editTitle": "Редагування завдання",
     "notFound": "Це завдання не знайдено.",
     "titleField": "Назва",
@@ -40,8 +60,16 @@
     "visibilityPrivate": "Приватне",
     "visibilityFamily": "Сімейне",
     "visibilityFamilyUnavailable": "Приєднайтеся до сім'ї або створіть її, щоб зробити завдання видимим для сім'ї.",
+    "sharedFamilyNotice": "Це завдання видно всій вашій сім'ї.",
     "categoryField": "Категорія",
     "categoryNone": "Без категорії",
+    "newCategory": "Нова категорія…",
+    "newCategoryTitle": "Нова категорія",
+    "newCategoryNameField": "Назва категорії",
+    "newCategoryError": "Не вдалося створити цю категорію. Спробуйте ще раз.",
+    "assigneeField": "Призначити",
+    "assigneeNone": "Ще нікому",
+    "assigneeConfirmationNotice": "{{name}} має прийняти це завдання, перш ніж воно стане їхнім.",
     "create": "Створити завдання",
     "save": "Зберегти зміни",
     "unsavedChanges": {
@@ -62,6 +90,7 @@
   "errors": {
     "forbidden": "У вас немає прав для цієї дії.",
     "invalidInput": "Це значення недійсне для цього завдання.",
+    "conflict": "Призначення цього завдання щойно змінилося — оновіть і спробуйте ще раз.",
     "generic": "Щось пішло не так. Спробуйте ще раз."
   }
 }

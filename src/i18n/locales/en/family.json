@@ -8,6 +8,10 @@
   "addChildAction": "Add a child",
   "members": "Members",
   "pendingInvitations": "Pending invitations",
+  "tabs": {
+    "members": "Members",
+    "tasks": "Tasks"
+  },
   "role": {
     "owner": "Owner",
     "adult": "Adult",

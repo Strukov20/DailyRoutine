@@ -8,6 +8,10 @@
   "addChildAction": "Додати дитину",
   "members": "Учасники",
   "pendingInvitations": "Надіслані запрошення",
+  "tabs": {
+    "members": "Учасники",
+    "tasks": "Завдання"
+  },
   "role": {
     "owner": "Власник",
     "adult": "Дорослий",

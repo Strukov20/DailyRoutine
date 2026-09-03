@@ -24,8 +24,28 @@
     "submit": "Add task",
     "error": "Couldn't add the task. Please try again."
   },
+  "board": {
+    "awaitingMyResponse": "Awaiting your response",
+    "myFamilyTasks": "My family tasks",
+    "unassignedSection": "Unassigned",
+    "assignedToOthers": "Assigned to others",
+    "unassigned": "Unassigned",
+    "you": "you",
+    "pendingOn": "Pending on {{who}}",
+    "assignedTo": "Assigned to {{who}}",
+    "noAdultsToAssign": "No adults available to assign",
+    "take": "Take",
+    "accept": "Accept",
+    "decline": "Decline",
+    "assign": "Assign",
+    "reassign": "Reassign",
+    "unassign": "Unassign",
+    "emptyTitle": "No family tasks yet",
+    "emptyDescription": "Add a shared task below — everyone in the family will be able to see it."
+  },
   "editor": {
     "createTitle": "New task",
+    "createSharedTitle": "New family task",
     "editTitle": "Edit task",
     "notFound": "This task could not be found.",
     "titleField": "Title",
@@ -40,8 +60,16 @@
     "visibilityPrivate": "Private",
     "visibilityFamily": "Family",
     "visibilityFamilyUnavailable": "Join or create a family to make a task Family-visible.",
+    "sharedFamilyNotice": "This task is visible to your whole family.",
     "categoryField": "Category",
     "categoryNone": "No category",
+    "newCategory": "New category…",
+    "newCategoryTitle": "New category",
+    "newCategoryNameField": "Category name",
+    "newCategoryError": "Couldn't create this category. Please try again.",
+    "assigneeField": "Assign to",
+    "assigneeNone": "No one yet",
+    "assigneeConfirmationNotice": "{{name}} will need to accept this task before it's theirs.",
     "create": "Create task",
     "save": "Save changes",
     "unsavedChanges": {
@@ -62,6 +90,7 @@
   "errors": {
     "forbidden": "You don't have permission to do that.",
     "invalidInput": "That's not a valid value for this task.",
+    "conflict": "This task's assignment just changed — pull to refresh and try again.",
     "generic": "Something went wrong. Please try again."
   }
 }
