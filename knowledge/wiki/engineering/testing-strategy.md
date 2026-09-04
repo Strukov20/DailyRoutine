@@ -1,7 +1,7 @@
 ---
 title: Testing strategy
 status: current
-updated: 2026-09-03
+updated: 2026-09-04
 sources:
   - ../../../docs/TEST_STRATEGY.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
@@ -81,10 +81,32 @@ supabase test db`), plus real curl-driven multi-user flows for both Family Space
   `@react-navigation/native` case in [system-architecture](system-architecture.md)). Wired
   into `.github/workflows/ci.yml`.
 
-## Not yet implemented
-
-- **E2E (Maestro)** — explicitly future work per the brief; the sign-in/sign-up flow now
-  exists and would be the first realistic candidate once Maestro is set up.
+- **E2E (Maestro)** — Maestro 2.10.0, installed user-scoped (official curl installer, no
+  sudo) with its JVM dependency via the Homebrew **formula** `brew install openjdk` (not the
+  `--cask temurin`, which needs sudo). Three flows under `.maestro/`, run against the iOS
+  Simulator: `personal_task_smoke.yaml` (sign in → quick-add → schedule for today → complete
+  → restore), `family_task_workflow.yaml` (User A creates an unassigned shared task → signs
+  out → User B takes and completes it), `assignment_decline.yaml` (User A assigns to User B →
+  User B declines → User A sees it back unassigned after a fresh sign-in). Each achieved two
+  consecutive fully clean, unattended runs (every Maestro command `COMPLETED`, cross-checked
+  against real database state after each run — not just the terminal summary).
+  `scripts/e2e-seed.sh` provisions the two Maestro fixture users in one shared family and
+  writes their member ids to the gitignored `.maestro/.env.local` (both users' display names
+  default to the same placeholder text, so the assignee picker can only be targeted reliably
+  by member id — `scripts/e2e-ios.sh` forwards these via `maestro test -e`). Run via `npm run
+e2e:seed` then `npm run e2e:ios`. Full writeup of every environment issue worked around
+  (password text-injection on a `tapOn` right after typing, iOS merging a compound
+  `Pressable`'s children into one `accessibilityText` — needs dedicated testIDs, the
+  leftmost/rightmost tab bar items being unmatchable by text _or_ testID at all — worked
+  around with a coordinate tap, an unreliable `checked` selector attribute, and a real
+  `TaskEditorForm` stale-closure bug found and fixed) plus two flow-logic bugs found in the
+  flows themselves (a blind recovery retry that could double-submit a task, a blind
+  double-tap trigger that could self-assign one): [DECISIONS.md, "Phase
+  5"](../../../docs/DECISIONS.md). Known technical debt: genuine Maestro/XCUITest hangs
+  (confirmed twice, different commands, no further log output at all) are a real rare
+  tool-level failure mode on this exact Simulator/Maestro combination, not fixable from flow
+  engineering — this is why each flow was verified with two clean runs rather than pursued
+  toward indefinite reliability.
 
 ## Conventions to follow in new tests
 

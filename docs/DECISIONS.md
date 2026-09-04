@@ -830,3 +830,197 @@ manually-appended `--forceExit` to get a prompt back (safe to do by hand, one-of
 committed to a script), but the full suite is the source of truth and needs no such flag. See
 `docs/TEST_STRATEGY.md`'s "slow-to-report" note, which describes the same family of symptom
 from Phase 4 and should be read together with this entry.
+
+### Real multi-user backend integration: 32/32 checks against a live local stack
+
+Beyond pgTAP (which simulates callers via `set local role`), Phase 5 ran an ad hoc bash + curl +
+jq script against a real local Supabase stack with two real `auth.users` accounts (admin-API
+created, `email_confirm: true` — local email confirmation is on, so the public signup flow can't
+produce a usable account) plus a genuine third-party outsider account and an anonymous request.
+Not committed (matches the Phase 3/4 precedent of an ad hoc verification script), but every check
+it ran is worth recording since it's the closest thing to a real client in this phase: family
+creation/invite/accept, shared task creation, assign/accept/decline, **concurrent** Take Task (real
+parallel `curl` requests racing the same row, not a simulated conflict), self-target and
+other-target reassignment, completion/restore, member removal resolving assignments across
+multiple tasks simultaneously, privacy isolation (outsider + anonymous), and full audit-trail
+validation (append-only, exact expected sequence:
+`assigned,accepted,accepted,reassigned,accepted,unassigned`). All 32 checks passed. Along the way
+this surfaced three script bugs (all in the _test_ script, not the app) worth remembering: a bash
+subshell-scoping trap (a variable set inside a function invoked via `$(...)` command substitution
+is lost in the parent shell — fixed by writing to a temp file and reading it back), `void`-returning
+RPCs (`take_family_task`) respond HTTP 204 not 200, and self-reassignment collapses into a single
+`accepted` audit row rather than a separate `reassigned`+`accepted` pair (the same
+self-assign-immediate-accept shortcut used elsewhere in the assignment state machine, exercised
+correctly once the script added a genuine non-self reassignment step).
+
+### Maestro E2E: installed 2.10.0 user-scoped, three flows, `npm run e2e:seed` / `e2e:ios`
+
+Maestro CLI 2.10.0, installed via the official curl installer to `~/.maestro/bin` (no sudo). Its
+JVM dependency was installed via the Homebrew **formula** `brew install openjdk`, not `--cask
+temurin` (which requires sudo). macOS ships a `/usr/bin/java` stub that exists on `PATH` but errors
+at runtime with no real JDK behind it, so `command -v java` can't detect a missing JDK —
+`scripts/e2e-ios.sh` always points `JAVA_HOME` at the Homebrew formula's JDK unless the caller
+already set one.
+
+Three flows under `.maestro/` run against the iOS Simulator (iPhone 17 Pro, iOS 26.5): personal
+task smoke (sign in → quick-add → schedule for today → complete → restore), family task workflow
+(User A creates an unassigned shared task → signs out → User B takes and completes it), and
+assignment decline (User A assigns to User B → User B declines → User A sees it back unassigned
+after a fresh sign-in). Each achieved two consecutive fully clean, unattended runs (every command
+`COMPLETED`, verified against `manifest.json`/`commands.json`, not just the terminal summary) by
+the end of this phase, plus direct confirmation against the database that each flow's real backend
+outcome matched what the UI showed (exact task/assignment rows queried after each run).
+
+`scripts/e2e-seed.sh` provisions two Maestro users (`maestro-user-a@familyflow.test`,
+`maestro-user-b@familyflow.test`, both `Maestro1234`) in one shared family via the same admin API +
+RPC pattern as the backend integration script, and additionally writes their `family_members.id`s
+to the **gitignored** `.maestro/.env.local` (`.env*.local` is already ignored) — see "Assignee
+picker" below for why a member id, not a display name, is the only thing that can target a specific
+member reliably. `scripts/e2e-ios.sh` reads that file and forwards each value to `maestro test` via
+repeated `-e KEY=value` flags, which the flows reference as `${KEY}`. New npm scripts: `e2e:seed`,
+`e2e:ios`.
+
+The rest of this section records what every flow had to work around, in the order discovered —
+each is real, evidenced (via `maestro hierarchy`'s live accessibility-tree dump, screenshots at the
+exact failure instant, and/or direct database queries), and either fixed at the root cause or
+documented as unresolved technical debt rather than silently masked.
+
+#### Password/text-injection: `tapOn` immediately after `inputText` can corrupt a _different_ field
+
+Typing into the password field, then `tapOn` on **any other** element, could inject one extra,
+non-deterministic character into whichever field still held keyboard focus (observed corrupting
+`Maestro1234` to `Maestro1234y`, then `Maestro1234yy` across repeated attempts) — reproduced
+repeatedly, root-caused via bisection to the `tapOn` action itself (not keyboard locale, not
+`secureTextEntry`, not typing speed, not the simulator's own autocorrect). Fixed by adding
+`keyboardType="ascii-capable"`, `autoCorrect={false}`, `autoCapitalize="none"` to the password field
+(`app/(auth)/sign-in.tsx`), retyping in a loop until the exact string is confirmed visible, and
+submitting via the field's own Return key (`onSubmitEditing` + `pressKey: Enter`) instead of
+`tapOn` on the Sign in button. For fields without Enter-to-submit wiring (the shared task title),
+the working mitigation is: type, tap a neutral non-interactive label first (e.g. "Priority") to
+give the phantom keystroke somewhere harmless to land, wait, then tap the real submit button.
+
+#### Merged accessibility text: compound `Pressable`s need testIDs, most single-`Text` elements don't
+
+A `Pressable` wrapping multiple `Text` children (a task row with a title + metadata, a labeled
+checkbox) gets its children's text merged by iOS into one VoiceOver-style `accessibilityText`,
+leaving the individual `text`/`title`/`value` fields Maestro's plain-text selectors check **empty**
+— confirmed via `maestro hierarchy`. Fixed by adding dedicated testIDs (`task-row-<id>`,
+`task-actions-<id>`, `completion-checkbox-<id>`, `quick-add-input-<screen>`,
+`family-task-row-<id>`, `family-task-take-<id>`/`accept`/`decline`/`assign`/`reassign`,
+`assignee-option-<memberId>`, `task-editor-title`, `task-editor-submit`) to every such element.
+Plain single-`Text` labels (tab names, dialog buttons, section headers) were **not** affected and
+plain text matching for those stayed reliable throughout.
+
+#### Leftmost/rightmost tab bar items can't be matched by text _or_ testID at all
+
+`tabBarTestID` on an Expo Router `Tabs.Screen`/`screenOptions` does **not** propagate to the native
+accessibility tree — confirmed via `maestro hierarchy` (zero `resource-id` anywhere on any tab bar
+item) and reverted after trying it. That alone wasn't fatal, since every tab's label text matched
+reliably via `accessibilityText` — **except** the leftmost ("Today") and rightmost ("Profile") tab
+bar items, which failed **deterministically** (not intermittently — reproduced identically across
+three separate runs each, including after an explicit 8s `extendedWaitUntil` wait) for both
+`assertVisible` and `tapOn`, despite being structurally identical to the middle tabs that matched
+fine (`accessibilityText`-only, no `resource-id`, sole match anywhere in the tree) and visibly
+correct in the failure screenshot every time. The one structural difference: each boundary tab's
+own bounds sit flush against the screen's own edge (`Today`: `x∈[0,80]` on a 402pt-wide screen;
+`Profile`: `x∈[321,402]`) — a plausible edge case in Maestro's own visibility-bounds check, not
+confirmed further since it's outside this app's code. **Fixed by falling back to a coordinate tap**
+(`tapOn: { point: "10%, 93%" }` / `"90%, 93%"`, derived from the tab bar's own reported bounds on a
+402×874pt screen) for those two tabs only — every middle tab keeps plain text matching. Documented
+here as unresolved technical debt in the Maestro/Expo-Router-Tabs combination itself, not something
+fixable from this app's code.
+
+#### The `checked` selector attribute is unreliable for custom checkboxes — match text instead
+
+`CompletionCheckbox` sets `accessibilityState={{ checked: completed, disabled }}` on a `Pressable`
+correctly (confirmed: the icon, label, and `value`/`text` fields all reflect the real state). But
+Maestro's structured `checked: true/false` selector attribute reports the string `"false"`
+**regardless of actual state** for this element — confirmed via `maestro hierarchy` immediately
+after a real, visually-correct completion. React Native's `accessibilityState.checked` apparently
+doesn't surface as XCUITest's own native "checked" trait for a custom `Pressable` (as opposed to a
+true native control). The real state **is** reliably exposed as plain text/value
+(`"checkbox, checked"` / `"checkbox, unchecked"`) — both flows that toggle completion now match on
+that text instead of the `checked` attribute.
+
+#### Real app bug found and fixed: a stale-closure race in `TaskEditorForm`'s unsaved-changes guard
+
+`TaskEditorForm`'s `beforeRemove` navigation guard checked react-hook-form's own
+`isSubmitSuccessful`, gated correctly by an effect dependency array (`[navigation, isDirty,
+isSubmitSuccessful, t]`) — so in isolation this looked like solid, race-free code. In practice, a
+Maestro-driven submit occasionally showed a "Discard changes?" dialog immediately after an
+otherwise-successful save. Root cause (confirmed via code review, then twice reproduced with real
+database evidence — two task rows with timestamps ~2.5s apart from what was meant to be a single
+create): `onSubmit`'s `onDone()` call navigates away **synchronously**, in the same tick the
+mutation resolves — before react-hook-form's own `isSubmitSuccessful` state update has propagated
+through a re-render and this effect has re-run to pick it up. The `beforeRemove` listener that
+actually fires is still closed over the **pre-submit** `isSubmitSuccessful === false`, so it shows
+the dialog even though the save had already gone through. **Fixed** in
+`src/components/tasks/TaskEditorForm.tsx` by tracking success via a `useRef` set synchronously the
+instant the mutation resolves (`justSubmittedRef.current = true`, checked directly in the guard, no
+re-render required) instead of relying on `isSubmitSuccessful`. This is a real UX bug independent of
+Maestro — any sufficiently fast real user could in principle have hit the same spurious dialog after
+a legitimate save.
+
+The fix required a narrowly-scoped `// eslint-disable-next-line react-hooks/refs` immediately above
+`handleSubmit(...)`: `eslint-plugin-react-hooks` v7's experimental "refs" rule (React Compiler-era)
+flags _any_ ref access reachable from a closure passed into a third-party wrapper like
+react-hook-form's `handleSubmit`, even though that callback only ever executes as the form's submit
+event handler, never during render — confirmed as a static-analysis false positive by testing every
+alternative (wrapping in `useCallback`, indirecting through a second helper function) against the
+same rule, all still flagged, since the rule's taint tracking is transitive through any call chain
+it can't prove happens post-render.
+
+#### Maestro flow-logic bug found and fixed: a blind recovery retry could double-submit a task
+
+The flow's own recovery logic for the (now root-caused, still occasionally spurious pre-fix)
+"Discard changes?" dialog — cancel the dialog, then retry the submit tap — was unconditional
+(guarded only by Maestro's `optional: true`, which suppresses a _failure_ if the element is
+missing, but still executes the step regardless of whether recovery was actually needed). When the
+first submit tap had, in fact, already succeeded, the unconditional retry submitted the same
+still-filled form a **second** time, creating a genuine duplicate task (reproduced once, confirmed
+via direct database query: two identical rows). Fixed in both `family_task_workflow.yaml` and
+`assignment_decline.yaml` by checking for success first (`family-task-row-.*` visible, `optional:
+true`, 5s) and wrapping the discard/retry recovery in `runFlow: { when: { notVisible: {...} } }` so
+it only ever runs when the first submit genuinely did not go through. Combined with the
+`TaskEditorForm` fix above, the dialog itself no longer appears on the success path at all, so this
+is now a defense-in-depth guard rather than an active workaround.
+
+#### Maestro flow-logic bug found and fixed: a blind double-tap trigger could self-assign
+
+The established "menu sometimes doesn't open on the first tap under fast programmatic taps"
+workaround elsewhere in these flows is an unconditional double-tap on the trigger. Applied naively
+to `AssigneePicker`'s "Assign" button, this was **not safe**: unlike the icon-only task-action menu
+(whose popup opens away from the trigger), `AssigneePicker`'s menu opens directly over its `Button`
+trigger, and the family's members array lists the caller (the family owner, User A) first. When the
+first tap _did_ open the menu, the blind second tap landed on whatever was now rendered at that same
+screen position — User A's own first menu item — silently self-assigning the task instead of
+assigning it to User B (reproduced once, confirmed via screenshot: "Assigned to you" instead of the
+intended assignee). Fixed in `assignment_decline.yaml` by checking whether the target option is
+already visible first, and only retrying the trigger tap via `runFlow: { when: { notVisible: {...}
+} } }` if it genuinely isn't up yet — the same conditional-retry pattern as the discard-dialog fix
+above, generalized to any "menu might already be open" situation.
+
+#### Assignee picker: both members' display names default to the same placeholder text
+
+`AssigneePicker`'s `Menu.Item` carries both a stable testID (`assignee-option-<memberId>`) and the
+member's `displayName` as its title — normally enough to pick a specific person by either. But a
+freshly-seeded Maestro fixture never sets `profiles.display_name`, so `create_family_with_owner`
+and `accept_family_invitation` both fall back to their hardcoded defaults (`'Owner'` /
+`'Family member'` respectively) — meaning a flow with exactly the two Maestro fixtures can't
+disambiguate "User B" from "User A" by visible text at all, only by member id. This is why
+`e2e-seed.sh` captures and exports both members' ids (see above) rather than relying on display
+names, and it's worth remembering for any future flow that needs to target a _specific_ member in a
+multi-member family.
+
+#### Known technical debt: genuine Maestro/XCUITest hangs, not fixable from flow engineering
+
+Independent of every issue above, individual Maestro commands (`pressKey: Enter` once, a
+menu-item `tapOn` once, on separate runs) were observed to hang indefinitely with no further log
+output at all — a real, rare, tool-level failure mode on this exact iOS 26.5 Simulator + Maestro
+2.10.0 combination, not localized to one command and not something a client-side retry can wait out
+(a hang is not a failure state Maestro can detect and retry from). A bounded/unbounded retry-loop
+wrapper around sign-in was attempted and itself got stuck in a real infinite-loop-like scenario;
+abandoned in favor of the simpler, previously-proven single-attempt sequence. This is the reason
+individual flow runs were verified via **two** consecutive clean runs each rather than pursued
+toward some larger number for statistical confidence — per the brief's own explicit allowance to
+document the exact gap rather than chase indefinite reliability.

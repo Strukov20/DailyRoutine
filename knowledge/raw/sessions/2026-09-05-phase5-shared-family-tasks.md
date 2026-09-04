@@ -177,7 +177,7 @@ as technical debt with full evidence in `docs/DECISIONS.md`, "Phase 5, known tec
 and cross-linked from `docs/TEST_STRATEGY.md`'s pre-existing (less precise) note on the same
 symptom family from Phase 4.
 
-## Status at this write-up
+## Status at this write-up (superseded — see "Continuation" below)
 
 Done: database/RPCs/pgTAP, domain layer, UI layer (board, editor, board-wiring, i18n), UI Jest
 coverage (172 tests / 28 suites), both test-infrastructure investigations above, this doc/wiki
@@ -189,3 +189,109 @@ document updates (README/PRODUCT/MVP_SCOPE/ARCHITECTURE/DATA_MODEL/SECURITY_AND_
 ROADMAP). This wiki update is intentionally not the final one for this phase — a further
 update is planned once the backend integration and Maestro flows have actually run, per this
 session's own explicit instruction not to treat this pass as complete.
+
+## Continuation: checkpoint verification, commits, backend integration, Maestro (same phase)
+
+This section covers everything the "Not yet done" list above named, completed in a later
+continuation of this same session/branch. Nothing in the sections above was revised; this is
+additive, per this project's append-only convention for raw evidence.
+
+### Checkpoint verification — all green
+
+Full re-run: Prettier check, `tsc --noEmit`, `eslint .`, full Jest (172/172, 28 suites, same
+count as before — no regressions from the work below), `wiki:lint`, `supabase db reset` +
+`supabase test db` (263/263 pgTAP), `npx expo config`, `npx expo-doctor` (20/21 — one
+pre-existing, unrelated patch-version drift between installed and SDK-expected Expo/
+expo-router/expo-notifications versions, out of scope to fix here given this repo's
+deliberate dependency-pinning philosophy — see DECISIONS.md), `npx expo export
+--platform ios` and `--platform android` (both succeeded, produced valid bundles).
+
+### Git commits (branch `feature/shared-family-tasks`, nothing pushed or merged)
+
+Three new commits on top of the seven from the prior write-up:
+
+1. `fix: avoid spurious unsaved-changes prompt after a successful task save` —
+   `TaskEditorForm.tsx`'s `beforeRemove` race fix (see DECISIONS.md for the full root cause).
+2. `test: add stable testIDs and screenId disambiguation for E2E automation` — testID/
+   screenId additions across ~15 source files, plus the sign-in password show/hide toggle and
+   `onSubmitEditing` wiring.
+3. `test: add Maestro E2E flows for personal and shared family task workflows` —
+   `.maestro/*.yaml`, `scripts/e2e-seed.sh`, `scripts/e2e-ios.sh`, the two new npm scripts.
+
+(The testID additions were deliberately split from the `TaskEditorForm.tsx` bug fix into two
+commits even though both touch the same file, since one is a real behavior fix and the other
+is test instrumentation — kept separable in history.)
+
+### Real multi-user backend integration
+
+Ran the ad hoc bash + curl + jq script (not committed, matching Phase 3/4 precedent) against a
+real local Supabase stack: two real `auth.users` accounts (admin-API created, since local
+email confirmation is on and blocks the public signup flow) plus a genuine outsider account
+and an anonymous request. **32/32 checks passed** — family creation/invite/accept, shared task
+creation, assign/accept/decline, real concurrent Take Task (parallel `curl`, not simulated),
+self- and other-target reassignment, completion/restore, member removal resolving assignments
+across two tasks simultaneously, privacy isolation, and full audit-trail sequence validation.
+Three script bugs found and fixed along the way, all in the test script itself, not the app —
+see DECISIONS.md, "Phase 5" for the full list (bash subshell scoping, a 204-vs-200 status
+check, a self-reassignment audit-row-collapse assertion).
+
+### Maestro E2E: installed, three flows, all passing
+
+Maestro 2.10.0 installed user-scoped (curl installer, no sudo) with its JVM dependency via
+`brew install openjdk` (the Homebrew formula, not the `--cask temurin`, which needs sudo).
+Wrote three flows under `.maestro/` and, for each, iterated until reaching **two consecutive
+fully clean, unattended runs** (verified via each run's own `commands.json` — every command
+`COMPLETED`, nothing `FAILED` — and cross-checked against real database state):
+
+- `personal_task_smoke.yaml`
+- `family_task_workflow.yaml`
+- `assignment_decline.yaml`
+
+Getting there surfaced a long chain of real, evidenced findings — each investigated with
+`maestro hierarchy` (the live accessibility-tree dump), failure screenshots, and/or direct
+database queries rather than guessed at, and each either fixed at its root cause or recorded
+as unresolved technical debt: password/text-injection on a `tapOn` right after typing; iOS
+merging a compound `Pressable`'s children into one `accessibilityText` (needs dedicated
+testIDs); the leftmost/rightmost tab bar items being unmatchable by text *or* testID at all
+(worked around with a coordinate tap, derived from the tab bar's own reported bounds); the
+`checked` selector attribute always reporting `false` for a custom checkbox regardless of
+actual state (matched real state via `text`/`value` instead); a real `TaskEditorForm`
+stale-closure race causing a spurious "Discard changes?" dialog after an already-successful
+save (found via Maestro, fixed at the source, independent of Maestro); and two bugs in the
+flow logic itself rather than the app — a blind recovery retry that could double-submit a
+task (confirmed via two rows ~2.5s apart in the database), and a blind double-tap trigger on
+`AssigneePicker` that could self-assign instead of assigning to the intended member (confirmed
+via a screenshot showing "Assigned to you"). Full writeup with evidence for each:
+`docs/DECISIONS.md`, "Phase 5" (the individual `####`-level entries after "Maestro E2E:
+installed 2.10.0..."). Genuine Maestro/XCUITest hangs (confirmed twice, different commands, no
+further log output) were encountered and are documented as real, rare, tool-level flakiness —
+not something flow engineering can fix — which is why "two clean runs" was the bar, not
+pursued toward some larger number, per the brief's own explicit allowance to document the
+exact gap rather than chase indefinite reliability.
+
+`scripts/e2e-seed.sh` provisions the fixture users and family, additionally exporting both
+members' `family_members.id`s to the gitignored `.maestro/.env.local` — needed because a
+freshly-seeded member's `display_name` always falls back to the same hardcoded placeholder
+(`'Owner'`/`'Family member'`), so `AssigneePicker`'s menu items can't be told apart by visible
+text, only by member id. `scripts/e2e-ios.sh` wraps `maestro test`, forwarding those ids via
+`-e`, and works around macOS shipping a `/usr/bin/java` stub that exists on `PATH` but errors
+at runtime (so `command -v java` alone can't detect a missing real JDK). New npm scripts:
+`e2e:seed`, `e2e:ios`.
+
+### Status at this write-up (final for this phase)
+
+Everything from the Phase 5 brief is now done: database/RPCs/pgTAP, domain layer, UI layer,
+Jest coverage, real multi-user backend integration, Maestro installation and all three
+required flows, full checkpoint verification, logical git commits, and this doc/wiki pass.
+Checked README, PRODUCT, ARCHITECTURE, DATA_MODEL, SECURITY_AND_PRIVACY, and ROADMAP for
+Phase-5-driven staleness rather than assuming none existed: found and fixed one real
+inconsistency in `docs/PRODUCT.md`'s "Assignment workflow" section, which claimed "the
+recipient is notified" (contradicting `SECURITY_AND_PRIVACY.md`'s own accurate "Not yet
+implemented: assignment/response notifications" line — only an in-app pending-count badge
+exists this phase, not push notifications) and pointed to DATA_MODEL.md's `task_assignments`
+shape as "proposed" when Phase 5 had since implemented it exactly as described there
+(confirmed against the actual `action` check constraint in
+`supabase/migrations/20260902120500_tasks.sql`). ARCHITECTURE, DATA_MODEL, and
+SECURITY_AND_PRIVACY were otherwise already accurate to what Phase 5 built; README/MVP_SCOPE/
+ROADMAP don't discuss testing infrastructure at a level Maestro would touch. Nothing pushed or
+merged to `main`.
