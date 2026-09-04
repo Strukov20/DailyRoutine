@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useNavigation } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Controller, useForm, useWatch } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import {
@@ -143,7 +143,7 @@ export function TaskEditorForm({
     control,
     handleSubmit,
     setValue,
-    formState: { errors, isSubmitting, isDirty, isSubmitSuccessful },
+    formState: { errors, isSubmitting, isDirty },
   } = useForm<TaskEditorInput>({
     resolver: zodResolver(taskEditorSchema),
     defaultValues: {
@@ -160,9 +160,20 @@ export function TaskEditorForm({
 
   // Unsaved-change confirmation: intercept the screen's own back navigation
   // (not just a Cancel button) whenever the form has unsaved edits.
+  //
+  // `onDone()` below navigates away synchronously, in the same tick as a
+  // successful mutation - before react-hook-form's own `isSubmitSuccessful`
+  // state update has propagated through a re-render and this effect has
+  // re-run to pick it up. Relying on `isSubmitSuccessful` here (via the
+  // effect's dependency array) loses that race: `beforeRemove` fires
+  // against a listener still closed over the pre-submit `isSubmitSuccessful
+  // === false`, so it shows this dialog even though the save already
+  // succeeded. A ref set synchronously the instant the mutation resolves -
+  // read directly in the handler, no re-render required - closes the race.
+  const justSubmittedRef = useRef(false);
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', (event) => {
-      if (!isDirty || isSubmitSuccessful) return;
+      if (!isDirty || justSubmittedRef.current) return;
       event.preventDefault();
       Alert.alert(
         t('tasks:editor.unsavedChanges.title'),
@@ -178,7 +189,7 @@ export function TaskEditorForm({
       );
     });
     return unsubscribe;
-  }, [navigation, isDirty, isSubmitSuccessful, t]);
+  }, [navigation, isDirty, t]);
 
   const dateValue = useWatch({ control, name: 'date' });
   const startTimeValue = useWatch({ control, name: 'startTime' });
@@ -202,6 +213,11 @@ export function TaskEditorForm({
     setValue('durationMinutes', undefined, { shouldDirty: true });
   };
 
+  // react-hooks/refs flags the ref write below as a possible during-render
+  // access because it can't see through react-hook-form's `handleSubmit`
+  // wrapper - this callback only ever runs as the form's submit event
+  // handler (after a real submit), never during render.
+  // eslint-disable-next-line react-hooks/refs
   const onSubmit = handleSubmit(async (values) => {
     setFormError(null);
     try {
@@ -260,6 +276,7 @@ export function TaskEditorForm({
           await moveTaskToInbox(taskId);
         }
       }
+      justSubmittedRef.current = true;
       onDone();
     } catch (error) {
       const code = error instanceof TaskServiceError ? error.code : 'unknown';
