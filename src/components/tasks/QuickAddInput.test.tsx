@@ -46,7 +46,7 @@ describe('QuickAddInput', () => {
   it('creates a task, clears the input, and shows a subtle confirmation', async () => {
     (createPersonalTask as jest.Mock).mockResolvedValue('t1');
 
-    await renderWithProviders(<QuickAddInput />);
+    await renderWithProviders(<QuickAddInput screenId="test" />);
 
     const input = screen.getByPlaceholderText('Add a task…');
     await fireEvent.changeText(input, 'Buy milk');
@@ -61,7 +61,7 @@ describe('QuickAddInput', () => {
   it('passes the given date through for Today/Tomorrow quick-add', async () => {
     (createPersonalTask as jest.Mock).mockResolvedValue('t1');
 
-    await renderWithProviders(<QuickAddInput date="2026-09-03" />);
+    await renderWithProviders(<QuickAddInput date="2026-09-03" screenId="test" />);
 
     const input = screen.getByPlaceholderText('Add a task…');
     await fireEvent.changeText(input, 'Timed task');
@@ -73,7 +73,7 @@ describe('QuickAddInput', () => {
   });
 
   it('never submits a blank title', async () => {
-    await renderWithProviders(<QuickAddInput />);
+    await renderWithProviders(<QuickAddInput screenId="test" />);
 
     const input = screen.getByPlaceholderText('Add a task…');
     await fireEvent(input, 'submitEditing');
@@ -89,7 +89,7 @@ describe('QuickAddInput', () => {
       }),
     );
 
-    await renderWithProviders(<QuickAddInput />);
+    await renderWithProviders(<QuickAddInput screenId="test" />);
 
     const input = screen.getByPlaceholderText('Add a task…');
     await fireEvent.changeText(input, 'Buy milk');

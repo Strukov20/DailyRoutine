@@ -320,6 +320,7 @@ export function TaskEditorForm({
           render={({ field }) => (
             <View style={styles.field}>
               <TextInput
+                testID="task-editor-title"
                 mode="outlined"
                 label={t('tasks:editor.titleField')}
                 value={field.value}
@@ -565,6 +566,7 @@ export function TaskEditorForm({
         </HelperText>
 
         <Button
+          testID="task-editor-submit"
           mode="contained"
           onPress={() => void onSubmit()}
           loading={isSubmitting}

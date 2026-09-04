@@ -32,6 +32,7 @@ export default function SignInScreen() {
   const theme = useAppTheme();
   const [formError, setFormError] = useState<string | null>(null);
   const [oauthLoading, setOauthLoading] = useState<'google' | 'apple' | null>(null);
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const {
     control,
     handleSubmit,
@@ -94,6 +95,7 @@ export default function SignInScreen() {
           render={({ field }) => (
             <View style={styles.field}>
               <TextInput
+                testID="sign-in-email"
                 mode="outlined"
                 label={t('auth:signIn.email')}
                 autoCapitalize="none"
@@ -116,13 +118,28 @@ export default function SignInScreen() {
           render={({ field }) => (
             <View style={styles.field}>
               <TextInput
+                testID="sign-in-password"
                 mode="outlined"
                 label={t('auth:signIn.password')}
-                secureTextEntry
+                secureTextEntry={!passwordVisible}
+                autoCorrect={false}
+                autoCapitalize="none"
+                keyboardType="ascii-capable"
+                returnKeyType="go"
+                onSubmitEditing={() => void onSubmit()}
                 value={field.value}
                 onChangeText={field.onChange}
                 onBlur={field.onBlur}
                 error={Boolean(errors.password)}
+                right={
+                  <TextInput.Icon
+                    icon={passwordVisible ? 'eye-off' : 'eye'}
+                    accessibilityLabel={t(
+                      passwordVisible ? 'auth:signIn.hidePassword' : 'auth:signIn.showPassword',
+                    )}
+                    onPress={() => setPasswordVisible((visible) => !visible)}
+                  />
+                }
               />
               <HelperText type="error" visible={Boolean(errors.password)}>
                 {errorMessage('password')}
@@ -139,7 +156,13 @@ export default function SignInScreen() {
           {formError}
         </HelperText>
 
-        <Button mode="contained" onPress={onSubmit} loading={isSubmitting} style={styles.submit}>
+        <Button
+          testID="sign-in-submit"
+          mode="contained"
+          onPress={onSubmit}
+          loading={isSubmitting}
+          style={styles.submit}
+        >
           {t('auth:signIn.submit')}
         </Button>
 

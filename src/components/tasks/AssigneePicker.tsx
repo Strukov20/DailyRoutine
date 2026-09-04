@@ -10,6 +10,7 @@ interface AssigneePickerProps {
   label: string;
   onSelect: (memberId: string) => void;
   disabled?: boolean;
+  testID?: string;
 }
 
 /**
@@ -25,6 +26,7 @@ export function AssigneePicker({
   label,
   onSelect,
   disabled = false,
+  testID,
 }: AssigneePickerProps) {
   const { t } = useTranslation('tasks');
   const [open, setOpen] = useState(false);
@@ -36,6 +38,7 @@ export function AssigneePicker({
       onDismiss={() => setOpen(false)}
       anchor={
         <Button
+          testID={testID}
           mode="outlined"
           icon="account-arrow-right-outline"
           disabled={disabled}
@@ -51,6 +54,7 @@ export function AssigneePicker({
         adults.map((member) => (
           <Menu.Item
             key={member.id}
+            testID={`assignee-option-${member.id}`}
             title={member.displayName}
             onPress={() => {
               setOpen(false);

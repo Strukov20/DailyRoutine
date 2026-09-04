@@ -87,11 +87,17 @@ export function FamilyTaskRow({
             completed={completed}
             onToggle={onToggleComplete}
             disabled={controlsDisabled}
+            testIDSuffix={task.id}
           />
         ) : (
           <View style={styles.checkboxSpacer} />
         )}
-        <Pressable onPress={onEdit} style={styles.content} accessibilityRole="button">
+        <Pressable
+          testID={`family-task-row-${task.id}`}
+          onPress={onEdit}
+          style={styles.content}
+          accessibilityRole="button"
+        >
           <Text
             variant="bodyMedium"
             numberOfLines={1}
@@ -115,13 +121,16 @@ export function FamilyTaskRow({
             />
           </View>
         </Pressable>
-        {canManage ? <TaskActionMenu onEdit={onEdit} onArchive={onArchive} /> : null}
+        {canManage ? (
+          <TaskActionMenu onEdit={onEdit} onArchive={onArchive} testIDSuffix={task.id} />
+        ) : null}
       </View>
 
       {!completed ? (
         <View style={styles.actions}>
           {task.assignmentStatus === 'unassigned' ? (
             <Button
+              testID={`family-task-take-${task.id}`}
               mode="contained-tonal"
               onPress={onTake}
               loading={isBusy}
@@ -134,6 +143,7 @@ export function FamilyTaskRow({
           {isMyAssignment && task.assignmentStatus === 'pending_acceptance' ? (
             <>
               <Button
+                testID={`family-task-accept-${task.id}`}
                 mode="contained"
                 onPress={onAccept}
                 loading={isBusy}
@@ -142,13 +152,20 @@ export function FamilyTaskRow({
               >
                 {t('board.accept')}
               </Button>
-              <Button mode="outlined" onPress={onDecline} disabled={controlsDisabled} compact>
+              <Button
+                testID={`family-task-decline-${task.id}`}
+                mode="outlined"
+                onPress={onDecline}
+                disabled={controlsDisabled}
+                compact
+              >
                 {t('board.decline')}
               </Button>
             </>
           ) : null}
           {canManage && task.assignmentStatus === 'unassigned' ? (
             <AssigneePicker
+              testID={`family-task-assign-${task.id}`}
               members={members}
               label={t('board.assign')}
               onSelect={onAssign}
@@ -160,6 +177,7 @@ export function FamilyTaskRow({
             task.assignmentStatus === 'accepted') ? (
             <>
               <AssigneePicker
+                testID={`family-task-reassign-${task.id}`}
                 members={members}
                 label={t('board.reassign')}
                 onSelect={onReassign}

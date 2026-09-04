@@ -158,7 +158,7 @@ export function FamilyTaskBoard({ familyId, members }: FamilyTaskBoardProps) {
     <View style={styles.flex}>
       <View style={styles.header}>
         <OfflineBanner />
-        <QuickAddInput familyId={familyId} />
+        <QuickAddInput familyId={familyId} screenId="family-board" />
         {actionError ? <ErrorState title={actionError} /> : null}
       </View>
 
@@ -186,7 +186,9 @@ export function FamilyTaskBoard({ familyId, members }: FamilyTaskBoardProps) {
       )}
 
       <FAB
+        testID="family-task-board-fab"
         icon="plus"
+        accessibilityLabel={t('tasks:editor.createSharedTitle')}
         style={[styles.fab, { backgroundColor: theme.colors.primary }]}
         color={theme.colors.onPrimary}
         onPress={() => router.push({ pathname: '/family/task/new', params: { familyId } })}

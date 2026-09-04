@@ -84,6 +84,7 @@ export default function ProfileScreen() {
       <Divider style={styles.divider} />
 
       <Button
+        testID="profile-sign-out"
         mode="outlined"
         onPress={() => void onSignOut()}
         loading={isSigningOut}

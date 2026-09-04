@@ -21,6 +21,16 @@ interface QuickAddInputProps {
    * no date concept), but nothing enforces that here — the caller decides.
    */
   familyId?: string;
+  /**
+   * Disambiguates this instance's testIDs (quick-add-input-<screen>,
+   * quick-add-submit-<screen>) for automation. Today/Tomorrow/Inbox all
+   * mount their own QuickAddInput simultaneously — React Navigation's tab
+   * navigator keeps sibling tab screens mounted after their first visit —
+   * so a single static testID would match multiple on-screen elements at
+   * once. Required, not optional-with-a-fallback: a silently-reused
+   * default would reintroduce the exact ambiguity this exists to prevent.
+   */
+  screenId: string;
 }
 
 /**
@@ -30,7 +40,7 @@ interface QuickAddInputProps {
  * this widget's whole job *is* that one action, so there's no
  * screen-level orchestration to keep it out of.
  */
-export function QuickAddInput({ date, familyId }: QuickAddInputProps) {
+export function QuickAddInput({ date, familyId, screenId }: QuickAddInputProps) {
   const { t } = useTranslation(['tasks', 'common']);
   const theme = useAppTheme();
   const [title, setTitle] = useState('');
@@ -74,6 +84,7 @@ export function QuickAddInput({ date, familyId }: QuickAddInputProps) {
     <View>
       <View style={styles.row}>
         <TextInput
+          testID={`quick-add-input-${screenId}`}
           mode="outlined"
           dense
           style={styles.input}
@@ -90,6 +101,7 @@ export function QuickAddInput({ date, familyId }: QuickAddInputProps) {
           }
         />
         <IconButton
+          testID={`quick-add-submit-${screenId}`}
           icon="plus"
           mode="contained"
           disabled={!canSubmit}

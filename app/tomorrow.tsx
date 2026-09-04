@@ -76,7 +76,7 @@ export default function TomorrowScreen() {
       <Stack.Screen options={{ title: t('screens:tomorrow.title'), headerShown: true }} />
       <View style={styles.header}>
         <OfflineBanner />
-        <QuickAddInput date={tomorrow} />
+        <QuickAddInput date={tomorrow} screenId="tomorrow" />
       </View>
 
       <TaskSectionList

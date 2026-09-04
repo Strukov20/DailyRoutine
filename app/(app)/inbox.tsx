@@ -73,7 +73,7 @@ export default function InboxScreen() {
           {t('screens:inbox.title')}
         </Text>
         <OfflineBanner />
-        <QuickAddInput />
+        <QuickAddInput screenId="inbox" />
       </View>
 
       <TaskSectionList

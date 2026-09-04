@@ -8,6 +8,8 @@ interface CompletionCheckboxProps {
   completed: boolean;
   onToggle: () => void;
   disabled?: boolean;
+  /** Disambiguates this instance's testID (completion-checkbox-<id>) for automation. */
+  testIDSuffix?: string;
 }
 
 /** A >=44x44 touch target regardless of the visible icon's own size (accessibility). */
@@ -15,12 +17,14 @@ export function CompletionCheckbox({
   completed,
   onToggle,
   disabled = false,
+  testIDSuffix,
 }: CompletionCheckboxProps) {
   const { t } = useTranslation('tasks');
   const theme = useAppTheme();
 
   return (
     <Pressable
+      testID={testIDSuffix ? `completion-checkbox-${testIDSuffix}` : undefined}
       onPress={onToggle}
       disabled={disabled}
       accessibilityRole="checkbox"

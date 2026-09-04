@@ -77,7 +77,7 @@ export default function TodayScreen() {
           </Button>
         </View>
         <OfflineBanner />
-        <QuickAddInput date={todayDateString()} />
+        <QuickAddInput date={todayDateString()} screenId="today" />
       </View>
 
       <TaskSectionList
