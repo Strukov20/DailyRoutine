@@ -78,6 +78,8 @@
     "supabase:stop": "supabase stop",
     "db:reset": "supabase db reset",
     "db:test": "supabase test db",
-    "db:types": "supabase gen types typescript --local > src/lib/supabase/types.ts"
+    "db:types": "supabase gen types typescript --local > src/lib/supabase/types.ts",
+    "e2e:seed": "bash scripts/e2e-seed.sh",
+    "e2e:ios": "bash scripts/e2e-ios.sh"
   }
 }

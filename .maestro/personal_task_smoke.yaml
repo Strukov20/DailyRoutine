@@ -1,0 +1,162 @@
+appId: com.familyflow.app
+name: Personal task smoke
+# Sign in -> Inbox -> quick-add -> open the action menu -> schedule for
+# Today -> complete -> restore. Uses the "User A" fixture from
+# scripts/e2e-seed.sh (npm run e2e:seed) — run that (after a fresh
+# `npm run db:reset`) before this flow.
+#
+# This flow looks more elaborate than a plain type-and-tap script for two
+# real, evidenced reasons — see docs/DECISIONS.md, "Phase 5, known
+# technical debt" for the full investigation of both:
+#   1. Password text injection: typing into the password field immediately
+#      followed by `tapOn` on a DIFFERENT element could inject one extra,
+#      non-deterministic character into whatever field still held focus.
+#      Fixed by keyboardType="ascii-capable" on the field (sign-in.tsx),
+#      retyping until the exact string is verified visible, and submitting
+#      via the field's own Return key (onSubmitEditing + pressKey: Enter)
+#      rather than tapOn on the Sign in button - tapOn on ANY element
+#      right after typing was confirmed, repeatedly and reliably, to
+#      reintroduce the same injection (observed corrupting to
+#      "Maestro1234y", then "Maestro1234yy" across repeated attempts).
+#      pressKey: Enter avoids that corruption reliably but was, like
+#      several other individual commands later in this flow (a menu-item
+#      tapOn observed hanging on a separate run, for one), observed to
+#      occasionally hang indefinitely with no further Maestro log output
+#      at all - a rare, real, tool-level failure mode on this exact iOS
+#      26.5 Simulator + Maestro 2.10.0 combination, not localized to any
+#      one command and not something a client-side retry can wait out (a
+#      hang is not a failure state Maestro can detect and retry from).
+#      Every individual step in this flow has been confirmed working via
+#      screenshot evidence in isolation; a single unattended clean run
+#      start-to-finish was not achieved in this session. Documented as
+#      known technical debt, not silently "solved" - see
+#      docs/DECISIONS.md, "Phase 5."
+#   2. Merged accessibility text: a Pressable wrapping multiple Text
+#      children (a task row, a checkbox with a label) gets its children's
+#      text merged by iOS into one VoiceOver-style accessibilityText,
+#      leaving the individual text/title fields empty on that element -
+#      exactly what Maestro's plain text selectors check (confirmed via
+#      `maestro hierarchy`). Fixed by adding dedicated testIDs
+#      (task-row-<id>, task-actions-<id>, completion-checkbox-<id>,
+#      quick-add-input-<screen>) to every such element and matching on
+#      those instead of visible text. The tab bar turned out NOT to need
+#      this - `tabBarTestID` isn't respected by Expo Router's Tabs
+#      (confirmed via hierarchy dump: no resource-id appears anywhere),
+#      but plain text matching for tab labels ("Inbox", "Today") was
+#      reliable throughout, so those stayed as-is.
+---
+- launchApp:
+    clearState: true
+- tapOn: 'Continue'
+- tapOn:
+    id: 'sign-in-email'
+- inputText: 'maestro-user-a@familyflow.test'
+- tapOn:
+    id: 'sign-in-password'
+- tapOn: 'Show password'
+- extendedWaitUntil:
+    visible:
+      id: 'sign-in-password'
+    timeout: 15000
+- repeat:
+    while:
+      notVisible: '^Maestro1234$'
+    commands:
+      - tapOn:
+          id: 'sign-in-password'
+      - eraseText: 50
+      - inputText: 'Maestro1234'
+      - waitForAnimationToEnd
+# A single tap can register without the field actually taking real
+# first-responder focus - a second tap right before pressing Return makes
+# submission land reliably.
+- tapOn:
+    id: 'sign-in-password'
+- pressKey: Enter
+# A real successful sign-in triggers iOS's own "Save Password?" system
+# dialog (Keychain) - dismiss it before continuing.
+- extendedWaitUntil:
+    visible: 'Not Now'
+    timeout: 10000
+    optional: true
+- tapOn:
+    text: 'Not Now'
+    optional: true
+- extendedWaitUntil:
+    visible: 'Today'
+    timeout: 10000
+
+- waitForAnimationToEnd
+- tapOn: 'Inbox'
+- extendedWaitUntil:
+    visible:
+      id: 'quick-add-input-inbox'
+    timeout: 15000
+- tapOn:
+    id: 'quick-add-input-inbox'
+- inputText: 'Maestro Smoke Task'
+- tapOn:
+    id: 'quick-add-submit-inbox'
+- extendedWaitUntil:
+    visible:
+      id: 'task-row-.*'
+    timeout: 15000
+
+# The action menu (react-native-paper <Menu>) can occasionally not open on
+# the first tap under fast programmatic taps - a second tap makes it
+# reliable (same "first tap sometimes doesn't take" pattern as the
+# password field above).
+- tapOn:
+    id: 'task-actions-.*'
+- waitForAnimationToEnd
+- tapOn:
+    id: 'task-actions-.*'
+- extendedWaitUntil:
+    visible:
+      id: 'task-move-to-today-.*'
+    timeout: 8000
+- tapOn:
+    id: 'task-move-to-today-.*'
+- extendedWaitUntil:
+    notVisible:
+      id: 'task-row-.*'
+    timeout: 15000
+
+# A plain tapOn("Today")/assertVisible("Today") here was confirmed (via
+# `maestro hierarchy`, matching the "Profile" tab finding in
+# family_task_workflow.yaml) to fail deterministically: "Today" is the
+# leftmost tab, its bounds flush against the screen's own x=0 edge
+# (mirroring "Profile" as the rightmost tab, flush against the right
+# edge) - the same plausible visibility-bounds edge case for boundary-
+# touching tab bar items, not a timing race. Falling back to a coordinate
+# tap on the tab bar's own reported bounds sidesteps it - see
+# docs/DECISIONS.md, "Phase 5."
+- waitForAnimationToEnd
+- tapOn:
+    point: '10%, 93%'
+- extendedWaitUntil:
+    visible:
+      id: 'task-row-.*'
+    timeout: 15000
+
+# The structured `checked` selector attribute was confirmed (via `maestro
+# hierarchy`) to always report "false" for this component regardless of
+# actual state - a custom Pressable's RN accessibilityState.checked
+# doesn't surface as XCUITest's own "checked" trait. The real state IS
+# reliably exposed as plain text/value ("checkbox, checked" /
+# "checkbox, unchecked") - see docs/DECISIONS.md, "Phase 5."
+- tapOn:
+    id: 'completion-checkbox-.*'
+- extendedWaitUntil:
+    visible:
+      id: 'completion-checkbox-.*'
+      text: 'checkbox, checked'
+    timeout: 15000
+
+- tapOn:
+    id: 'completion-checkbox-.*'
+- extendedWaitUntil:
+    visible:
+      id: 'completion-checkbox-.*'
+      text: 'checkbox, unchecked'
+    timeout: 15000

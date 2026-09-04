@@ -1,0 +1,211 @@
+appId: com.familyflow.app
+name: Family task workflow
+# User A creates an unassigned shared task -> signs out -> User B takes
+# it (self-claim, immediate acceptance) -> completes it -> confirm state.
+# Uses the "User A"/"User B" fixtures from scripts/e2e-seed.sh
+# (npm run e2e:seed, same family) — run that (after a fresh
+# `npm run db:reset`) before this flow.
+#
+# See personal_task_smoke.yaml's header for the full writeup of the two
+# environment issues every flow in this directory works around (password
+# text-injection on tapOn-right-after-typing, and Maestro's plain text
+# selectors not reliably matching certain accessibility-merged elements)
+# and docs/DECISIONS.md, "Phase 5" for the complete investigation.
+---
+- launchApp:
+    clearState: true
+- tapOn: 'Continue'
+
+# --- Sign in as User A ---
+- tapOn:
+    id: 'sign-in-email'
+- inputText: 'maestro-user-a@familyflow.test'
+- tapOn:
+    id: 'sign-in-password'
+- tapOn: 'Show password'
+- extendedWaitUntil:
+    visible:
+      id: 'sign-in-password'
+    timeout: 15000
+- repeat:
+    while:
+      notVisible: '^Maestro1234$'
+    commands:
+      - tapOn:
+          id: 'sign-in-password'
+      - eraseText: 50
+      - inputText: 'Maestro1234'
+      - waitForAnimationToEnd
+- tapOn:
+    id: 'sign-in-password'
+- pressKey: Enter
+- extendedWaitUntil:
+    visible: 'Not Now'
+    timeout: 10000
+    optional: true
+- tapOn:
+    text: 'Not Now'
+    optional: true
+- extendedWaitUntil:
+    visible: 'Today'
+    timeout: 10000
+
+# --- User A creates an unassigned shared task ---
+- waitForAnimationToEnd
+- tapOn: 'Family'
+- extendedWaitUntil:
+    visible: 'Tasks'
+    timeout: 8000
+- tapOn: 'Tasks'
+- extendedWaitUntil:
+    visible:
+      id: 'family-task-board-fab'
+    timeout: 8000
+- tapOn:
+    id: 'family-task-board-fab'
+- extendedWaitUntil:
+    visible:
+      id: 'task-editor-title'
+    timeout: 8000
+- tapOn:
+    id: 'task-editor-title'
+- inputText: 'Maestro Family Task'
+# Tapping submit directly after typing was confirmed (repeatedly, across
+# both this field and the sign-in password field) to inject one stray
+# character into whatever field still held focus - see
+# personal_task_smoke.yaml's header. Tapping a neutral, non-interactive
+# label first gives that phantom keystroke somewhere harmless to land.
+- tapOn: 'Priority'
+- waitForAnimationToEnd
+- tapOn:
+    id: 'task-editor-submit'
+# A mis-landed tap can occasionally trigger the form's own unsaved-changes
+# guard (`beforeRemove` in TaskEditorForm) even on an otherwise-successful
+# submit - confirmed via code review that this is a spurious/stale
+# artifact, NOT a real double-submission risk from the tap itself (the
+# submit button has a solid react-hook-form `isSubmitting` disabled
+# guard). The real risk is in THIS recovery logic: by the time a retry
+# tap fires, the first submission has already completed and the button is
+# re-enabled, so blindly retrying submits the same still-filled form a
+# second time and creates a genuine duplicate task (reproduced once in
+# this session - see docs/DECISIONS.md, "Phase 5"). Fix: check for
+# success first and only attempt the discard/retry recovery if the first
+# submit did NOT actually go through.
+- extendedWaitUntil:
+    visible:
+      id: 'family-task-row-.*'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: 'family-task-row-.*'
+    commands:
+      - extendedWaitUntil:
+          visible: 'Discard changes?'
+          timeout: 3000
+          optional: true
+      - tapOn:
+          text: 'Cancel'
+          optional: true
+      - tapOn:
+          id: 'task-editor-submit'
+          optional: true
+- extendedWaitUntil:
+    visible:
+      id: 'family-task-row-.*'
+    timeout: 15000
+
+# --- User A signs out ---
+# Both assertVisible("Profile") and tapOn("Profile") were confirmed (via
+# `maestro hierarchy`, three runs, including with an 8s extendedWaitUntil
+# first) to fail deterministically even though the tab is plainly on
+# screen and structurally identical to "Family"/"Today"/the segmented
+# "Tasks" control (all matched fine moments earlier in this same flow):
+# accessibilityText-only ("Profile, tab, 5 of 5"), no resource-id, sole
+# match anywhere in the tree. Not a timing race (extra waits didn't help)
+# and not the already-known tabBarTestID gap (no selector change helps a
+# text match that can't find the element at all). Falling back to a
+# coordinate tap on the tab bar's own reported bounds
+# ([321,791][402,840] of a 402x874 screen) sidesteps whatever is making
+# this specific element's text/accessibilityText unmatchable - documented
+# as unresolved technical debt in docs/DECISIONS.md, "Phase 5."
+- waitForAnimationToEnd
+- tapOn:
+    point: '90%, 93%'
+- extendedWaitUntil:
+    visible:
+      id: 'profile-sign-out'
+    timeout: 8000
+- tapOn:
+    id: 'profile-sign-out'
+- extendedWaitUntil:
+    visible: 'Continue'
+    timeout: 10000
+
+# --- Sign in as User B ---
+- tapOn: 'Continue'
+- tapOn:
+    id: 'sign-in-email'
+- inputText: 'maestro-user-b@familyflow.test'
+- tapOn:
+    id: 'sign-in-password'
+- tapOn: 'Show password'
+- extendedWaitUntil:
+    visible:
+      id: 'sign-in-password'
+    timeout: 15000
+- repeat:
+    while:
+      notVisible: '^Maestro1234$'
+    commands:
+      - tapOn:
+          id: 'sign-in-password'
+      - eraseText: 50
+      - inputText: 'Maestro1234'
+      - waitForAnimationToEnd
+- tapOn:
+    id: 'sign-in-password'
+- pressKey: Enter
+- extendedWaitUntil:
+    visible: 'Not Now'
+    timeout: 10000
+    optional: true
+- tapOn:
+    text: 'Not Now'
+    optional: true
+- extendedWaitUntil:
+    visible: 'Today'
+    timeout: 10000
+
+# --- User B takes and completes the task ---
+- waitForAnimationToEnd
+- tapOn: 'Family'
+- extendedWaitUntil:
+    visible: 'Tasks'
+    timeout: 8000
+- tapOn: 'Tasks'
+- extendedWaitUntil:
+    visible:
+      id: 'family-task-take-.*'
+    timeout: 15000
+- tapOn:
+    id: 'family-task-take-.*'
+- extendedWaitUntil:
+    notVisible:
+      id: 'family-task-take-.*'
+    timeout: 15000
+
+- tapOn:
+    id: 'completion-checkbox-.*'
+# The structured `checked` selector attribute was confirmed (via `maestro
+# hierarchy`) to always report "false" for this component regardless of
+# actual state - a custom Pressable's RN accessibilityState.checked
+# doesn't surface as XCUITest's own "checked" trait. The real state IS
+# reliably exposed as plain text/value ("checkbox, checked" /
+# "checkbox, unchecked") - see docs/DECISIONS.md, "Phase 5."
+- extendedWaitUntil:
+    visible:
+      id: 'completion-checkbox-.*'
+      text: 'checkbox, checked'
+    timeout: 15000
