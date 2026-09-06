@@ -911,24 +911,50 @@ leaving the individual `text`/`title`/`value` fields Maestro's plain-text select
 Plain single-`Text` labels (tab names, dialog buttons, section headers) were **not** affected and
 plain text matching for those stayed reliable throughout.
 
-#### Leftmost/rightmost tab bar items can't be matched by text _or_ testID at all
+#### Leftmost/rightmost tab bar items can't be reliably tapped — semantic selector confirmed, tap still doesn't land
 
-`tabBarTestID` on an Expo Router `Tabs.Screen`/`screenOptions` does **not** propagate to the native
-accessibility tree — confirmed via `maestro hierarchy` (zero `resource-id` anywhere on any tab bar
-item) and reverted after trying it. That alone wasn't fatal, since every tab's label text matched
-reliably via `accessibilityText` — **except** the leftmost ("Today") and rightmost ("Profile") tab
-bar items, which failed **deterministically** (not intermittently — reproduced identically across
-three separate runs each, including after an explicit 8s `extendedWaitUntil` wait) for both
-`assertVisible` and `tapOn`, despite being structurally identical to the middle tabs that matched
-fine (`accessibilityText`-only, no `resource-id`, sole match anywhere in the tree) and visibly
-correct in the failure screenshot every time. The one structural difference: each boundary tab's
-own bounds sit flush against the screen's own edge (`Today`: `x∈[0,80]` on a 402pt-wide screen;
-`Profile`: `x∈[321,402]`) — a plausible edge case in Maestro's own visibility-bounds check, not
-confirmed further since it's outside this app's code. **Fixed by falling back to a coordinate tap**
-(`tapOn: { point: "10%, 93%" }` / `"90%, 93%"`, derived from the tab bar's own reported bounds on a
-402×874pt screen) for those two tabs only — every middle tab keeps plain text matching. Documented
-here as unresolved technical debt in the Maestro/Expo-Router-Tabs combination itself, not something
-fixable from this app's code.
+**Correction to an earlier finding in this same section**: `tabBarTestID` does not propagate to the
+native accessibility tree, but that is because it is simply the wrong prop name for this Expo
+Router/React Navigation version, not because Expo Router's `Tabs` doesn't support a real testID at
+all. The correct option is **`tabBarButtonTestID`** — confirmed by reading
+`node_modules/expo-router/build/react-navigation/bottom-tabs/views/BottomTabBar.js`, which passes
+`testID: options.tabBarButtonTestID` (not `options.tabBarTestID`) into `BottomTabItem`, which spreads
+it onto the underlying `PlatformPressable`. Set via `options={{ tabBarButtonTestID: 'tab-today' }}`
+etc. on each `Tabs.Screen` in `app/(app)/_layout.tsx`, then **verified via `maestro hierarchy`** that
+every tab, including the two boundary ones, now genuinely carries `resource-id: "tab-<name>"` on the
+native element (not just `accessibilityText`).
+
+That fix is real and worth keeping — every middle tab (`Calendar`, `Inbox`, `Family`) now matches
+reliably by a stable id instead of text prone to the accessibility-merging issue above, confirmed
+with 3/3 clean isolated taps and again across two full clean runs of every flow. **It does not,
+however, fix the leftmost (`Today`) and rightmost (`Profile`) tabs.** With the real testID in place,
+`tapOn: { id: "tab-profile" }` was run 3 times in isolation, each time reported `COMPLETED` by
+Maestro's own log — and each time the screenshot taken immediately after still showed the _previous_
+tab selected, proving the touch itself never reached the app, not that the selector failed to
+resolve. This rules out every selector-based theory (text matching, `accessibilityText` merging,
+missing `resource-id`) at the root: the element is found correctly by every selector type tried; the
+tap dispatched at its resolved coordinates simply does not register. The one property the two failing
+tabs share, and no middle tab does: their bounds sit flush against the screen's own edge (`Today`:
+`x∈[0,80]` on a 402pt-wide screen; `Profile`: `x∈[321,402]`) on this **iPhone 17 Pro, iOS 26.5
+Simulator** — a real Maestro/XCUITest coordinate-resolution or touch-delivery limitation for elements
+at the extreme edge, outside this app's code and not fixable from it.
+
+**Fix, retained**: a coordinate tap (`tapOn: { point: "10%, 93%" }` / `"90%, 93%"`, percentage-based
+— not absolute pixels, so it isn't tied to one physical resolution — derived from the tab bar's own
+reported bounds) for those two tabs only; every other tab bar interaction uses the real
+`tab-<name>` testID. Centralized to exactly these two spots across the three flows (search
+`.maestro/*.yaml` for `point:`), each with its own comment pointing back to this entry. Confirmed
+with two consecutive fully clean, unattended runs of all three flows after this change.
+
+A related, broader finding while doing this verification: the same "Maestro reports `COMPLETED` but
+the tap silently didn't land" signature was also observed **twice, non-deterministically, on a
+genuinely middle tab** (`tab-inbox` in `personal_task_smoke.yaml` — 2 failures out of roughly 10 total
+attempts across this investigation, always recoverable on the very next retry with no code change).
+This generalizes the "known technical debt: genuine Maestro/XCUITest hangs" entry below: the same
+underlying rare tap-delivery failure mode apparently doesn't always manifest as a hang with dead log
+output — it can also manifest as a silent no-op that still reports success. It happens to be close to
+deterministic at the two screen-edge positions and rare everywhere else, which is what makes the
+edge tabs practically un-automatable without the coordinate fallback while the rest of the app isn't.
 
 #### The `checked` selector attribute is unreliable for custom checkboxes — match text instead
 
@@ -1012,15 +1038,42 @@ disambiguate "User B" from "User A" by visible text at all, only by member id. T
 names, and it's worth remembering for any future flow that needs to target a _specific_ member in a
 multi-member family.
 
-#### Known technical debt: genuine Maestro/XCUITest hangs, not fixable from flow engineering
+#### Known technical debt: genuine Maestro/XCUITest hangs and silent no-op taps, not fixable from flow engineering
 
 Independent of every issue above, individual Maestro commands (`pressKey: Enter` once, a
-menu-item `tapOn` once, on separate runs) were observed to hang indefinitely with no further log
-output at all — a real, rare, tool-level failure mode on this exact iOS 26.5 Simulator + Maestro
-2.10.0 combination, not localized to one command and not something a client-side retry can wait out
-(a hang is not a failure state Maestro can detect and retry from). A bounded/unbounded retry-loop
-wrapper around sign-in was attempted and itself got stuck in a real infinite-loop-like scenario;
-abandoned in favor of the simpler, previously-proven single-attempt sequence. This is the reason
-individual flow runs were verified via **two** consecutive clean runs each rather than pursued
-toward some larger number for statistical confidence — per the brief's own explicit allowance to
-document the exact gap rather than chase indefinite reliability.
+menu-item `tapOn` once, a `tab-inbox` `tapOn` twice — see "Leftmost/rightmost tab bar items" above
+for the last one — on separate runs) were observed to either hang indefinitely with no further log
+output at all, or report `COMPLETED` while the tap silently failed to register — a real, rare,
+tool-level failure mode on this exact iOS 26.5 Simulator + Maestro 2.10.0 combination, not localized
+to one command and not something a client-side retry can wait out or detect from Maestro's own
+reported status (a hang is not a failure state Maestro can detect and retry from; a false-`COMPLETED`
+silent no-op is worse — the flow has to notice the _effect_ didn't happen, via a subsequent
+assertion, not the command's own result). A bounded/unbounded retry-loop wrapper around sign-in was
+attempted and itself got stuck in a real infinite-loop-like scenario; abandoned in favor of the
+simpler, previously-proven single-attempt sequence. This is the reason individual flow runs were
+verified via **two** consecutive clean runs each rather than pursued toward some larger number for
+statistical confidence — per the brief's own explicit allowance to document the exact gap rather than
+chase indefinite reliability. Practical rate observed this phase: near-100% at the two screen-edge
+tab positions (which is why they get the coordinate-tap fix above), roughly 2 failures in ~10
+attempts elsewhere, always clean on an immediate retry with no code change.
+
+#### Expo SDK patch-version drift: `expo`/`expo-router`/`expo-notifications` — resolved, not pinned
+
+`npx expo-doctor` flagged three packages a patch version behind what Expo SDK 57's own compatibility
+metadata expected (`expo` 57.0.19→57.0.20, `expo-router` 57.0.18→57.0.19, `expo-notifications`
+57.0.16→57.0.17). Confirmed this was **not** introduced by Phase 5 or this branch — `git log`
+traces all three `~57.0.x` ranges back to this repository's very first commit — and was purely a
+case of `node_modules`/`package-lock.json` being frozen at whatever patch versions existed on npm at
+initial install time, while npm has since published newer patches that already satisfy the
+**same, already-declared** `~57.0.x` ranges (confirmed via `npm view <pkg> versions`: 57.0.20/
+57.0.19/57.0.17 all exist and match exactly what `expo-doctor`/`npx expo install --check` expected).
+This is categorically different from the deliberate TypeScript/ESLint pins elsewhere in this file —
+those exist because of real peer-dependency conflicts with this project's other tooling; this was
+ordinary lockfile staleness with no conflict of any kind. Resolved via `npx expo install --fix`
+(Expo's own recommended fixer, which also nudges the declared ranges up to `~57.0.20`/`~57.0.19`/
+`~57.0.17` to match), followed by a full native rebuild (`rm -rf ios/Pods ios/Podfile.lock &&
+npx pod-install && npx expo run:ios` — required because `expo-router` and `expo-notifications` ship
+native code; the JS-only `expo export` alone would not have exercised the updated native modules).
+`expo-doctor` now reports 21/21. Full re-verification after the bump: Prettier, `tsc`, ESLint, all
+172 Jest tests, `wiki:lint`, a fresh `supabase db reset` + all 263 pgTAP assertions, and both
+`expo export` platforms — all green, no regressions from the bump.

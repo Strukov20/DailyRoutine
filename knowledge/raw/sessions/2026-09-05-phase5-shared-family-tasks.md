@@ -295,3 +295,61 @@ shape as "proposed" when Phase 5 had since implemented it exactly as described t
 SECURITY_AND_PRIVACY were otherwise already accurate to what Phase 5 built; README/MVP_SCOPE/
 ROADMAP don't discuss testing infrastructure at a level Maestro would touch. Nothing pushed or
 merged to `main`.
+
+## Closure pass: Expo Doctor fix and Maestro tap hardening
+
+A follow-up request asked for two specific hardening items before final close-out, plus a
+consolidated report. Both are additive to everything above.
+
+### Expo Doctor: real patch-version drift, resolved not pinned
+
+`expo-doctor` was at 20/21 — `expo`/`expo-router`/`expo-notifications` a patch behind. Traced
+via `git log` to this repo's very first commit (not introduced by Phase 5 or this branch); the
+declared `~57.0.x` ranges already permitted the newer patches, `node_modules`/
+`package-lock.json` were just frozen at initial-install versions. Confirmed via `npm view
+<pkg> versions` that the expected versions genuinely exist and satisfy the existing ranges - a
+pure lockfile refresh, not a new pin. Fixed via `npx expo install --fix`, followed by a real
+native rebuild (`expo-router`/`expo-notifications` ship native code, so the JS-only `expo
+export` alone wouldn't exercise it): `rm -rf ios/Pods ios/Podfile.lock && npx pod-install &&
+npx expo run:ios`. Full re-verification after: Prettier, `tsc`, ESLint, 172/172 Jest,
+`wiki:lint`, a fresh `db reset` + 263/263 pgTAP, both `expo export` platforms - all clean.
+`expo-doctor` now 21/21.
+
+### Maestro coordinate-tap hardening: a real semantic fix found, and its real limit proven
+
+Attempted to replace the "Today"/"Profile" coordinate-tap workaround with a semantic selector,
+per the follow-up request's explicit instructions. Found the actual bug in the earlier
+investigation: `tabBarTestID` (tried and abandoned as "not respected by Expo Router") was
+simply the wrong prop name - the real one, found by reading
+`node_modules/expo-router/build/react-navigation/bottom-tabs/views/BottomTabBar.js`, is
+`tabBarButtonTestID`. Added it to every `Tabs.Screen` in `app/(app)/_layout.tsx` and confirmed
+via `maestro hierarchy` that it now genuinely reaches the native element (`resource-id:
+"tab-<name>"`) for all five tabs, not just `accessibilityText`.
+
+This is a real, valuable fix, kept in production: every middle tab (`Calendar`, `Inbox`,
+`Family`) now matches by a stable id in all three flows instead of text reliant on the
+accessibility-merging behavior documented elsewhere. But it does **not** fix the two boundary
+tabs. With the confirmed-correct testID in hand, `tapOn: { id: "tab-profile" }` was run 3 times
+in isolation - Maestro logged `COMPLETED` every time, and the screenshot taken immediately
+after each run still showed the previous tab selected. This is conclusive: the element
+resolves correctly by every selector tried (text, testID); the touch dispatched at its
+resolved position simply doesn't register with the app. The one property "Today" (leftmost)
+and "Profile" (rightmost) share that no middle tab does is their bounds sitting flush against
+the screen's own edge on this iPhone 17 Pro / iOS 26.5 Simulator - a real Maestro/XCUITest
+coordinate-delivery limitation for edge-flush elements, not a selector problem and not fixable
+from this app's code.
+
+Kept the percentage-based coordinate tap (not absolute pixels) for exactly these two spots
+across the three flows, each now documented with this stronger, conclusive evidence rather
+than the earlier, more speculative "plausible edge case" wording. A secondary finding from this
+investigation: the identical "`COMPLETED`-but-silent-no-op" signature was also observed twice,
+non-deterministically, on a genuine middle tab (`tab-inbox`) during repeated verification runs
+- always clean on an immediate retry with no code change. This generalizes the existing
+"genuine Maestro/XCUITest hangs" technical debt entry: the same rare tap-delivery failure mode
+apparently doesn't always manifest as a hang with dead output: it can also manifest as a false
+`COMPLETED`. Practical rate observed: near-100% at the two edge positions, roughly 2-in-10
+elsewhere, never seen to survive a retry.
+
+All three flows re-verified with two consecutive fully clean, unattended runs each after every
+change in this pass (five additional full end-to-end runs total across the debugging and
+verification process, on top of the two each already recorded above).

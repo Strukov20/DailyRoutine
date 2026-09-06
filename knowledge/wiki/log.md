@@ -281,3 +281,44 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     and the Maestro flows/scripts themselves — kept separate even where they touched the same
     file, since one is a behavior fix and the others are test infrastructure.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-06T00:00:00Z — Phase 5 closure pass: Expo Doctor fix, Maestro tap hardening
+
+- **Operation type:** hardening + investigation + wiki update
+- **Source material ingested:** the "Closure pass" section appended to
+  [`knowledge/raw/sessions/2026-09-05-phase5-shared-family-tasks.md`](../raw/sessions/2026-09-05-phase5-shared-family-tasks.md).
+- **Wiki pages updated:** `engineering/testing-strategy.md` (corrected the `tabBarTestID`
+  finding to name the real prop, `tabBarButtonTestID`; reframed the boundary-tab issue as a
+  tap-delivery limitation proven independent of selector type, not a matching problem; added
+  the Expo Doctor resolution).
+- **Canonical docs updated:** `docs/DECISIONS.md` — corrected the "leftmost/rightmost tab bar
+  items" entry with the conclusive investigation (real testID confirmed reaching native via
+  `tabBarButtonTestID`, tap still proven not to land 3/3 with screenshot evidence), generalized
+  the "genuine hangs" entry to include silent no-op taps, and added a new entry for the Expo
+  SDK patch-version resolution.
+- **Decisions/contradictions recorded:**
+  - **Corrected a claim from the previous entry, not silently**: `tabBarTestID` "not respected
+    by Expo Router" was actually the wrong prop name, not a real framework gap — the correct
+    prop, `tabBarButtonTestID`, works and now ships in `app/(app)/_layout.tsx`. Every middle
+    tab across all three Maestro flows now matches by this stable id instead of text.
+  - Proved, rather than assumed, that the boundary-tab tap failure is a genuine touch-delivery
+    limitation independent of selector: with a hierarchy-confirmed real testID in hand, an
+    id-based `tapOn` on the rightmost tab still failed to land 3/3 in isolation (Maestro
+    reported `COMPLETED`; the screenshot taken immediately after showed no navigation
+    occurred). The percentage-based coordinate-tap workaround is retained for exactly the two
+    edge tabs, now on stronger evidence.
+  - Generalized a prior finding: the "genuine Maestro/XCUITest hangs" technical debt isn't only
+    a hang-with-dead-output failure mode — the same underlying rare tap-delivery issue can also
+    surface as a false `COMPLETED` with no effect, observed twice on a genuine middle tab
+    during this pass's verification runs (always clean on immediate retry).
+  - Expo Doctor's 20/21 was traced to ordinary lockfile staleness (existing `~57.0.x` ranges
+    already permitted the newer patches), not a deliberate pin — explicitly distinguished from
+    this repo's real TypeScript/ESLint pins, which exist for genuine peer-dependency conflicts.
+    Fixed via `npx expo install --fix` plus a full native rebuild (required since two of the
+    three packages ship native code); re-verified clean across the full checkpoint suite.
+    `expo-doctor` now 21/21.
+  - All three Maestro flows re-verified with two consecutive fully clean, unattended runs each
+    after every change in this pass.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

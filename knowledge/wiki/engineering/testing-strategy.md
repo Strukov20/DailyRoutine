@@ -1,7 +1,7 @@
 ---
 title: Testing strategy
 status: current
-updated: 2026-09-04
+updated: 2026-09-06
 sources:
   - ../../../docs/TEST_STRATEGY.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
@@ -79,7 +79,10 @@ supabase test db`), plus real curl-driven multi-user flows for both Family Space
 - **Build/bundle smoke test** — `npx expo export --platform ios|android`, `npx expo config`,
   `npx expo-doctor`; catches what lint/typecheck can't (see the `expo-router` vs.
   `@react-navigation/native` case in [system-architecture](system-architecture.md)). Wired
-  into `.github/workflows/ci.yml`.
+  into `.github/workflows/ci.yml`. `expo-doctor` currently reports 21/21 — a Phase 5 patch-level
+  drift on `expo`/`expo-router`/`expo-notifications` (lockfile frozen at initial-install
+  versions, not a pinning decision) was resolved via `npx expo install --fix` plus a full
+  native rebuild; see [DECISIONS.md, "Phase 5"](../../../docs/DECISIONS.md).
 
 - **E2E (Maestro)** — Maestro 2.10.0, installed user-scoped (official curl installer, no
   sudo) with its JVM dependency via the Homebrew **formula** `brew install openjdk` (not the
@@ -94,17 +97,20 @@ supabase test db`), plus real curl-driven multi-user flows for both Family Space
   writes their member ids to the gitignored `.maestro/.env.local` (both users' display names
   default to the same placeholder text, so the assignee picker can only be targeted reliably
   by member id — `scripts/e2e-ios.sh` forwards these via `maestro test -e`). Run via `npm run
-e2e:seed` then `npm run e2e:ios`. Full writeup of every environment issue worked around
+e2e:seed` then `npm run e2e:ios`. Tab bar items get a real testID via
+  `options.tabBarButtonTestID` on each `Tabs.Screen` (`app/(app)/_layout.tsx`) — note the exact
+  prop name, since the more commonly documented `tabBarTestID` silently does nothing on this
+  Expo Router/React Navigation version. Full writeup of every environment issue worked around
   (password text-injection on a `tapOn` right after typing, iOS merging a compound
   `Pressable`'s children into one `accessibilityText` — needs dedicated testIDs, the
-  leftmost/rightmost tab bar items being unmatchable by text _or_ testID at all — worked
-  around with a coordinate tap, an unreliable `checked` selector attribute, and a real
+  leftmost/rightmost tab bar items' _taps_ not landing even with a confirmed-correct testID —
+  worked around with a coordinate tap, an unreliable `checked` selector attribute, and a real
   `TaskEditorForm` stale-closure bug found and fixed) plus two flow-logic bugs found in the
   flows themselves (a blind recovery retry that could double-submit a task, a blind
   double-tap trigger that could self-assign one): [DECISIONS.md, "Phase
-  5"](../../../docs/DECISIONS.md). Known technical debt: genuine Maestro/XCUITest hangs
-  (confirmed twice, different commands, no further log output at all) are a real rare
-  tool-level failure mode on this exact Simulator/Maestro combination, not fixable from flow
+  5"](../../../docs/DECISIONS.md). Known technical debt: genuine Maestro/XCUITest hangs and
+  silent no-op taps (`COMPLETED` reported, no effect) are a real rare tool-level failure mode
+  on this exact Simulator/Maestro combination, not fixable from flow
   engineering — this is why each flow was verified with two clean runs rather than pursued
   toward indefinite reliability.
 
