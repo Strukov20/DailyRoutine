@@ -6,11 +6,16 @@ name: Family task workflow
 # (npm run e2e:seed, same family) — run that (after a fresh
 # `npm run db:reset`) before this flow.
 #
-# See personal_task_smoke.yaml's header for the full writeup of the two
+# See personal_task_smoke.yaml's header for the full writeup of the
 # environment issues every flow in this directory works around (password
-# text-injection on tapOn-right-after-typing, and Maestro's plain text
-# selectors not reliably matching certain accessibility-merged elements)
-# and docs/DECISIONS.md, "Phase 5" for the complete investigation.
+# text-injection on tapOn-right-after-typing, Maestro's plain text
+# selectors not reliably matching certain accessibility-merged elements,
+# and significant tap-delivery flakiness - observed ~2-in-10 on ordinary
+# elements, effectively deterministic at the tab bar's screen-edge items -
+# that every mutating or navigating tap below defends against with a
+# single bounded conditional retry, never a blind repeat) and
+# docs/DECISIONS.md, "Phase 5" for the complete investigation and the
+# honest reliability numbers.
 ---
 - launchApp:
     clearState: true
@@ -51,12 +56,25 @@ name: Family task workflow
     timeout: 10000
 
 # --- User A creates an unassigned shared task ---
+# Navigation tap - occasionally silent-no-ops (see header); retry once,
+# bounded, only if the destination hasn't loaded. Tapping a tab twice is
+# harmless.
 - waitForAnimationToEnd
 - tapOn:
     id: 'tab-family'
 - extendedWaitUntil:
     visible: 'Tasks'
-    timeout: 8000
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible: 'Tasks'
+    commands:
+      - tapOn:
+          id: 'tab-family'
+      - extendedWaitUntil:
+          visible: 'Tasks'
+          timeout: 10000
 - tapOn: 'Tasks'
 - extendedWaitUntil:
     visible:
@@ -91,7 +109,8 @@ name: Family task workflow
 # second time and creates a genuine duplicate task (reproduced once in
 # this session - see docs/DECISIONS.md, "Phase 5"). Fix: check for
 # success first and only attempt the discard/retry recovery if the first
-# submit did NOT actually go through.
+# submit did NOT actually go through - this is the general pattern every
+# mutation in this flow follows: prove non-success before ever retrying.
 - extendedWaitUntil:
     visible:
       id: 'family-task-row-.*'
@@ -125,22 +144,36 @@ name: Family task workflow
 # element (resource-id: "tab-profile", not just accessibilityText). Ran
 # the id-based tap 3 times in isolation: Maestro reports each `tapOn`
 # COMPLETED, but the screenshot taken right after every single time still
-# shows the "Today" tab selected - the touch itself never lands, not a
+# shows the previous tab selected - the touch itself never lands, not a
 # selector-resolution problem. The one structural property "Profile"
-# (rightmost) and "Today" (leftmost) share, that no middle tab does: their
-# bounds sit flush against the screen's own edge
-# ([321,791][402,840] of a 402x874 screen, for "Profile"). Coordinate tap
-# on those same reported bounds is the only thing that reliably works -
-# see docs/DECISIONS.md, "Phase 5" for the full investigation, evidence,
-# and the exact simulator/OS configuration this assumes
-# (iPhone 17 Pro, iOS 26.5).
+# (rightmost) and "Today" (leftmost, in personal_task_smoke.yaml) share,
+# that no middle tab does: their bounds sit flush against the screen's own
+# edge ([321,791][402,840] of a 402x874 screen, for "Profile"). Coordinate
+# tap on those same reported bounds is the most reliable option here, but
+# is still not perfectly deterministic even so - retry once, bounded, only
+# if the destination hasn't loaded (navigating is not a mutation, so a
+# retry here is always safe). See docs/DECISIONS.md, "Phase 5" for the
+# full investigation, evidence, and the exact simulator/OS configuration
+# this assumes (iPhone 17 Pro, iOS 26.5).
 - waitForAnimationToEnd
 - tapOn:
     point: '90%, 93%'
 - extendedWaitUntil:
     visible:
       id: 'profile-sign-out'
-    timeout: 8000
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: 'profile-sign-out'
+    commands:
+      - tapOn:
+          point: '90%, 93%'
+      - extendedWaitUntil:
+          visible:
+            id: 'profile-sign-out'
+          timeout: 10000
 - tapOn:
     id: 'profile-sign-out'
 - extendedWaitUntil:
@@ -188,29 +221,69 @@ name: Family task workflow
     id: 'tab-family'
 - extendedWaitUntil:
     visible: 'Tasks'
-    timeout: 8000
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible: 'Tasks'
+    commands:
+      - tapOn:
+          id: 'tab-family'
+      - extendedWaitUntil:
+          visible: 'Tasks'
+          timeout: 10000
 - tapOn: 'Tasks'
 - extendedWaitUntil:
     visible:
       id: 'family-task-take-.*'
     timeout: 15000
+# Take is a real mutation - only retry if the Take button is still there,
+# proving the task is still genuinely unassigned (not just that this
+# assertion hasn't caught up).
 - tapOn:
     id: 'family-task-take-.*'
 - extendedWaitUntil:
     notVisible:
       id: 'family-task-take-.*'
-    timeout: 15000
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      visible:
+        id: 'family-task-take-.*'
+    commands:
+      - tapOn:
+          id: 'family-task-take-.*'
+      - extendedWaitUntil:
+          notVisible:
+            id: 'family-task-take-.*'
+          timeout: 15000
 
-- tapOn:
-    id: 'completion-checkbox-.*'
 # The structured `checked` selector attribute was confirmed (via `maestro
 # hierarchy`) to always report "false" for this component regardless of
 # actual state - a custom Pressable's RN accessibilityState.checked
 # doesn't surface as XCUITest's own "checked" trait. The real state IS
 # reliably exposed as plain text/value ("checkbox, checked" /
-# "checkbox, unchecked") - see docs/DECISIONS.md, "Phase 5."
+# "checkbox, unchecked") - see docs/DECISIONS.md, "Phase 5." Completing is
+# a real mutation - only retry if it's still reporting "unchecked".
+- tapOn:
+    id: 'completion-checkbox-.*'
 - extendedWaitUntil:
     visible:
       id: 'completion-checkbox-.*'
       text: 'checkbox, checked'
-    timeout: 15000
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      visible:
+        id: 'completion-checkbox-.*'
+        text: 'checkbox, unchecked'
+    commands:
+      - tapOn:
+          id: 'completion-checkbox-.*'
+      - extendedWaitUntil:
+          visible:
+            id: 'completion-checkbox-.*'
+            text: 'checkbox, checked'
+          timeout: 15000

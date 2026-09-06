@@ -13,8 +13,12 @@ name: Assignment decline
 #
 # See personal_task_smoke.yaml's and family_task_workflow.yaml's headers
 # for the full writeup of the environment issues every flow in this
-# directory works around, and docs/DECISIONS.md, "Phase 5" for the
-# complete investigation.
+# directory works around - including significant tap-delivery flakiness
+# (observed ~2-in-10 on ordinary elements, effectively deterministic at
+# the tab bar's screen-edge items) that every mutating or navigating tap
+# below defends against with a single bounded conditional retry, never a
+# blind repeat - and docs/DECISIONS.md, "Phase 5" for the complete
+# investigation and the honest reliability numbers.
 ---
 - launchApp:
     clearState: true
@@ -55,12 +59,25 @@ name: Assignment decline
     timeout: 10000
 
 # --- User A creates an unassigned shared task ---
+# Navigation tap - occasionally silent-no-ops (see header); retry once,
+# bounded, only if the destination hasn't loaded. Tapping a tab twice is
+# harmless.
 - waitForAnimationToEnd
 - tapOn:
     id: 'tab-family'
 - extendedWaitUntil:
     visible: 'Tasks'
-    timeout: 8000
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible: 'Tasks'
+    commands:
+      - tapOn:
+          id: 'tab-family'
+      - extendedWaitUntil:
+          visible: 'Tasks'
+          timeout: 10000
 - tapOn: 'Tasks'
 - extendedWaitUntil:
     visible:
@@ -88,7 +105,9 @@ name: Assignment decline
 # header for the full root-cause writeup and the fix already applied at
 # the source - TaskEditorForm.tsx's `justSubmittedRef`). Check for
 # success first and only attempt the discard/retry recovery if the first
-# submit did NOT actually go through, to avoid ever double-submitting.
+# submit did NOT actually go through, to avoid ever double-submitting -
+# this is the general pattern every mutation in this flow follows: prove
+# non-success before ever retrying.
 - extendedWaitUntil:
     visible:
       id: 'family-task-row-.*'
@@ -145,15 +164,29 @@ name: Assignment decline
           visible:
             id: 'assignee-option-${USER_B_MEMBER_ID}'
           timeout: 8000
+# Selecting the option is the actual assignment mutation - only retry if
+# the manage-side controls have NOT yet flipped to Reassign/Unassign,
+# proving the assignment genuinely did not go through (the menu itself
+# would still be open in that case, so re-tapping the same option is
+# safe).
 - tapOn:
     id: 'assignee-option-${USER_B_MEMBER_ID}'
-# Assignment succeeded once the manage-side controls flip from
-# Assign to Reassign/Unassign (canManage && pending_acceptance) - the
-# Assign button itself (unassigned-only) should be gone.
 - extendedWaitUntil:
     visible:
       id: 'family-task-reassign-.*'
-    timeout: 15000
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: 'family-task-reassign-.*'
+    commands:
+      - tapOn:
+          id: 'assignee-option-${USER_B_MEMBER_ID}'
+      - extendedWaitUntil:
+          visible:
+            id: 'family-task-reassign-.*'
+          timeout: 15000
 - extendedWaitUntil:
     notVisible:
       id: 'family-task-assign-.*'
@@ -168,14 +201,28 @@ name: Assignment decline
 # family_task_workflow.yaml's header for the full investigation and
 # evidence (3 isolated id-based-tap runs, screenshot-confirmed each time)
 # and docs/DECISIONS.md, "Phase 5." Coordinate tap on the tab bar's own
-# reported bounds is the only thing that reliably works.
+# reported bounds is the most reliable option, but still not perfectly
+# deterministic - retry once, bounded, only if the destination hasn't
+# loaded (navigating is not a mutation, so a retry here is always safe).
 - waitForAnimationToEnd
 - tapOn:
     point: '90%, 93%'
 - extendedWaitUntil:
     visible:
       id: 'profile-sign-out'
-    timeout: 8000
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: 'profile-sign-out'
+    commands:
+      - tapOn:
+          point: '90%, 93%'
+      - extendedWaitUntil:
+          visible:
+            id: 'profile-sign-out'
+          timeout: 10000
 - tapOn:
     id: 'profile-sign-out'
 - extendedWaitUntil:
@@ -223,18 +270,43 @@ name: Assignment decline
     id: 'tab-family'
 - extendedWaitUntil:
     visible: 'Tasks'
-    timeout: 8000
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible: 'Tasks'
+    commands:
+      - tapOn:
+          id: 'tab-family'
+      - extendedWaitUntil:
+          visible: 'Tasks'
+          timeout: 10000
 - tapOn: 'Tasks'
 - extendedWaitUntil:
     visible:
       id: 'family-task-decline-.*'
     timeout: 15000
+# Declining is a real mutation - only retry if the Decline button is
+# still there, proving the assignment is still genuinely pending (not
+# just that this assertion hasn't caught up).
 - tapOn:
     id: 'family-task-decline-.*'
 - extendedWaitUntil:
     notVisible:
       id: 'family-task-decline-.*'
-    timeout: 15000
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      visible:
+        id: 'family-task-decline-.*'
+    commands:
+      - tapOn:
+          id: 'family-task-decline-.*'
+      - extendedWaitUntil:
+          notVisible:
+            id: 'family-task-decline-.*'
+          timeout: 15000
 # Declining returns the task to unassigned - User B (not the owner) sees
 # the Take button again, since take is offered to any adult member.
 - extendedWaitUntil:
@@ -249,7 +321,19 @@ name: Assignment decline
 - extendedWaitUntil:
     visible:
       id: 'profile-sign-out'
-    timeout: 8000
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: 'profile-sign-out'
+    commands:
+      - tapOn:
+          point: '90%, 93%'
+      - extendedWaitUntil:
+          visible:
+            id: 'profile-sign-out'
+          timeout: 10000
 - tapOn:
     id: 'profile-sign-out'
 - extendedWaitUntil:
@@ -293,7 +377,17 @@ name: Assignment decline
     id: 'tab-family'
 - extendedWaitUntil:
     visible: 'Tasks'
-    timeout: 8000
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible: 'Tasks'
+    commands:
+      - tapOn:
+          id: 'tab-family'
+      - extendedWaitUntil:
+          visible: 'Tasks'
+          timeout: 10000
 - tapOn: 'Tasks'
 # A fresh sign-in re-navigates and re-fetches from scratch, which is the
 # "refresh" the brief calls for - no separate pull-to-refresh gesture

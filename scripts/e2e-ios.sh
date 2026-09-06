@@ -33,6 +33,21 @@ if [ -z "${JAVA_HOME:-}" ]; then
   fi
 fi
 
+# Attempt at animation stabilization: enable Reduce Motion on the booted
+# Simulator before every run. Maestro itself has no built-in option for
+# this (checked its bundled jars directly - no ReduceMotion/animation-drag
+# strings anywhere), so this is done at the Simulator level via simctl.
+# Best-effort and non-fatal if no Simulator is booted yet or the write
+# fails - this is a genuine attempt at reducing flakiness, not a proven
+# fix (the tap-delivery issue documented in docs/DECISIONS.md, "Phase 5"
+# was root-caused to touch delivery, not an animation race, so this alone
+# is not expected to eliminate it - see that entry for the honest,
+# measured reliability numbers with this enabled).
+BOOTED_UDID="$(xcrun simctl list devices 2>/dev/null | grep -m1 '(Booted)' | grep -oE '[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}' || true)"
+if [ -n "$BOOTED_UDID" ]; then
+  xcrun simctl spawn "$BOOTED_UDID" defaults write com.apple.Accessibility ReduceMotionEnabled -bool YES 2>/dev/null || true
+fi
+
 ENV_ARGS=()
 if [ -f .maestro/.env.local ]; then
   while IFS='=' read -r key value; do
