@@ -10,5 +10,8 @@ module.exports = {
   // package that ships untranspiled source (including standard-navigation,
   // pulled in transitively by expo-router).
   collectCoverageFrom: ['src/**/*.{ts,tsx}', '!src/**/*.d.ts'],
-  testPathIgnorePatterns: ['/node_modules/', '/knowledge/'],
+  // supabase/functions runs on Deno (npm:/https:// specifiers, a Deno
+  // global) — its own deno test suite, not Jest. See docs/DECISIONS.md,
+  // "Phase 6."
+  testPathIgnorePatterns: ['/node_modules/', '/knowledge/', '/supabase/functions/'],
 };
