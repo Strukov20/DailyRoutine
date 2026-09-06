@@ -140,7 +140,14 @@ name: Personal task smoke
 # the first tap under fast programmatic taps - a second tap makes it
 # reliable (same "first tap sometimes doesn't take" pattern as the
 # password field above). Opening a menu twice is harmless (idempotent),
-# unlike the mutation below it.
+# unlike the mutation below it. The open-check itself is NOT a mutation
+# either, so it retries unconditionally on "menu didn't open" - confirmed
+# necessary in practice: an earlier version of this flow made this
+# specific assertion non-optional with no recovery, and it was the one
+# that failed in the batched `npm run e2e:ios` (all three flows) run that
+# validated this hardening pass, while every isolated single-flow run
+# passed - see docs/DECISIONS.md, "Phase 5" for the honest numbers from
+# both.
 - tapOn:
     id: 'task-actions-.*'
 - waitForAnimationToEnd
@@ -149,7 +156,22 @@ name: Personal task smoke
 - extendedWaitUntil:
     visible:
       id: 'task-move-to-today-.*'
-    timeout: 8000
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: 'task-move-to-today-.*'
+    commands:
+      - tapOn:
+          id: 'task-actions-.*'
+      - waitForAnimationToEnd
+      - tapOn:
+          id: 'task-actions-.*'
+      - extendedWaitUntil:
+          visible:
+            id: 'task-move-to-today-.*'
+          timeout: 10000
 # Moving the task is a real mutation - only retry if the inbox row is
 # still there, proving the move genuinely did not happen yet (not just
 # that this assertion hasn't caught up).
