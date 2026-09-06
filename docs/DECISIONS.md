@@ -1147,3 +1147,143 @@ native code; the JS-only `expo export` alone would not have exercised the update
 `expo-doctor` now reports 21/21. Full re-verification after the bump: Prettier, `tsc`, ESLint, all
 172 Jest tests, `wiki:lint`, a fresh `supabase db reset` + all 263 pgTAP assertions, and both
 `expo export` platforms — all green, no regressions from the bump.
+
+## Phase 6 (Reliable Family Assignment Push Notifications)
+
+### Durable transactional outbox, not a direct send from the mutation RPC
+
+Every assignment mutation RPC (`assign_family_task`, `accept_task_assignment`, etc.) already
+inserted a `task_assignments` row before this phase; the alternative considered was calling
+Expo's push API directly from inside that same RPC. Rejected: a Postgres function calling an
+external HTTP API is itself a reliability and latency risk to the mutation the user is
+actually waiting on, and a failed/slow push call would either roll back a perfectly valid
+assignment or leave the RPC hanging on a third party it doesn't control. Instead: a second
+`AFTER INSERT` trigger on `task_assignments` (`notifications.enqueue_task_assignment_notification`,
+alongside the pre-existing `apply_task_assignment_action` — deliberately a second trigger, not
+folded into the first, so "apply the assignment" and "decide who to notify" stay independently
+reviewable and testable) writes a `notifications.outbox` row in the same transaction as the
+mutation. A separate, asynchronous dispatcher (the Edge Function) claims and sends outbox rows
+later — the mutation itself never blocks on, or depends on the success of, delivery.
+
+### The `notifications` schema is excluded from PostgREST routing, not just RLS-protected
+
+Every other table in this codebase relies on RLS + explicit grants (see
+SECURITY_AND_PRIVACY.md, Mechanisms 1–2). `notifications.outbox`/`deliveries` additionally
+exclude the whole `notifications` schema from `supabase/config.toml`'s `[api] schemas` list —
+a routing-level restriction PostgREST enforces before grants/RLS are even consulted, so it
+holds even for `service_role`. Chosen over "RLS + grants only" because these two tables hold
+operational detail (retry counts, error codes, claim state) with no legitimate client read
+case at all, ever — a schema-level exclusion is a stronger, simpler guarantee than "every
+future policy on this table must also remember to deny everyone," and it means a mistake in a
+future migration's grants on this schema still can't leak anything, since PostgREST would
+never route to it regardless. Confirmed both ways: `supabase/tests/110_notification_outbox_test.sql`
+(database-level: SELECT and every function, `authenticated`/`anon`) and
+`scripts/e2e-notifications.sh` (API-level: a `service_role`-authenticated REST call to
+`$API_URL/rest/v1/outbox` returns 404, since PostgREST never registered the route at all).
+
+### `FOR UPDATE SKIP LOCKED` claiming + an idempotency key derived from the triggering row
+
+`notifications.claim_pending_outbox(worker_id, limit)` uses `FOR UPDATE SKIP LOCKED` so
+multiple concurrent dispatcher invocations (a webhook firing while a cron sweep is also
+running, or two overlapping cron ticks) can never claim and double-send the same row — a
+locked row is simply skipped by the other claimant, not waited on. Separately,
+`idempotency_key` is a unique column derived deterministically from the triggering
+`task_assignments.id` (`task_assignment:<id>`) with `insert ... on conflict do nothing` — this
+means even a full RPC replay (a client retrying a mutation after a dropped response, landing
+the same `task_assignments` insert twice at the SQL level — which the RPC's own logic already
+prevents, but this is a second, independent guard) can never produce two outbox rows for the
+same event.
+
+### `PushTransport` as an injectable interface, not a mocked `fetch`
+
+The dispatcher (`supabase/functions/dispatch-notifications/index.ts`) takes a `PushTransport`
+(`sendBatch`/`getReceipts`) as a parameter rather than calling Expo's HTTP API directly and
+leaving tests to mock global `fetch`. This keeps the dispatcher's own business logic (claiming,
+batching, status transitions, backoff, token deactivation) testable against a real local
+Postgres instance with a transport that is *fully* fake — no network stack involved at all,
+not even a mocked one — while the real `createExpoTransport()` implementation (also in
+`_shared/expoTransport.ts`) is the only code that ever performs a real `fetch` to Expo. The
+same interface is reused by `scripts/e2e-notifications.sh`'s `cli.ts` helper for real-backend
+integration testing, and would be reused again for a future direct-APNs/FCM transport if that
+were ever built (see ROADMAP.md — deliberately not built this phase).
+
+### Deno Edge Functions need their own tooling boundary, not shared tsconfig/ESLint/Jest config
+
+`supabase/functions/` is a Deno module tree (its own `deno.json`/`deno.lock`, `npm:`/`https://`
+import specifiers, a global `Deno`, `import.meta.main`) inside a repository whose root
+tooling — `tsconfig.json`, `eslint.config.js`, `jest.config.js` — is configured for the Node/
+Metro-bundled app. Running any of those three tools against the Deno tree fails on syntax and
+globals they don't recognize; the correct fix is exclusion, not trying to make one config
+satisfy both runtimes (`tsconfig.json`'s `exclude`, `eslint.config.js`'s `globalIgnores`,
+`jest.config.js`'s `testPathIgnorePatterns`, all pointing at `supabase/functions`). The Deno
+tree gets its own test runner (`deno test`) and its own lint/type checking via Deno's built-in
+tooling, run separately — see TEST_STRATEGY.md, "Edge Functions."
+
+### The anon-EXECUTE gap (Phase 3's finding) recurred on two new functions — confirms the checklist item is load-bearing
+
+SECURITY_AND_PRIVACY.md's Phase 3 entry already documents that Supabase's role bootstrap
+grants `anon`/`authenticated` EXECUTE on every new `SECURITY DEFINER` function directly (not
+via `PUBLIC`), so `revoke ... from public` alone never actually revokes it. This phase's own
+migration initially missed the same class of gap on two *new* functions
+(`enqueue_task_assignment_notification`, the trigger function, and `backoff_interval`, an
+internal helper) — caught only by directly querying `pg_proc`/`has_function_privilege` against
+a real local instance (`docker exec -i supabase_db_familyflow psql`), not by code review of the
+migration file, which looked correct at a glance. This is exactly the failure mode Phase 3's
+"before adding any new `SECURITY DEFINER` function, confirm its ACL with a query" instruction
+exists to prevent, and this phase is evidence that instruction needs to keep being followed
+literally, not treated as a one-time Phase 3 cleanup. Fixed with the same explicit
+`revoke all ... from public, anon, authenticated` pattern on both functions, re-verified with
+the same query.
+
+### Contextual permission request, never on launch
+
+`app/notification-settings.tsx` is the only place `requestNotificationPermission()` is called,
+and only from an explicit user tap — never from `app/_layout.tsx` or any screen's mount effect.
+This is a product/privacy choice, not just an iOS App Store guideline nicety: a permission
+prompt with no context ("why is this app asking me for this, right now, before I've done
+anything?") both converts poorly and trains users to reflexively deny prompts, which is worse
+for the feature than asking once, later, when the user has just enabled something that
+benefits from it.
+
+### Real infrastructure was pushed further than `scripts/e2e-backend.sh`'s original shape needed
+
+`scripts/e2e-notifications.sh` extends that established pattern (localhost-only gate, unique
+per-run identities, `set -euo pipefail`, `trap`-based cleanup, repeatable twice with no
+residue) to also run the *real* dispatcher code (`dispatchNotifications()`, imported from
+`index.ts` — not a reimplementation) against a real local Postgres instance, via a small Deno
+CLI wrapper (`cli.ts`) that supplies only the transport as fake. Two bash portability issues
+surfaced and were fixed rather than worked around: `curl` needs `--globoff` for any URL
+containing an Expo push token string (`ExponentPushToken[...]` — the brackets are otherwise
+parsed as a curl range expression), and bash 3.2 (macOS's default `/bin/bash`, still bash
+3.2.57 in 2026) treats `"${array[@]}"` on a *genuinely empty* array as an unbound-variable
+error under `set -u`, unlike bash 4+ — worked around with the `${array[@]+"${array[@]}"}`
+idiom rather than disabling `set -u`.
+
+### Not deployed this phase: the Database Webhook / `pg_cron` invocation, and any EAS/APNs/FCM configuration
+
+Per this repository's standing rule against creating or modifying external resources without
+explicit authorization, none of the following were performed, and each is a manual step for
+whoever operates the actual Supabase project when this phase is ready to go live:
+
+1. **Wire up invocation.** In the Supabase Dashboard (or via `supabase` CLI config once
+   hosted): add a Database Webhook on `notifications.outbox` `INSERT` calling the deployed
+   `dispatch-notifications` function (low-latency path), **and** a `pg_cron` schedule (e.g.
+   every minute) calling the same function as a durable fallback for anything the webhook
+   missed. Both call the same `dispatchNotifications()` handler — no code change needed,
+   only the two triggers themselves.
+2. **Set `NOTIFICATION_WORKER_SECRET`** as an Edge Function secret and configure the
+   webhook/cron caller to send it as the `x-notification-worker-secret` header — the function
+   already rejects any request missing/mismatching it (see `index.ts`).
+3. **Deploy the function**: `supabase functions deploy dispatch-notifications` against the
+   real hosted project (not attempted this phase — no hosted project is connected to this
+   repository at all yet, per every prior phase's own standing constraint).
+4. **An EAS project** (`eas init`/`eas build:configure`) is required before
+   `registerForPushNotifications()` can succeed on a real device — `getExpoProjectId()`
+   already returns `null` and the service throws a typed `missing_project_id` error until
+   this exists, which is the correct, tested behavior for "not linked yet," not a bug.
+5. **No real push has been sent or received this phase.** Every test — pgTAP, the Deno Edge
+   Function suite, Jest, and `scripts/e2e-notifications.sh` — uses a fake `PushTransport`.
+   Confirming an actual device receives an actual notification requires steps 3–4 above plus
+   a physical device (Expo push tokens are simulator-inert — see
+   `notificationService.ts`'s own `Device.isDevice` check) and is out of scope for this phase's
+   local-infrastructure-only verification loop.

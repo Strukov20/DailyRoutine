@@ -6,14 +6,14 @@
 | --------------- | -------------------------------------------------------------- | ------------------------------------------------- |
 | Framework       | React Native (via Expo)                                        | RN 0.86.3                                         |
 | Toolchain       | Expo SDK                                                       | 57                                                |
-| Routing         | Expo Router (file-based, on top of React Navigation internals) | ~57.0.18                                          |
+| Routing         | Expo Router (file-based, on top of React Navigation internals) | ~57.0.19                                          |
 | Language        | TypeScript, `strict: true` + extra strictness flags            | 6.0.3 (pinned — see [DECISIONS.md](DECISIONS.md)) |
-| Backend         | Supabase (Postgres, Auth, Realtime, Storage)                   | client 2.113.0                                    |
+| Backend         | Supabase (Postgres, Auth, Realtime, Storage, Edge Functions)    | client 2.113.0                                    |
 | Server-state    | TanStack Query                                                 | 5.102.8                                           |
 | Client UI-state | Zustand (small, deliberately scoped — see below)               | 5.0.15                                            |
 | Forms           | React Hook Form + Zod (`@hookform/resolvers`)                  | 7.87.0 / 4.5.4                                    |
 | UI kit          | React Native Paper (Material 3), themed via `src/theme/`       | 5.15.3                                            |
-| Notifications   | Expo Notifications                                             | 57.0.16                                           |
+| Notifications   | Expo Notifications + expo-device (client); Deno Edge Function dispatcher + Expo Push Service (server, Phase 6) | 57.0.17 / 57.0.1 |
 | Localization    | expo-localization + i18next/react-i18next                      | see `src/i18n`                                    |
 | Testing         | Jest (`jest-expo` preset) + React Native Testing Library       | 29.x / 14.0.1                                     |
 | E2E (future)    | Maestro                                                        | not yet configured                                |
@@ -40,6 +40,7 @@ app/                      Expo Router routes (file-based)
     today.tsx / calendar.tsx / inbox.tsx / family.tsx / profile.tsx
   task/
     new.tsx                 Modal: create-task preview (title-only, not persisted)
+  notification-settings.tsx Permission status, contextual request, assignment-notification toggle (Phase 6)
   +not-found.tsx
 
 src/
@@ -54,6 +55,7 @@ src/
     tasks/ (priority.ts, schemas.ts)
     auth/ (schemas.ts, errorMessages.ts)
     profile/ (types.ts, mappers.ts) — domain Profile, decoupled from the DB row shape
+    notifications/ (types.ts, payload.ts, hooks.ts) — Phase 6, see "Push notifications" below
   i18n/                      i18next setup + locales/{en,uk}/*.json
   lib/
     env.ts                    Zod-validated environment access
@@ -64,6 +66,8 @@ src/
     auth/authService.ts         The only module that calls supabase.auth.*
     auth/AuthProvider.tsx        App-wide session state + useAuth()
     auth/oauth.ts                Config-gated Google/Apple sign-in
+    notifications/notificationService.ts       The only module that calls expo-notifications/expo-device (Phase 6)
+    notifications/notificationResponseRouter.ts Tap-to-navigate routing, cold/background/foreground (Phase 6)
     query/queryClient.ts       TanStack Query client + defaults
     query/QueryProvider.tsx
   store/
@@ -80,11 +84,22 @@ docs/                      This document set
 knowledge/                 LLM Wiki — see docs/LLM_WIKI.md
 scripts/
   wiki-lint.mjs             Validates the LLM Wiki structure
+  e2e-backend.sh             Real multi-user backend integration (shared tasks) — npm run e2e:backend
+  e2e-notifications.sh       Same, for the notification outbox/dispatcher (Phase 6) — npm run e2e:notifications
 supabase/                  See docs/DATA_MODEL.md and docs/SECURITY_AND_PRIVACY.md
-  config.toml                Local dev stack config (ports, auth, providers)
+  config.toml                Local dev stack config (ports, auth, providers) — deliberately excludes
+                              the `notifications` schema from `[api] schemas` (Phase 6, see
+                              SECURITY_AND_PRIVACY.md, "Mechanism 4a")
   migrations/                 Schema, constraints, RLS, grants, triggers, views
   seed.sql                    System-category seed data only (see file header)
   tests/                      pgTAP tests — supabase test db
+  functions/                  Deno Edge Functions — a separate runtime/module system from the
+                              app above, excluded from tsconfig/ESLint/Jest (see "Push
+                              notifications" below)
+    _shared/                   expoTransport.ts (PushTransport interface + Expo HTTP client),
+                              db.ts (direct Postgres connection via SUPABASE_DB_URL)
+    dispatch-notifications/    index.ts (the dispatcher, Deno.serve entry point), cli.ts
+                              (fake-transport manual/scripted invocation, see e2e-notifications.sh)
 ```
 
 ## Provider stack (`app/_layout.tsx`)
@@ -237,6 +252,81 @@ A screen reaching past its hook into `familyService` (or, worse, `supabase` dire
 layering violation to fix on sight, not a style nitpick — it's what keeps error normalization,
 cache invalidation, and the RPC-only write boundary (see
 [SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md)) from being reimplemented ad hoc per screen.
+
+## Push notifications (Phase 6)
+
+Scoped to shared family task assignment events only (assigned/reassigned → requested,
+accepted, declined, took → taken) — see [DATA_MODEL.md](DATA_MODEL.md), "The `notifications`
+schema," and [SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md), "Mechanism 4," for the data
+model and privacy design. This section is about where the code lives and how the pieces fit.
+
+**Durable outbox, not a direct send.** A mutation RPC (`assign_family_task`,
+`accept_task_assignment`, etc.) never sends a push itself — it only inserts a
+`task_assignments` row, same as before Phase 6. A trigger on that same table
+(`notifications.enqueue_task_assignment_notification`) enqueues a `notifications.outbox` row
+in the *same transaction*, so a notification is never lost to a mid-request crash and never
+blocks the mutation on network/provider latency. A separate worker (the dispatcher, below)
+claims and sends outbox rows asynchronously. This is the standard transactional-outbox
+pattern, chosen specifically so "the assignment succeeded" and "the push was sent" can never
+partially fail into an inconsistent state.
+
+**Client layer** (mirrors the existing `authService.ts` pattern exactly):
+
+- `src/lib/notifications/notificationService.ts` — the only module that calls
+  `expo-notifications`/`expo-device`, and the only place that calls the
+  `register_notification_token`/`notification_preferences` RPCs. Every failure mode throws a
+  typed `NotificationServiceError` with a stable `code`, same shape as `AuthServiceError`.
+- `src/domain/notifications/hooks.ts` — TanStack Query hooks wrapping that service
+  (permission status, registration, preference read/write) — screens never call the service
+  directly, same layering rule as every other feature (see "Layering" above).
+- `app/notification-settings.tsx` — the only screen that requests notification permission,
+  and only on explicit user action (never on app launch — see
+  [DECISIONS.md](DECISIONS.md)/[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md) for why a
+  contextual permission ask matters).
+- `src/lib/notifications/notificationResponseRouter.ts` — handles a tapped notification in
+  all three states (cold start via `getLastNotificationResponseAsync`, background/foreground
+  via `addNotificationResponseReceivedListener`), deduplicated by the notification's own
+  response id, resolving `src/domain/notifications/payload.ts`'s parsed (Zod-validated)
+  payload to the existing task editor route. A tap while signed out is preserved via
+  `uiStore.pendingNotificationRoute` and replayed once sign-in completes — the same pattern
+  Phase 3 established for `pendingInviteToken`, not a new one invented for this feature.
+  Mounted once, app-wide, in `app/_layout.tsx` (active for the whole app lifetime, not just
+  while signed in, so a signed-out tap isn't missed).
+
+**Server layer — a separate runtime from the rest of this app.**
+`supabase/functions/dispatch-notifications/index.ts` is a Deno Edge Function, not a Node
+module: it uses `npm:`/`https://` import specifiers, a global `Deno` object, and its own
+`deno.json`/`deno.lock` (`supabase/functions/`). It is explicitly excluded from `tsconfig.json`,
+`eslint.config.js`, and `jest.config.js` so the main app's Node-oriented tooling never tries
+to parse Deno-specific syntax. `dispatchNotifications()` is exported and unit-testable in
+isolation from the `Deno.serve(...)` HTTP entry point (guarded by `import.meta.main`, so
+importing the module for a test never starts a real listener):
+
+1. **Claim** — `notifications.claim_pending_outbox()` (`FOR UPDATE SKIP LOCKED`, so multiple
+   concurrent dispatcher invocations never double-send the same row).
+2. **Send** — looks up the recipient's active (non-deactivated) tokens, batches them through a
+   `PushTransport` (an interface, not a concrete `fetch` call — the real implementation
+   (`_shared/expoTransport.ts`'s `createExpoTransport`) talks to Expo's HTTP push API; tests
+   and `cli.ts` inject a fully fake, network-free implementation instead), and records a
+   `notifications.deliveries` row per device.
+3. **Classify** — a `DeviceNotRegistered` ticket/receipt deactivates that
+   `notification_tokens` row (`notifications.deactivate_notification_token`); other errors are
+   retried at the outbox level with bounded exponential backoff (capped 30 minutes).
+4. **Check receipts** — a later invocation polls Expo's receipt endpoint for tickets still
+   `ticket_ok`, resolving them to `receipt_ok`/`receipt_error` (Expo's own two-phase
+   send-then-receipt flow — a ticket being "ok" only means Expo accepted the message, not that
+   the device received it).
+
+Reaches `notifications.outbox`/`deliveries` via a direct Postgres connection
+(`_shared/db.ts`, `SUPABASE_DB_URL`), the only way in — see SECURITY_AND_PRIVACY.md,
+"Mechanism 4a," for why (the schema is absent from PostgREST's routing config entirely).
+
+**Invocation — designed, not deployed.** Two invocation paths call the same handler: a
+Supabase Database Webhook on `notifications.outbox` INSERT (low latency) and a `pg_cron`
+sweep on a short interval (a durable fallback that picks up anything the webhook missed).
+Neither is wired up yet — see [DECISIONS.md](DECISIONS.md) for the exact manual dashboard/CLI
+step required, which was deliberately not performed automatically (see this repository's
+standing rule against creating/modifying external resources without explicit authorization).
 
 ## Offline & caching (current state, not the V2 design)
 

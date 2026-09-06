@@ -1,10 +1,11 @@
 ---
 title: Roadmap (V2/V3)
 status: current
-updated: 2026-09-03
+updated: 2026-09-06
 sources:
   - ../../../docs/ROADMAP.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
+  - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
 tags: [product, roadmap, v2, v3]
 ---
 
@@ -16,10 +17,20 @@ yet. Recurrence needs a schema change (`recurrence_rules` currently has zero gra
 a `task_occurrences` table is the anticipated shape, to preserve per-occurrence completion
 history — explicitly **not** "rewrite the same task row's date on completion," which would
 destroy that history). Reminders need a scheduling mechanism (a background job/Edge Function
-calling Expo's push API) — `reminders` rows can already be created safely, `notification_tokens`
-exists unused. Neither is exposed in the Phase 4 task editor, on purpose, so as not to imply
-either does something it doesn't. See `docs/ROADMAP.md`, "MVP-scope items not yet built," for
-the full proposal.
+calling Expo's push API) — `reminders` rows can already be created safely. **Phase 6 built the
+two pieces this previously called out as missing** (`notification_tokens` client-side
+registration and a Deno Edge Function dispatcher pattern — see [Push
+notifications](../engineering/push-notifications.md)), but wired them to shared-task
+*assignment* events only, not reminders; a reminder-specific scheduled scan and outbox event
+type are still unbuilt. Neither recurrence nor reminders is exposed in the task editor, on
+purpose, so as not to imply either does something it doesn't. See `docs/ROADMAP.md`,
+"MVP-scope items not yet built," for the full proposal.
+
+**Push notification scope not covered by Phase 6**: recurring/completion/restoration
+notifications, reminder delivery, digests/quiet hours, AI-driven content, email/SMS, an in-app
+notification inbox, event/child-profile notifications, ownership-transfer notifications, and
+direct APNs/FCM — all deliberately deferred, not forgotten. See [Push
+notifications](../engineering/push-notifications.md) and `docs/ROADMAP.md` for the full list.
 
 **Also still open**: family ownership transfer / an owner leaving their own family has no RPC
 (`remove_family_member` unconditionally refuses to remove the `role = 'owner'` row) — see

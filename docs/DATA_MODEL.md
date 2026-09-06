@@ -286,13 +286,76 @@ Worked example matching PRODUCT.md's swimming scenario: one `events` row ("Swimm
 
 **Owned by the user.** Expo push tokens, one row per installed device.
 
-| column            | type                 | notes                                                               |
-| ----------------- | -------------------- | ------------------------------------------------------------------- |
-| `id`              | uuid                 |                                                                     |
-| `profile_id`      | uuid → `profiles.id` |                                                                     |
-| `expo_push_token` | text                 | required, unique                                                    |
-| `device_platform` | text                 | `'ios' \| 'android'`                                                |
-| `last_seen_at`    | timestamptz          | updated on each successful send/refresh, used to prune stale tokens |
+| column            | type                 | notes                                                                                                                                                                 |
+| ----------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`               | uuid                 |                                                                                                                                                                       |
+| `profile_id`       | uuid → `profiles.id` | always the caller — `register_notification_token` reassigns an existing token row to whoever re-registers it (device resale/reinstall), never a parameter          |
+| `expo_push_token`  | text                 | required, unique                                                                                                                                                      |
+| `device_platform`  | text                 | `'ios' \| 'android'`                                                                                                                                                  |
+| `last_seen_at`     | timestamptz          | updated on each successful send/refresh, used to prune stale tokens                                                                                                   |
+| `deactivated_at`   | timestamptz          | nullable (Phase 6). Set on logout (client-initiated, best-effort) or by the dispatcher when Expo reports `DeviceNotRegistered` for this token. A deactivated token is excluded from delivery but the row itself is kept, not deleted — re-registering the same token string clears it |
+
+## notification_preferences
+
+**Owned by the user** (Phase 6). One row per profile; a missing row means "notifications
+enabled" (the default), matching `notification_preference_enabled()`'s own server-side
+default — so a user who never opens the Settings screen is still notified.
+
+| column                             | type                 | notes             |
+| ----------------------------------- | -------------------- | ------------------ |
+| `profile_id`                        | uuid → `profiles.id` | primary key       |
+| `assignment_notifications_enabled`  | boolean              | default `true`    |
+
+## The `notifications` schema — outbox and deliveries (Phase 6)
+
+Unlike every table above, `notifications.outbox` and `notifications.deliveries` are **not
+reachable via the client API surface at all** — the `notifications` schema is absent from
+`supabase/config.toml`'s `[api] schemas` list, so PostgREST exposes zero endpoint for it to
+any role, including `service_role`. This is a routing-level restriction, not a grants/RLS
+one; every function and table inside the schema also carries an explicit `revoke all ...
+from public, anon, authenticated` as defense-in-depth, but the schema's absence from the API
+config is what actually makes it unreachable. See
+[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md) for the full rationale and
+`supabase/tests/110_notification_outbox_test.sql` for the assertions that verify this (both
+`SELECT` and every internal function, for both `authenticated` and `anon`). The only way in
+is a direct Postgres connection using `SUPABASE_DB_URL` — used by the
+`dispatch-notifications` Edge Function (`supabase/functions/_shared/db.ts`) and by
+`scripts/e2e-notifications.sh`, never by the mobile client.
+
+**`notifications.outbox`** — one row per notification-worthy event, written transactionally
+by an `AFTER INSERT` trigger on `task_assignments` (`enqueue_task_assignment_notification()`,
+alongside the pre-existing `apply_task_assignment_action` trigger, not folded into it — this
+keeps "apply the assignment mutation" and "decide who to notify" as separate concerns). Key
+columns: `event_type` (one of the four below), `family_id`, `task_id`, `task_assignment_id`,
+`actor_member_id`, `recipient_member_id`, `payload` (jsonb — the notification-tap deep-link
+payload, see `src/domain/notifications/payload.ts`), `status`
+(`pending | processing | sent | failed | skipped`), `attempts`, `next_attempt_at` (bounded
+exponential backoff, capped 30 minutes), `idempotency_key` (unique — derived from the
+triggering `task_assignments.id` as `task_assignment:<id>`, so a replayed trigger or a retried
+RPC can never produce a duplicate notification).
+
+Event types and recipient derivation (never the actor — no self-notification):
+
+| Event                                | Fires on `task_assignments.action` | Recipient                          |
+| ------------------------------------- | ----------------------------------- | ------------------------------------ |
+| `family_task.assignment_requested.v1` | `assigned` or `reassigned`          | the new assignee (`assigned_to_member_id`) |
+| `family_task.assignment_accepted.v1`  | `accepted`                          | the assigner (`assigned_by_member_id`), if any |
+| `family_task.assignment_declined.v1`  | `declined`                          | the assigner (`assigned_by_member_id`), if any |
+| `family_task.assignment_taken.v1`     | `took`                              | the task's prior assigner if known, else the family owner |
+
+No row is enqueued at all when the recipient would be the actor (e.g., assigning to oneself,
+which `set_task_assignment` already collapses straight to `accepted`), when the recipient has
+since left the family, or — checked at dispatch time, not enqueue time — when the recipient
+has disabled `notification_preferences.assignment_notifications_enabled`. Completion and
+restoration never enqueue a notification this phase (see [ROADMAP.md](ROADMAP.md)).
+
+**`notifications.deliveries`** — one row per `(outbox_id, notification_token_id)` pair,
+created by the dispatcher just before sending so even a mid-send crash leaves a traceable
+per-device row. `status` (`pending | ticket_ok | ticket_error | receipt_ok | receipt_error |
+permanent_failure`) tracks Expo's own two-phase send → ticket → (later) receipt flow;
+`expo_ticket_id`/`expo_receipt_status`/`error_code` mirror Expo's response fields directly. A
+`DeviceNotRegistered` ticket or receipt deactivates the corresponding `notification_tokens`
+row (`notifications.deactivate_notification_token`), not just this one delivery.
 
 ## Availability / "Busy" representation
 
@@ -324,7 +387,8 @@ its "audit" story) gets:
 | `tasks`, `events`                                            | user (personal) or family (shared) | owner always; family members only if `visibility = 'family'`, and only sanitized fields if the item is private (see SECURITY_AND_PRIVACY.md) |
 | `task_assignments`, `event_participants`, `responsibilities` | the family                         | family adults                                                                                                                                |
 | `reminders`                                                  | the user                           | owner only — never visible to other family members, even for a shared task                                                                   |
-| `notification_tokens`                                        | the user                           | owner only; never exposed to any other user, including family members                                                                        |
+| `notification_tokens`, `notification_preferences`            | the user                           | owner only; never exposed to any other user, including family members                                                                        |
+| `notifications.outbox`, `notifications.deliveries`           | n/a — not a client-facing table    | nobody, via the client API — the schema itself is absent from PostgREST's routing config; reachable only via a direct `SUPABASE_DB_URL` connection (server-side/scripts only) |
 
 This table describes **reads**, governed by RLS `SELECT` policies on both tables alike. Writes
 diverge: `tasks` is RPC-only (Phase 4, see above); `events` still has no CRUD UI or RPCs at

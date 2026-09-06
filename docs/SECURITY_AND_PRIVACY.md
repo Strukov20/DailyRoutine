@@ -137,13 +137,61 @@ Reminders (`reminders` table) are owner-only by construction (`profile_id`) — 
 a private task never has another recipient, so there is no cross-user leak path to design
 against.
 
-Assignment notifications ("X assigned you a task") are sent only for tasks where
-`visibility = 'family'` (see the constraint in Mechanism 1 — a private task can't have a
-non-owner assignee), so the assignee already has read access to the full task by the time the
-notification arrives. The notification payload is still built server-side from the same
-sanitized/authorized query path, not by trusting whatever the client sends — a compromised or
-buggy client should not be able to get the notification service to include arbitrary text in
-a push payload to another user.
+**Implemented in Phase 6, scoped to shared family task assignment events only** (never
+personal tasks, never events — see [ROADMAP.md](ROADMAP.md) for what's deferred). Shared
+family tasks are the only task shape that can reach `task_assignments` at all (see the
+constraint in Mechanism 1 — a private task can't have a non-owner assignee), so a recipient
+of an assignment notification already has read access to the full task via `family_task_board`
+by the time the notification arrives — the notification itself never needs to (and does not)
+carry task content.
+
+**The push payload never contains task/user content — only ids.** See
+`src/domain/notifications/payload.ts`: `schemaVersion`, `eventType`, `familyId`, `taskId`.
+No title, no assignee name, no free text of any kind — the same "log ids, not content" rule
+as Mechanism 5, applied to a channel that leaves the database entirely (Apple/Google's push
+infrastructure, not FamilyFlow's own). The on-device notification's visible title/body are
+static, privacy-safe strings the dispatcher itself chooses from `event_type`
+(`supabase/functions/dispatch-notifications/index.ts`'s `NOTIFICATION_BODY_BY_EVENT`, e.g.
+"New family task assigned") — never interpolated from row content. Tapping the notification
+navigates to the real task editor route, which re-fetches through the authenticated Supabase
+client + RLS — the push payload is never trusted as task content or as authorization, only as
+a hint of where to navigate.
+
+**The recipient list is derived entirely server-side, from database state, inside the same
+transaction as the mutation** (`notifications.enqueue_task_assignment_notification()`, an
+`AFTER INSERT` trigger on `task_assignments`) — never from a client-supplied recipient. This
+closes the same class of gap Mechanism 4 originally worried about in the abstract: a
+compromised or buggy client cannot get an arbitrary push sent to an arbitrary user, because
+the client never supplies a recipient at all, only the action it performed
+(assign/accept/decline/take), and the trigger computes who (if anyone) should be told from
+`family_members`/`task_assignments` state at insert time. The actor is never notified about
+their own action (no self-notification), and a member who has since left the family is never
+enqueued as a recipient (checked at enqueue time against current `family_members` state).
+
+### Mechanism 4a — the `notifications` schema is unreachable from the client API surface
+
+`notifications.outbox` and `notifications.deliveries` (the durable transactional outbox and
+per-device delivery ledger — see [DATA_MODEL.md](DATA_MODEL.md)) hold `payload`/error/status
+fields that are internal implementation detail, not something the client should ever read
+directly. Rather than relying on RLS/grants alone (Mechanism 1's usual approach), this phase
+adds a **schema-level** restriction: `notifications` is absent from `supabase/config.toml`'s
+`[api] schemas` list, so PostgREST does not expose a single endpoint for anything inside it,
+**to any role, including `service_role`** — a routing-level restriction that grants cannot
+override, unlike every other mechanism in this document. Every table/function inside the
+schema also carries an explicit `revoke all ... from public, anon, authenticated` as
+defense-in-depth (in case the schema were ever added to the API config by a future change),
+but the schema's absence from that config is the actual, currently-operative control. The
+only legitimate access path is a direct Postgres connection via `SUPABASE_DB_URL` (a
+server-only secret, never `EXPO_PUBLIC_*`, never in the mobile bundle) — used by the
+`dispatch-notifications` Edge Function and by `scripts/e2e-notifications.sh`.
+
+Verified two ways: `supabase/tests/110_notification_outbox_test.sql` asserts every table and
+function in the schema is inaccessible (`SELECT`, every internal function, both
+`authenticated` and `anon`) at the database-grants level; `scripts/e2e-notifications.sh`
+separately confirms the schema is unreachable **at the API layer** by hitting
+`$API_URL/rest/v1/outbox` with the `service_role` key and asserting a 4xx (PostgREST doesn't
+recognize the path at all, since the schema was never registered) — a check the pgTAP suite
+cannot perform, since pgTAP runs inside Postgres, not through PostgREST.
 
 ## Mechanism 5 — logs
 
@@ -170,10 +218,11 @@ database logs) must follow the same rule once they exist: log row ids, not row c
 - ⬜ **Not yet implemented**: Realtime (Mechanism 3) — see that section above. Confirm the
   broadcast-trigger design is actually in place, as a PR checklist item, before enabling
   Realtime on `events`/`tasks` for the first time.
-- ⬜ **Not yet implemented**: assignment/response notifications (Mechanism 4) — no
-  notification-sending code exists yet; the constraint that makes it safe
-  (`tasks_assert_integrity`'s private+non-owner-assignee rejection) is already in place and
-  tested, ready for when notification sending is built.
+- ✅ **Implemented in Phase 6**: shared family task assignment notifications (Mechanism 4) —
+  content-free push payloads (ids only), server-derived recipients inside the same
+  transaction as the mutation, and the `notifications` schema's own API-layer isolation
+  (Mechanism 4a). **Not yet implemented**: notifications for anything else (personal tasks,
+  events, completion/restoration) — see [ROADMAP.md](ROADMAP.md).
 - ⚠️ **Function EXECUTE grants are a separate mechanism from table grants — audited in Phase
   3, fixed where it mattered.** The "REVOKE ALL ... FROM anon, authenticated" bullet above is
   about _tables_ and remains accurate. _Functions_ are different: Supabase's own role bootstrap

@@ -26,11 +26,41 @@ decision recorded before Phase 4 could safely leave them out of the task editor 
   completed — that destroys occurrence history, which the brief for this exact feature calls
   out as unacceptable.
 - **Reminder scheduling.** `reminders` rows can already be created safely (the table's grants
-  are fine), but nothing schedules an actual `expo-notifications` delivery from one. Needs: a
-  background task or Edge Function that scans `reminders` for `remind_at` in the near future
-  and calls Expo's push API, plus `notification_tokens` registration on the client (the table
-  already exists, unused). The task editor deliberately has no reminder control until this
-  exists, rather than saving a reminder that silently never fires.
+  are fine), but nothing schedules an actual `expo-notifications` delivery from one. Phase 6
+  built the two pieces this item previously called out as missing — `notification_tokens`
+  client-side registration (`src/lib/notifications/notificationService.ts`) and a Deno Edge
+  Function dispatcher pattern against Expo's push API (`supabase/functions/dispatch-notifications/`)
+  — but wired them to shared family task **assignment** events only, not reminders. What's
+  still missing for reminders specifically: a scheduled scan of `reminders.remind_at` (a
+  `pg_cron` job, most likely, following the same "enqueue to an outbox, dispatch separately"
+  shape Phase 6 established rather than sending directly from the scan) and a reminder-specific
+  outbox event type/payload. The task editor still deliberately has no reminder control until
+  this exists, rather than saving a reminder that silently never fires.
+
+### Push notification scope not covered by Phase 6
+
+Phase 6 built assignment-event push notifications only (see
+[ARCHITECTURE.md](ARCHITECTURE.md), "Push notifications"). Deliberately out of scope, not
+forgotten:
+
+- Notifications for recurring tasks, task completion, or task restoration.
+- Reminder delivery (see the "Reminder scheduling" item above — related infrastructure now
+  exists, reminders themselves are still not wired to it).
+- Digests/summaries, quiet hours, or any per-notification-type scheduling beyond immediate
+  delivery.
+- AI-driven notification content or timing.
+- Email/SMS delivery — Expo push only.
+- A full in-app notification inbox/history screen — a tap navigates straight to the task; there
+  is no list of past notifications to revisit.
+- Notifications for calendar/event or child-profile activity.
+- Notifications around family ownership transfer (not built at all yet — see the "Family
+  ownership transfer" row in the V2 table below).
+- Direct APNs/FCM integration — Expo Push Service only, deliberately not bypassed.
+
+Also not deployed (built, not wired up — see [DECISIONS.md](DECISIONS.md) for the exact
+manual step): the Database Webhook / `pg_cron` invocation of `dispatch-notifications`, and any
+EAS/Apple/Firebase configuration needed for a real device to receive a push at all. No real
+push has been sent or received in this phase — every test uses a fake `PushTransport`.
 
 ## V2 — not implemented, architecturally anticipated
 

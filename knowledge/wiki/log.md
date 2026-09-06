@@ -358,3 +358,58 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     passed, 0 retries actually triggered, 1 genuine hang requiring a full flow restart.
     Reported as "passed this run," explicitly not claimed as newly deterministic.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-06T12:00:00Z — Phase 6: Reliable Family Assignment Push Notifications
+
+- **Operation type:** implementation + wiki update
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-06-phase6-push-notifications.md`](../raw/sessions/2026-09-06-phase6-push-notifications.md).
+- **Wiki pages created:** `engineering/push-notifications.md` (new — the outbox/dispatcher
+  design, recipient-derivation rules, schema-level API isolation, client layering, and testing
+  approach).
+- **Wiki pages updated:** `wiki/index.md` (linked the new page), `engineering/security-model.md`
+  (Mechanism 4 now implemented; new Mechanism 4a — schema-level API exclusion; the anon-EXECUTE
+  gap's third recurrence; assertion count 192 → 293), `engineering/data-model.md` (migration
+  count 11 → 13; new entities), `engineering/testing-strategy.md` (pgTAP count 263 → 293; new
+  Edge Function/Deno test layer; two new RNTL/Jest conventions), `engineering/system-architecture.md`
+  (`pendingNotificationRoute` added to the state-boundary rule; a fourth layering reference
+  implementation; a second runtime this app's tooling excludes), `domain/tasks-and-assignments.md`
+  (a "Push notifications" section + cross-link), `product/roadmap.md` (reminders item updated —
+  the token-registration/dispatcher infrastructure it called out as missing now exists, wired
+  to assignments only; Phase 6's own non-goals listed), `product/glossary.md` ("Task" entry
+  corrected to reflect Phase 5; two new terms — outbox, dispatcher).
+- **Canonical docs updated:** `docs/DATA_MODEL.md` (`notification_tokens.deactivated_at`, new
+  `notification_preferences` table, new "notifications schema" section), `docs/SECURITY_AND_PRIVACY.md`
+  (Mechanism 4 rewritten to match what's actually implemented; new Mechanism 4a), `docs/ARCHITECTURE.md`
+  (new "Push notifications" section; folder tree and stack table updated), `docs/ROADMAP.md`
+  (reminders item updated; new "Push notification scope not covered by Phase 6" section),
+  `docs/TEST_STRATEGY.md` (new Edge Function test row; RLS row assertion count; two new
+  conventions), `docs/PRODUCT.md` (the "later phase, not this one" line for assignment
+  notifications corrected — this is that phase), `docs/DECISIONS.md` (new "Phase 6" section:
+  outbox-vs-direct-send rationale, the schema-exclusion design, claim/idempotency design,
+  `PushTransport` interface rationale, Deno tooling-isolation rationale, the recurred
+  anon-EXECUTE gap, the contextual-permission-request decision, the `e2e-notifications.sh`
+  portability fixes, and the exact manual deployment steps still required), `README.md`
+  (Phase 5 and Phase 6 entries added to "Current state" — Phase 5 had never been added; new
+  scripts in the table).
+- **Decisions/contradictions recorded:**
+  - `docs/PRODUCT.md` and `docs/SECURITY_AND_PRIVACY.md` both previously described assignment
+    notifications as "a later phase, not this one" — that phase has now arrived; both corrected
+    to describe the implemented design rather than defer it a second time.
+  - `README.md`'s "Current state" section had never been updated for Phase 5 at all (still
+    ended at Phase 4, listing shared-task assignment as "not implemented" even though Phase 5
+    had shipped and merged) — a pre-existing staleness gap, not introduced this phase, fixed
+    alongside the Phase 6 addition rather than left further behind.
+  - The anon-EXECUTE-grant gap (Phase 3, recurred Phase 5) recurred a third time on two new
+    Phase 6 functions — recorded as evidence the "verify `pg_proc.proacl` on every new
+    `SECURITY DEFINER` function" instruction is genuinely load-bearing, not a one-time cleanup.
+  - Two non-obvious RNTL/Jest gotchas were root-caused via isolated minimal repros this session
+    (not guessed, not worked around blindly): a synchronous `act()` call corrupting React's
+    act-scope for a *later* test's `renderHook` in the same file, and ESM-interop wrapping
+    (`_interopRequireWildcard`) snapshotting a plain mocked data property's value per import
+    call site, defeating a test's attempt to mutate it — recorded in both `docs/TEST_STRATEGY.md`
+    and `engineering/testing-strategy.md` as new conventions, since both are exactly the kind
+    of hard-won, non-obvious lesson this wiki exists to preserve.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
