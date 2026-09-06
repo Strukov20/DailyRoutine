@@ -1093,15 +1093,39 @@ these flows can ever be blindly repeated. Nothing is retried more than once, and
 suppressed globally — a retry's own final assertion has a normal, non-optional timeout and fails the
 flow like any other if the retry doesn't land either.
 
-**Final verification**: 3 consecutive full runs of all three flows from a fresh `db reset` +
-`e2e:seed` each time (9 flow completions total). Every completion passed; every conditional retry
-block evaluated `SKIPPED` (0 retries actually triggered — every tap landed on its first attempt in
-this batch). One genuine hang occurred (`assignment_decline.yaml`, iteration 1, stuck mid-way through
-the second sign-in's password-retype loop) and required a full flow restart, which then completed
-cleanly. Simulator: iPhone 17 Pro, iOS 26.5. This confirms the hardening is real defense-in-depth and
-the flows remain usable, but Maestro on this Simulator/OS combination is **not deterministic** — a
-hang can still strand a run and no amount of in-flow retry logic can recover from it, since Maestro
-itself stops returning control. Treat "green" as "passed this run," not as a guarantee.
+**Final verification (per-flow, isolated invocations)**: 3 consecutive full runs of all three flows,
+each run as its own `maestro test <single-file>` invocation, from a fresh `db reset` + `e2e:seed`
+each time (9 flow completions total). Every completion passed; every conditional retry block
+evaluated `SKIPPED` (0 retries actually triggered — every tap landed on its first attempt in this
+batch). One genuine hang occurred (`assignment_decline.yaml`, iteration 1, stuck mid-way through the
+second sign-in's password-retype loop) and required a full flow restart, which then completed
+cleanly.
+
+**A real bug the hardening pass initially missed, found by running the literal required command**:
+`npm run e2e:ios` (which runs all three flows in a single combined `maestro test .maestro/`
+invocation, not three separate ones) failed on `personal_task_smoke.yaml` at
+`Assert that id: task-move-to-today-.* is visible` — the task-actions menu's double-tap-to-open step
+had a hard, non-optional assertion with no recovery, unlike every mutation after it. Fixed by
+applying the same "check with a short optional wait, retry unconditionally (opening a menu twice is
+never harmful) if the destination didn't appear" pattern to the menu-open step itself, not just the
+mutation that follows it.
+
+**Re-verifying that fix via the combined invocation surfaced a further, separate finding**: two
+consecutive attempts at the literal `npm run e2e:ios` command after the fix both hung (15+ minutes
+of near-zero CPU growth on the underlying `xcodebuild`/`maestro` processes, each killed manually —
+neither is a false positive, since the working baseline completes all three flows in ~5–6 minutes).
+This is a small sample (2 hangs in 2 combined-invocation attempts vs. 1 hang in 10 single-flow
+attempts across this phase), not proof that combined invocation is categorically less reliable, but
+it is a real, honestly-reported data point pointing that direction, and is recorded as such rather
+than smoothed over. Simulator throughout: iPhone 17 Pro, iOS 26.5.
+
+Taken together: the retry hardening is real defense-in-depth and did catch and let us fix one
+genuine gap, but Maestro on this Simulator/OS combination remains **not deterministic** — a hang can
+still strand a run (single-flow or combined) and no amount of in-flow retry logic can recover from
+it, since Maestro itself stops returning control. Treat "green" as "passed this run," not as a
+guarantee, and prefer single-flow invocations (`npm run e2e:ios .maestro/<file>.yaml`) over the
+combined directory form if a hang-free run is needed on a deadline, since the observed hang rate was
+lower there in this phase's data.
 
 #### Expo SDK patch-version drift: `expo`/`expo-router`/`expo-notifications` — resolved, not pinned
 

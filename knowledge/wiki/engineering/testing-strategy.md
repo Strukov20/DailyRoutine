@@ -90,12 +90,16 @@ supabase test db`), plus real curl-driven multi-user flows for both Family Space
   Simulator: `personal_task_smoke.yaml` (sign in → quick-add → schedule for today → complete
   → restore), `family_task_workflow.yaml` (User A creates an unassigned shared task → signs
   out → User B takes and completes it), `assignment_decline.yaml` (User A assigns to User B →
-  User B declines → User A sees it back unassigned after a fresh sign-in). Final verification:
-  3 consecutive full runs of all three flows from a fresh `db reset` + `e2e:seed` each time (9
-  flow completions, cross-checked against real database state after each run — not just the
-  terminal summary); every completion passed, every conditional retry evaluated `SKIPPED` (0
-  actually triggered), and 1 genuine hang occurred (required a full flow restart — see "Retry
-  hardening" below).
+  User B declines → User A sees it back unassigned after a fresh sign-in). Final verification
+  (per-flow invocations): 3 consecutive full runs of all three flows from a fresh `db reset` +
+  `e2e:seed` each time (9 flow completions, cross-checked against real database state after
+  each run — not just the terminal summary); every completion passed, every conditional retry
+  evaluated `SKIPPED` (0 actually triggered), and 1 genuine hang occurred (required a full flow
+  restart). Separately, running the literal `npm run e2e:ios` command (all three flows in one
+  combined invocation) caught a real gap the hardening initially missed (the task-actions
+  menu-open step lacked the same retry pattern as the mutation after it — fixed), and then hit
+  two more hangs in the two re-verification attempts that followed the fix — see "Retry
+  hardening" below for the full, honest numbers.
   `scripts/e2e-seed.sh` provisions the two Maestro fixture users in one shared family and
   writes their member ids to the gitignored `.maestro/.env.local` (both users' display names
   default to the same placeholder text, so the assignee picker can only be targeted reliably
