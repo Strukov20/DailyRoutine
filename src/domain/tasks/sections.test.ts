@@ -17,6 +17,8 @@ const BASE: Task = {
   completedAt: null,
   createdAt: '2026-09-01T00:00:00.000Z',
   updatedAt: '2026-09-01T00:00:00.000Z',
+  assigneeMemberId: null,
+  assignmentStatus: 'unassigned',
 };
 
 function task(overrides: Partial<Task>): Task {
@@ -35,10 +37,26 @@ describe('buildDaySections', () => {
   });
 
   it('sorts Anytime tasks by priority (critical first), then creation order', () => {
-    const normalFirst = task({ id: 'normal-1', priority: 'normal', createdAt: '2026-09-01T00:00:00Z' });
-    const normalSecond = task({ id: 'normal-2', priority: 'normal', createdAt: '2026-09-02T00:00:00Z' });
-    const critical = task({ id: 'critical', priority: 'critical', createdAt: '2026-09-03T00:00:00Z' });
-    const important = task({ id: 'important', priority: 'important', createdAt: '2026-09-01T12:00:00Z' });
+    const normalFirst = task({
+      id: 'normal-1',
+      priority: 'normal',
+      createdAt: '2026-09-01T00:00:00Z',
+    });
+    const normalSecond = task({
+      id: 'normal-2',
+      priority: 'normal',
+      createdAt: '2026-09-02T00:00:00Z',
+    });
+    const critical = task({
+      id: 'critical',
+      priority: 'critical',
+      createdAt: '2026-09-03T00:00:00Z',
+    });
+    const important = task({
+      id: 'important',
+      priority: 'important',
+      createdAt: '2026-09-01T12:00:00Z',
+    });
 
     const { anytime } = buildDaySections([normalSecond, normalFirst, critical, important]);
 
@@ -57,7 +75,11 @@ describe('buildDaySections', () => {
   });
 
   it('never puts a completed task in the timed or anytime bucket', () => {
-    const completedTimed = task({ id: 'ct', startTime: '09:00:00', completedAt: '2026-09-01T00:00:00Z' });
+    const completedTimed = task({
+      id: 'ct',
+      startTime: '09:00:00',
+      completedAt: '2026-09-01T00:00:00Z',
+    });
     const sections = buildDaySections([completedTimed]);
 
     expect(sections.timed).toEqual([]);
@@ -69,7 +91,11 @@ describe('buildDaySections', () => {
 describe('buildTodaySections', () => {
   it('overdue-first ordering: oldest date first, then priority within the same date', () => {
     const olderOverdue = task({ id: 'older', date: '2026-09-01' });
-    const newerOverdueCritical = task({ id: 'newer-critical', date: '2026-09-02', priority: 'critical' });
+    const newerOverdueCritical = task({
+      id: 'newer-critical',
+      date: '2026-09-02',
+      priority: 'critical',
+    });
     const newerOverdueNormal = task({ id: 'newer-normal', date: '2026-09-02', priority: 'normal' });
 
     const { overdue } = buildTodaySections(
@@ -81,7 +107,11 @@ describe('buildTodaySections', () => {
   });
 
   it('excludes already-completed tasks from the overdue bucket (they do not need surfacing as overdue)', () => {
-    const completedOverdue = task({ id: 'done', date: '2026-08-01', completedAt: '2026-08-02T00:00:00Z' });
+    const completedOverdue = task({
+      id: 'done',
+      date: '2026-08-01',
+      completedAt: '2026-08-02T00:00:00Z',
+    });
     const { overdue } = buildTodaySections([completedOverdue], []);
 
     expect(overdue).toEqual([]);

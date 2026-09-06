@@ -8,6 +8,14 @@ interface TaskActionMenuProps {
   onMoveToTomorrow?: () => void;
   onMoveToInbox?: () => void;
   onArchive: () => void;
+  /**
+   * Disambiguates this instance's trigger testID (task-actions-<id>) for
+   * automation — every row on a list screen renders its own
+   * TaskActionMenu, so a static testID would match multiple on-screen
+   * triggers at once. Optional since not every caller needs it (Jest
+   * component tests target this by accessibilityLabel instead).
+   */
+  testIDSuffix?: string;
 }
 
 /** Trailing "..." action menu for a task row — see docs/DATA_MODEL.md task lifecycle. */
@@ -17,6 +25,7 @@ export function TaskActionMenu({
   onMoveToTomorrow,
   onMoveToInbox,
   onArchive,
+  testIDSuffix,
 }: TaskActionMenuProps) {
   const { t } = useTranslation('tasks');
   const [visible, setVisible] = useState(false);
@@ -32,6 +41,7 @@ export function TaskActionMenu({
       onDismiss={() => setVisible(false)}
       anchor={
         <IconButton
+          testID={testIDSuffix ? `task-actions-${testIDSuffix}` : undefined}
           icon="dots-vertical"
           size={20}
           onPress={() => setVisible(true)}
@@ -39,9 +49,14 @@ export function TaskActionMenu({
         />
       }
     >
-      <Menu.Item leadingIcon="pencil-outline" title={t('row.edit')} onPress={() => runAndClose(onEdit)} />
+      <Menu.Item
+        leadingIcon="pencil-outline"
+        title={t('row.edit')}
+        onPress={() => runAndClose(onEdit)}
+      />
       {onMoveToToday ? (
         <Menu.Item
+          testID={testIDSuffix ? `task-move-to-today-${testIDSuffix}` : undefined}
           leadingIcon="calendar-today"
           title={t('row.moveToToday')}
           onPress={() => runAndClose(onMoveToToday)}

@@ -48,6 +48,7 @@ export default function EditTaskScreen() {
           categoryId: task.categoryId ?? undefined,
           visibility: task.visibility,
         }}
+        sharedFamilyId={task.visibility === 'family' ? (task.familyId ?? undefined) : undefined}
         onDone={() => router.back()}
       />
     </ScreenContainer>

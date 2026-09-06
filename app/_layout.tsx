@@ -75,7 +75,10 @@ function RootNavigator() {
         <Stack.Protected guard={status === 'signed-in'}>
           <Stack.Screen name="(app)" />
           <Stack.Screen name="task/new" options={{ presentation: 'modal', headerShown: true }} />
-          <Stack.Screen name="task/[id]/edit" options={{ presentation: 'modal', headerShown: true }} />
+          <Stack.Screen
+            name="task/[id]/edit"
+            options={{ presentation: 'modal', headerShown: true }}
+          />
           <Stack.Screen name="tomorrow" options={{ headerShown: true }} />
           <Stack.Screen
             name="family/create"

@@ -1,0 +1,399 @@
+appId: com.familyflow.app
+name: Assignment decline
+# User A creates an unassigned shared task -> assigns it to User B -> User
+# B sees it pending on them -> declines -> the task returns to unassigned
+# -> User A sees the updated state after a fresh navigation/refresh.
+# Uses the "User A"/"User B" fixtures from scripts/e2e-seed.sh (npm run
+# e2e:seed, same family) — run that (after a fresh `npm run db:reset`)
+# before this flow. Requires ${USER_B_MEMBER_ID} - passed automatically by
+# `npm run e2e:ios`, which reads it from .maestro/.env.local (written by
+# e2e-seed.sh); both member candidates' displayName defaults to the same
+# "Owner"/"Family member" text, so the assignee picker can only be
+# targeted reliably by member id, not by visible text.
+#
+# See personal_task_smoke.yaml's and family_task_workflow.yaml's headers
+# for the full writeup of the environment issues every flow in this
+# directory works around - including significant tap-delivery flakiness
+# (observed ~2-in-10 on ordinary elements, effectively deterministic at
+# the tab bar's screen-edge items) that every mutating or navigating tap
+# below defends against with a single bounded conditional retry, never a
+# blind repeat - and docs/DECISIONS.md, "Phase 5" for the complete
+# investigation and the honest reliability numbers.
+---
+- launchApp:
+    clearState: true
+- tapOn: 'Continue'
+
+# --- Sign in as User A ---
+- tapOn:
+    id: 'sign-in-email'
+- inputText: 'maestro-user-a@familyflow.test'
+- tapOn:
+    id: 'sign-in-password'
+- tapOn: 'Show password'
+- extendedWaitUntil:
+    visible:
+      id: 'sign-in-password'
+    timeout: 15000
+- repeat:
+    while:
+      notVisible: '^Maestro1234$'
+    commands:
+      - tapOn:
+          id: 'sign-in-password'
+      - eraseText: 50
+      - inputText: 'Maestro1234'
+      - waitForAnimationToEnd
+- tapOn:
+    id: 'sign-in-password'
+- pressKey: Enter
+- extendedWaitUntil:
+    visible: 'Not Now'
+    timeout: 10000
+    optional: true
+- tapOn:
+    text: 'Not Now'
+    optional: true
+- extendedWaitUntil:
+    visible: 'Today'
+    timeout: 10000
+
+# --- User A creates an unassigned shared task ---
+# Navigation tap - occasionally silent-no-ops (see header); retry once,
+# bounded, only if the destination hasn't loaded. Tapping a tab twice is
+# harmless.
+- waitForAnimationToEnd
+- tapOn:
+    id: 'tab-family'
+- extendedWaitUntil:
+    visible: 'Tasks'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible: 'Tasks'
+    commands:
+      - tapOn:
+          id: 'tab-family'
+      - extendedWaitUntil:
+          visible: 'Tasks'
+          timeout: 10000
+- tapOn: 'Tasks'
+- extendedWaitUntil:
+    visible:
+      id: 'family-task-board-fab'
+    timeout: 8000
+- tapOn:
+    id: 'family-task-board-fab'
+- extendedWaitUntil:
+    visible:
+      id: 'task-editor-title'
+    timeout: 8000
+- tapOn:
+    id: 'task-editor-title'
+- inputText: 'Maestro Decline Task'
+# Tapping submit directly after typing was confirmed to inject one stray
+# character into whatever field still held focus - see
+# personal_task_smoke.yaml's header. Tapping a neutral, non-interactive
+# label first gives that phantom keystroke somewhere harmless to land.
+- tapOn: 'Priority'
+- waitForAnimationToEnd
+- tapOn:
+    id: 'task-editor-submit'
+# A mis-landed tap can trigger the form's own unsaved-changes guard even
+# on an otherwise-successful submit (see family_task_workflow.yaml's
+# header for the full root-cause writeup and the fix already applied at
+# the source - TaskEditorForm.tsx's `justSubmittedRef`). Check for
+# success first and only attempt the discard/retry recovery if the first
+# submit did NOT actually go through, to avoid ever double-submitting -
+# this is the general pattern every mutation in this flow follows: prove
+# non-success before ever retrying.
+- extendedWaitUntil:
+    visible:
+      id: 'family-task-row-.*'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: 'family-task-row-.*'
+    commands:
+      - extendedWaitUntil:
+          visible: 'Discard changes?'
+          timeout: 3000
+          optional: true
+      - tapOn:
+          text: 'Cancel'
+          optional: true
+      - tapOn:
+          id: 'task-editor-submit'
+          optional: true
+- extendedWaitUntil:
+    visible:
+      id: 'family-task-row-.*'
+    timeout: 15000
+
+# --- User A assigns the task to User B ---
+# react-native-paper's <Menu> can occasionally not open on the first tap
+# under fast programmatic taps (same underlying flakiness already
+# established for the task action menu in personal_task_smoke.yaml), but
+# a blind unconditional second tap on the trigger is NOT safe here the
+# way it is for that icon-only menu: AssigneePicker's menu opens directly
+# over its Button trigger, and the family's members array lists the
+# caller (User A) first, so a second tap that lands after the menu has
+# already opened hits User A's own first menu item instead of re-opening
+# anything - reproduced once (self-assigned instead of assigning to User
+# B). Only retry the trigger tap if the target option genuinely isn't up
+# yet.
+- tapOn:
+    id: 'family-task-assign-.*'
+- extendedWaitUntil:
+    visible:
+      id: 'assignee-option-${USER_B_MEMBER_ID}'
+    timeout: 3000
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: 'assignee-option-${USER_B_MEMBER_ID}'
+    commands:
+      - waitForAnimationToEnd
+      - tapOn:
+          id: 'family-task-assign-.*'
+      - extendedWaitUntil:
+          visible:
+            id: 'assignee-option-${USER_B_MEMBER_ID}'
+          timeout: 8000
+# Selecting the option is the actual assignment mutation - only retry if
+# the manage-side controls have NOT yet flipped to Reassign/Unassign,
+# proving the assignment genuinely did not go through (the menu itself
+# would still be open in that case, so re-tapping the same option is
+# safe).
+- tapOn:
+    id: 'assignee-option-${USER_B_MEMBER_ID}'
+- extendedWaitUntil:
+    visible:
+      id: 'family-task-reassign-.*'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: 'family-task-reassign-.*'
+    commands:
+      - tapOn:
+          id: 'assignee-option-${USER_B_MEMBER_ID}'
+      - extendedWaitUntil:
+          visible:
+            id: 'family-task-reassign-.*'
+          timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: 'family-task-assign-.*'
+    timeout: 8000
+
+# --- User A signs out ---
+# assertVisible("Profile") and tapOn("Profile") both fail deterministically
+# here, and so does tapOn: { id: "tab-profile" } - even with a real
+# testID reaching the native element (options.tabBarButtonTestID,
+# confirmed via `maestro hierarchy`). The tap itself never lands for this
+# specific element regardless of selector - see
+# family_task_workflow.yaml's header for the full investigation and
+# evidence (3 isolated id-based-tap runs, screenshot-confirmed each time)
+# and docs/DECISIONS.md, "Phase 5." Coordinate tap on the tab bar's own
+# reported bounds is the most reliable option, but still not perfectly
+# deterministic - retry once, bounded, only if the destination hasn't
+# loaded (navigating is not a mutation, so a retry here is always safe).
+- waitForAnimationToEnd
+- tapOn:
+    point: '90%, 93%'
+- extendedWaitUntil:
+    visible:
+      id: 'profile-sign-out'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: 'profile-sign-out'
+    commands:
+      - tapOn:
+          point: '90%, 93%'
+      - extendedWaitUntil:
+          visible:
+            id: 'profile-sign-out'
+          timeout: 10000
+- tapOn:
+    id: 'profile-sign-out'
+- extendedWaitUntil:
+    visible: 'Continue'
+    timeout: 10000
+
+# --- Sign in as User B ---
+- tapOn: 'Continue'
+- tapOn:
+    id: 'sign-in-email'
+- inputText: 'maestro-user-b@familyflow.test'
+- tapOn:
+    id: 'sign-in-password'
+- tapOn: 'Show password'
+- extendedWaitUntil:
+    visible:
+      id: 'sign-in-password'
+    timeout: 15000
+- repeat:
+    while:
+      notVisible: '^Maestro1234$'
+    commands:
+      - tapOn:
+          id: 'sign-in-password'
+      - eraseText: 50
+      - inputText: 'Maestro1234'
+      - waitForAnimationToEnd
+- tapOn:
+    id: 'sign-in-password'
+- pressKey: Enter
+- extendedWaitUntil:
+    visible: 'Not Now'
+    timeout: 10000
+    optional: true
+- tapOn:
+    text: 'Not Now'
+    optional: true
+- extendedWaitUntil:
+    visible: 'Today'
+    timeout: 10000
+
+# --- User B sees the pending assignment and declines it ---
+- waitForAnimationToEnd
+- tapOn:
+    id: 'tab-family'
+- extendedWaitUntil:
+    visible: 'Tasks'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible: 'Tasks'
+    commands:
+      - tapOn:
+          id: 'tab-family'
+      - extendedWaitUntil:
+          visible: 'Tasks'
+          timeout: 10000
+- tapOn: 'Tasks'
+- extendedWaitUntil:
+    visible:
+      id: 'family-task-decline-.*'
+    timeout: 15000
+# Declining is a real mutation - only retry if the Decline button is
+# still there, proving the assignment is still genuinely pending (not
+# just that this assertion hasn't caught up).
+- tapOn:
+    id: 'family-task-decline-.*'
+- extendedWaitUntil:
+    notVisible:
+      id: 'family-task-decline-.*'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      visible:
+        id: 'family-task-decline-.*'
+    commands:
+      - tapOn:
+          id: 'family-task-decline-.*'
+      - extendedWaitUntil:
+          notVisible:
+            id: 'family-task-decline-.*'
+          timeout: 15000
+# Declining returns the task to unassigned - User B (not the owner) sees
+# the Take button again, since take is offered to any adult member.
+- extendedWaitUntil:
+    visible:
+      id: 'family-task-take-.*'
+    timeout: 8000
+
+# --- User A signs out and back in, and sees the declined state ---
+- waitForAnimationToEnd
+- tapOn:
+    point: '90%, 93%'
+- extendedWaitUntil:
+    visible:
+      id: 'profile-sign-out'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: 'profile-sign-out'
+    commands:
+      - tapOn:
+          point: '90%, 93%'
+      - extendedWaitUntil:
+          visible:
+            id: 'profile-sign-out'
+          timeout: 10000
+- tapOn:
+    id: 'profile-sign-out'
+- extendedWaitUntil:
+    visible: 'Continue'
+    timeout: 10000
+- tapOn: 'Continue'
+- tapOn:
+    id: 'sign-in-email'
+- inputText: 'maestro-user-a@familyflow.test'
+- tapOn:
+    id: 'sign-in-password'
+- tapOn: 'Show password'
+- extendedWaitUntil:
+    visible:
+      id: 'sign-in-password'
+    timeout: 15000
+- repeat:
+    while:
+      notVisible: '^Maestro1234$'
+    commands:
+      - tapOn:
+          id: 'sign-in-password'
+      - eraseText: 50
+      - inputText: 'Maestro1234'
+      - waitForAnimationToEnd
+- tapOn:
+    id: 'sign-in-password'
+- pressKey: Enter
+- extendedWaitUntil:
+    visible: 'Not Now'
+    timeout: 10000
+    optional: true
+- tapOn:
+    text: 'Not Now'
+    optional: true
+- extendedWaitUntil:
+    visible: 'Today'
+    timeout: 10000
+- waitForAnimationToEnd
+- tapOn:
+    id: 'tab-family'
+- extendedWaitUntil:
+    visible: 'Tasks'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible: 'Tasks'
+    commands:
+      - tapOn:
+          id: 'tab-family'
+      - extendedWaitUntil:
+          visible: 'Tasks'
+          timeout: 10000
+- tapOn: 'Tasks'
+# A fresh sign-in re-navigates and re-fetches from scratch, which is the
+# "refresh" the brief calls for - no separate pull-to-refresh gesture
+# needed. User A (the owner/manager) sees the manage-side Assign control
+# again now that the task is unassigned.
+- extendedWaitUntil:
+    visible:
+      id: 'family-task-assign-.*'
+    timeout: 15000

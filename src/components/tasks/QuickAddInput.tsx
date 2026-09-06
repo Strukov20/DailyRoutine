@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { StyleSheet, View } from 'react-native';
 import { HelperText, IconButton, TextInput } from 'react-native-paper';
 
-import { useCreatePersonalTask } from '@/domain/tasks/hooks';
+import { useCreatePersonalTask, useCreateSharedFamilyTask } from '@/domain/tasks/hooks';
 import { quickAddTaskSchema } from '@/domain/tasks/schemas';
 import { TaskServiceError } from '@/lib/tasks/taskService';
 import { createLogger } from '@/lib/logger/logger';
@@ -14,24 +14,45 @@ const logger = createLogger('quick-add-input');
 interface QuickAddInputProps {
   /** "YYYY-MM-DD" to create directly on a date (Today/Tomorrow); omit for the Inbox. */
   date?: string;
+  /**
+   * When set, creates a shared (visibility=family) task in this family
+   * instead of a personal one — used by the Family task board's own
+   * quick-add. Mutually exclusive with `date` in practice (the board has
+   * no date concept), but nothing enforces that here — the caller decides.
+   */
+  familyId?: string;
+  /**
+   * Disambiguates this instance's testIDs (quick-add-input-<screen>,
+   * quick-add-submit-<screen>) for automation. Today/Tomorrow/Inbox all
+   * mount their own QuickAddInput simultaneously — React Navigation's tab
+   * navigator keeps sibling tab screens mounted after their first visit —
+   * so a single static testID would match multiple on-screen elements at
+   * once. Required, not optional-with-a-fallback: a silently-reused
+   * default would reintroduce the exact ambiguity this exists to prevent.
+   */
+  screenId: string;
 }
 
 /**
- * Inline title-only task creation for Inbox/Today/Tomorrow (see
- * docs/PRODUCT.md, "Quick creation should require only a title"). Owns its
- * own create-task mutation directly (unlike TaskRow) — this widget's whole
- * job *is* that one action, so there's no screen-level orchestration to
- * keep it out of.
+ * Inline title-only task creation for Inbox/Today/Tomorrow/the Family
+ * board (see docs/PRODUCT.md, "Quick creation should require only a
+ * title"). Owns its own create-task mutation directly (unlike TaskRow) —
+ * this widget's whole job *is* that one action, so there's no
+ * screen-level orchestration to keep it out of.
  */
-export function QuickAddInput({ date }: QuickAddInputProps) {
+export function QuickAddInput({ date, familyId, screenId }: QuickAddInputProps) {
   const { t } = useTranslation(['tasks', 'common']);
   const theme = useAppTheme();
   const [title, setTitle] = useState('');
   const [justAdded, setJustAdded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const createTask = useCreatePersonalTask();
+  // Both hooks are always called (React hooks can't be conditional) — only
+  // the one matching `familyId` is ever actually invoked below.
+  const createPersonalTask = useCreatePersonalTask();
+  const createSharedTask = useCreateSharedFamilyTask(familyId ?? '');
+  const isPending = familyId ? createSharedTask.isPending : createPersonalTask.isPending;
 
-  const canSubmit = title.trim().length > 0 && !createTask.isPending;
+  const canSubmit = title.trim().length > 0 && !isPending;
 
   const onSubmit = async () => {
     // Guards duplicate submissions from a repeated tap/Enter while the
@@ -44,7 +65,11 @@ export function QuickAddInput({ date }: QuickAddInputProps) {
 
     setError(null);
     try {
-      await createTask.mutateAsync({ title: parsed.data.title, date });
+      if (familyId) {
+        await createSharedTask.mutateAsync({ title: parsed.data.title });
+      } else {
+        await createPersonalTask.mutateAsync({ title: parsed.data.title, date });
+      }
       setTitle('');
       setJustAdded(true);
       setTimeout(() => setJustAdded(false), 1500);
@@ -59,6 +84,7 @@ export function QuickAddInput({ date }: QuickAddInputProps) {
     <View>
       <View style={styles.row}>
         <TextInput
+          testID={`quick-add-input-${screenId}`}
           mode="outlined"
           dense
           style={styles.input}
@@ -70,9 +96,12 @@ export function QuickAddInput({ date }: QuickAddInputProps) {
           }}
           onSubmitEditing={() => void onSubmit()}
           returnKeyType="done"
-          right={justAdded ? <TextInput.Icon icon="check" color={theme.colors.success} /> : undefined}
+          right={
+            justAdded ? <TextInput.Icon icon="check" color={theme.colors.success} /> : undefined
+          }
         />
         <IconButton
+          testID={`quick-add-submit-${screenId}`}
           icon="plus"
           mode="contained"
           disabled={!canSubmit}

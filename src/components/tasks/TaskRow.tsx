@@ -52,8 +52,14 @@ export function TaskRow({
         completed={completed}
         onToggle={onToggleComplete}
         disabled={isTogglingComplete}
+        testIDSuffix={task.id}
       />
-      <Pressable onPress={onEdit} style={styles.content} accessibilityRole="button">
+      <Pressable
+        testID={`task-row-${task.id}`}
+        onPress={onEdit}
+        style={styles.content}
+        accessibilityRole="button"
+      >
         <Text
           variant="bodyMedium"
           numberOfLines={1}
@@ -79,6 +85,7 @@ export function TaskRow({
         onMoveToTomorrow={onMoveToTomorrow}
         onMoveToInbox={onMoveToInbox}
         onArchive={onArchive}
+        testIDSuffix={task.id}
       />
     </View>
   );

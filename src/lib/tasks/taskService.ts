@@ -20,12 +20,16 @@ const logger = createLogger('task-service');
  * has no such grant for `authenticated`.
  */
 
-export type TaskErrorCode = 'forbidden' | 'invalid_input' | 'unknown';
+export type TaskErrorCode = 'forbidden' | 'invalid_input' | 'conflict' | 'unknown';
 
 const CODE_BY_SQLSTATE: Record<string, TaskErrorCode> = {
   '42501': 'forbidden',
   '22023': 'invalid_input',
   '23514': 'invalid_input',
+  // The assignment state machine's RPCs (Phase 5) raise 40001 for a stale/
+  // already-resolved state — someone else took the task, a reassigned-away
+  // recipient tried to accept, etc. See docs/DECISIONS.md, "Phase 5."
+  '40001': 'conflict',
 };
 
 export class TaskServiceError extends Error {
@@ -50,9 +54,15 @@ function toTaskServiceError(error: unknown): TaskServiceError {
  * Every list function below explicitly filters `owner_profile_id` — RLS
  * alone would also let a family-visible task belonging to *another* family
  * member through (its SELECT policy is `owner OR family-visible member`),
- * which is correct for a future family board but wrong for a personal
- * Inbox/Today/Tomorrow view. This phase has no shared task board UI (see
- * docs/MVP_SCOPE.md), so every query here is scoped to "my own tasks."
+ * which is correct for the family board (see listFamilyTasks) but wrong
+ * here, where only "my own tasks" belong. listTasksForDate/listOverdueTasks
+ * additionally include tasks *assigned to and accepted by* the caller
+ * (Phase 5, "accepted family tasks appear in Today/Tomorrow when
+ * scheduled") — Inbox deliberately does not, since an unscheduled assigned
+ * task belongs on the family board's "My family tasks" section, not mixed
+ * into a personal date-less list. A merely *pending* assignment never
+ * qualifies either way (see src/domain/tasks/hooks.ts's "awaiting response"
+ * query) — only 'accepted' counts as this user's own work.
  */
 
 export async function listInboxTasks(profileId: string): Promise<Task[]> {
@@ -66,24 +76,62 @@ export async function listInboxTasks(profileId: string): Promise<Task[]> {
   return data.map(mapTaskRow);
 }
 
+/** The caller's own (non-removed) family_members.id across every family they belong to. */
+async function listMyMemberIds(profileId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('family_members')
+    .select('id')
+    .eq('profile_id', profileId)
+    .is('removed_at', null);
+  if (error) throw toTaskServiceError(error);
+  return data.map((row) => row.id);
+}
+
+/** "owner, OR an accepted assignee via one of these member ids" as a PostgREST .or() filter. */
+function ownerOrAcceptedAssigneeFilter(profileId: string, memberIds: string[]): string {
+  if (memberIds.length === 0) return `owner_profile_id.eq.${profileId}`;
+  const idList = memberIds.join(',');
+  return `owner_profile_id.eq.${profileId},and(assignee_member_id.in.(${idList}),assignment_status.eq.accepted)`;
+}
+
 export async function listTasksForDate(profileId: string, date: string): Promise<Task[]> {
+  const memberIds = await listMyMemberIds(profileId);
   const { data, error } = await supabase
     .from('tasks')
     .select('*')
-    .eq('owner_profile_id', profileId)
-    .eq('date', date);
+    .eq('date', date)
+    .or(ownerOrAcceptedAssigneeFilter(profileId, memberIds));
   if (error) throw toTaskServiceError(error);
   return data.map(mapTaskRow);
 }
 
 /** Active (not completed) tasks dated strictly before `beforeDate`. */
 export async function listOverdueTasks(profileId: string, beforeDate: string): Promise<Task[]> {
+  const memberIds = await listMyMemberIds(profileId);
   const { data, error } = await supabase
     .from('tasks')
     .select('*')
-    .eq('owner_profile_id', profileId)
     .lt('date', beforeDate)
-    .is('completed_at', null);
+    .is('completed_at', null)
+    .or(ownerOrAcceptedAssigneeFilter(profileId, memberIds));
+  if (error) throw toTaskServiceError(error);
+  return data.map(mapTaskRow);
+}
+
+/**
+ * Shared tasks pending the caller's own response ("Awaiting your
+ * response") — across every family, regardless of date/Inbox status. Used
+ * both by the Family board's own section and by a lightweight
+ * app-wide pending-count badge.
+ */
+export async function listPendingAssignments(profileId: string): Promise<Task[]> {
+  const memberIds = await listMyMemberIds(profileId);
+  if (memberIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('*')
+    .in('assignee_member_id', memberIds)
+    .eq('assignment_status', 'pending_acceptance');
   if (error) throw toTaskServiceError(error);
   return data.map(mapTaskRow);
 }
@@ -187,5 +235,103 @@ export async function moveTaskToInbox(taskId: string): Promise<void> {
 
 export async function deleteOrArchivePersonalTask(taskId: string): Promise<void> {
   const { error } = await supabase.rpc('delete_or_archive_personal_task', { p_task_id: taskId });
+  if (error) throw toTaskServiceError(error);
+}
+
+/**
+ * Every visibility='family' task in familyId — queried directly against
+ * `tasks`, not the sanitized `family_task_board` view. A family-visible
+ * task already shows full content to any current family member via the
+ * base table's own RLS policy; the sanitized view exists for the *Busy-
+ * block* case (a private task's mere existence + owner/time, not its
+ * content) and isn't needed here since this query never includes private
+ * tasks at all (RLS also naturally excludes both deleted tasks and any
+ * family the caller isn't currently a member of).
+ */
+export async function listFamilyTasks(familyId: string): Promise<Task[]> {
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('family_id', familyId)
+    .eq('visibility', 'family');
+  if (error) throw toTaskServiceError(error);
+  return data.map(mapTaskRow);
+}
+
+export interface CreateSharedFamilyTaskParams {
+  familyId: string;
+  title: string;
+  description?: string;
+  date?: string;
+  startTime?: string;
+  durationMinutes?: number;
+  timezone?: string;
+  priority?: TaskPriority;
+  categoryId?: string;
+  assigneeMemberId?: string;
+}
+
+export async function createSharedFamilyTask(
+  params: CreateSharedFamilyTaskParams,
+): Promise<string> {
+  const { data, error } = await supabase.rpc('create_shared_family_task', {
+    p_family_id: params.familyId,
+    p_title: params.title,
+    p_description: params.description,
+    p_date: params.date,
+    p_start_time: params.startTime,
+    p_duration_minutes: params.durationMinutes,
+    p_timezone: params.timezone,
+    p_priority: params.priority,
+    p_category_id: params.categoryId,
+    p_assignee_member_id: params.assigneeMemberId,
+  });
+  if (error) throw toTaskServiceError(error);
+  return data;
+}
+
+export async function assignFamilyTask(taskId: string, assigneeMemberId: string): Promise<void> {
+  const { error } = await supabase.rpc('assign_family_task', {
+    p_task_id: taskId,
+    p_assignee_member_id: assigneeMemberId,
+  });
+  if (error) throw toTaskServiceError(error);
+}
+
+export async function reassignFamilyTask(taskId: string, assigneeMemberId: string): Promise<void> {
+  const { error } = await supabase.rpc('reassign_family_task', {
+    p_task_id: taskId,
+    p_assignee_member_id: assigneeMemberId,
+  });
+  if (error) throw toTaskServiceError(error);
+}
+
+export async function unassignFamilyTask(taskId: string): Promise<void> {
+  const { error } = await supabase.rpc('unassign_family_task', { p_task_id: taskId });
+  if (error) throw toTaskServiceError(error);
+}
+
+export async function takeFamilyTask(taskId: string): Promise<void> {
+  const { error } = await supabase.rpc('take_family_task', { p_task_id: taskId });
+  if (error) throw toTaskServiceError(error);
+}
+
+export async function acceptTaskAssignment(taskId: string): Promise<void> {
+  const { error } = await supabase.rpc('accept_task_assignment', { p_task_id: taskId });
+  if (error) throw toTaskServiceError(error);
+}
+
+export async function declineTaskAssignment(taskId: string): Promise<void> {
+  const { error } = await supabase.rpc('decline_task_assignment', { p_task_id: taskId });
+  if (error) throw toTaskServiceError(error);
+}
+
+export async function completeSharedTask(taskId: string): Promise<void> {
+  const { error } = await supabase.rpc('complete_shared_task', { p_task_id: taskId });
+  if (error) throw toTaskServiceError(error);
+}
+
+export async function restoreSharedTask(taskId: string): Promise<void> {
+  const { error } = await supabase.rpc('restore_shared_task', { p_task_id: taskId });
   if (error) throw toTaskServiceError(error);
 }

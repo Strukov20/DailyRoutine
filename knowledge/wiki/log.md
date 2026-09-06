@@ -177,3 +177,184 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     and is reported as such rather than inferred from `expo export`/`expo-doctor` passing —
     those check bundling, not runtime behavior on a simulator or device.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+## 2026-09-05T00:00:00Z — Phase 5 (in progress): Shared Family Tasks, assignment workflow, native E2E foundation
+
+- **Operation type:** security audit + implementation + test-infrastructure investigation + wiki update (interim — not this phase's final pass)
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-05-phase5-shared-family-tasks.md`](../raw/sessions/2026-09-05-phase5-shared-family-tasks.md).
+- **Wiki pages updated:** `domain/tasks-and-assignments.md` (substantially rewritten — no
+  longer describes assignment UI as nonexistent), `domain/family-spaces.md` (soft-delete
+  member removal), `engineering/security-model.md` (new RPC grant pattern, zero-grant internal
+  helper), `engineering/testing-strategy.md` (Phase 5 test counts, two RNTL environment
+  limitations found and worked around).
+- **Decisions/contradictions recorded:**
+  - Resolved the Phase 4 custom-category contradiction: `create_custom_category` was already
+    correct and family-owner-scoped, just never wired into any UI. Wired into the shared task
+    editor's category menu, gated to match the RPC's own owner-only authorization.
+  - Found and fixed a real architectural gap before it shipped: none of the FKs referencing
+    `family_members` specify `ON DELETE`, and the new `task_assignments` audit rows are
+    permanent and `NOT NULL` — a hard `DELETE` in `remove_family_member` would raise a raw FK
+    violation the first time a removed member had ever been assigned a task. Fixed via soft
+    delete (`removed_at`), with every membership-check helper and sanitized view updated to
+    filter it.
+  - Self-caught a repeat of the Phase 3 `anon`-EXECUTE-grant lesson while authoring the new
+    migration: `set_task_assignment`'s revoke statement was missing from the first draft.
+    Fixed before applying, and made this function's grant policy stricter than the earlier
+    finding required — zero grants to any role at all, not just a corrected revoke.
+  - Two RN Testing Library / `react-test-renderer` environment limitations were investigated
+    to a firm conclusion rather than worked around blindly: `SectionList` cannot expand past
+    its initial render window without a real native layout engine (confirmed via an 8-second
+    real-timer wait that did not resolve it — a hard cutoff, not a slow render), and a
+    single-file Jest invocation reliably crashes/hangs on teardown due to a React 19
+    deferred-`act()`-flush racing Jest's module-registry teardown, triggered by
+    `react-native-paper` components that lazily construct an `Animated.Value`. Both are
+    documented as evidenced findings in `docs/DECISIONS.md`, not silently patched around;
+    the first was fixed at the test-harness level (a `SectionList` mock) after confirming a
+    production `initialNumToRender` change would have been a Jest-only workaround with a real
+    (if small) production cost; the second is documented as technical debt with an explicit
+    instruction on record not to mask it with `--forceExit` in `npm test`/CI.
+  - **172/172 Jest tests pass (28 suites, up from 144/24)** covering the new domain layer and
+    UI components (`AssigneeLabel`, `AssigneePicker`, `FamilyTaskRow`, `FamilyTaskBoard`,
+    `TaskEditorForm`'s shared-task mode). `71` new pgTAP assertions were added
+    (`263` total across the whole schema, pending a fresh full-suite re-run this same session
+    per its own verification checklist — not yet re-confirmed as of this log entry).
+  - **This wiki update is explicitly interim**, per this session's own instruction: the real
+    multi-user backend integration script and the Maestro E2E flows have not run yet, and both
+    this raw session file and the affected wiki pages will be updated again once they have,
+    before the phase is reported complete.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-04T00:00:00Z — Phase 5 (final): real backend integration, Maestro E2E, checkpoint verification
+
+- **Operation type:** verification + E2E implementation + bug fixing + wiki update (final pass
+  for this phase, superseding the "interim" status of the previous entry)
+- **Source material ingested:** the "Continuation" section appended to
+  [`knowledge/raw/sessions/2026-09-05-phase5-shared-family-tasks.md`](../raw/sessions/2026-09-05-phase5-shared-family-tasks.md).
+- **Wiki pages updated:** `engineering/testing-strategy.md` (Maestro E2E moved from "not yet
+  implemented" to confirmed/current, with the full findings summary and a link to
+  DECISIONS.md).
+- **Canonical docs updated:** `docs/DECISIONS.md` (new Phase 5 subsections: the real backend
+  integration results, Maestro installation, and eight individually-evidenced findings from
+  getting the three flows to pass reliably), `docs/TEST_STRATEGY.md` (E2E row updated from "not
+  configured" to implemented), `docs/PRODUCT.md` ("Assignment workflow" — see contradiction
+  below).
+- **Decisions/contradictions recorded:**
+  - Real multi-user backend integration (ad hoc script, not committed): **32/32 checks passed**
+    against a live local stack with two real `auth.users` accounts, an outsider, and an
+    anonymous request — including genuine concurrent Take Task via parallel `curl`, not a
+    simulated race.
+  - Maestro 2.10.0 installed and all three required flows (`personal_task_smoke`,
+    `family_task_workflow`, `assignment_decline`) reached two consecutive fully clean,
+    unattended runs each, cross-verified against real database state. Getting there surfaced
+    and fixed **one real application bug**: `TaskEditorForm`'s `beforeRemove` unsaved-changes
+    guard had a stale-closure race (`onDone()` navigates away in the same tick a mutation
+    resolves, before `isSubmitSuccessful`'s state update had propagated through a re-render),
+    causing a spurious "Discard changes?" dialog after an already-successful save — fixed via a
+    synchronously-set ref, independent of Maestro; a real user could in principle have hit the
+    same bug. Also found and fixed **two bugs in the flow logic itself** (not the app): a blind
+    recovery retry that could double-submit a task after the dialog above, and a blind
+    double-tap trigger on `AssigneePicker` that could self-assign instead of assigning to the
+    intended member — both confirmed via direct database/screenshot evidence, not assumed.
+    Plus four environment-level findings, each root-caused via `maestro hierarchy` rather than
+    guessed at: password/text-injection on `tapOn` right after typing, merged accessibility
+    text on compound `Pressable`s, the leftmost/rightmost tab bar items being unmatchable by
+    text or testID at all (worked around with a coordinate tap), and an unreliable `checked`
+    selector attribute for a custom checkbox. Full writeup with evidence for each:
+    `docs/DECISIONS.md`, "Phase 5."
+  - **Found and fixed a real cross-document contradiction**, not assumed absent:
+    `docs/PRODUCT.md`'s "Assignment workflow" section claimed "the recipient is notified" and
+    described `task_assignments` as a "proposed shape," both stale — `SECURITY_AND_PRIVACY.md`
+    already correctly listed assignment/response notifications as "Not yet implemented" (only
+    an in-app pending-count badge exists this phase), and `task_assignments` has been
+    implemented exactly as `DATA_MODEL.md` describes since this same phase's migration.
+    `PRODUCT.md` corrected to match; `DATA_MODEL.md`/`SECURITY_AND_PRIVACY.md`/`ARCHITECTURE.md`
+    were checked and found already accurate, not assumed so.
+  - Full checkpoint verification re-run clean: Prettier, `tsc`, ESLint, Jest (172/172, no
+    regressions), `wiki:lint`, `supabase db reset` + pgTAP (263/263), `expo config`,
+    `expo-doctor` (20/21 — one pre-existing, unrelated Expo SDK patch-version drift, out of
+    scope given this repo's deliberate pinning philosophy), and both `expo export` platforms.
+  - Three logical git commits landed on `feature/shared-family-tasks` (still unpushed, per this
+    repo's git rules): the `TaskEditorForm` bug fix, testID/E2E-instrumentation source changes,
+    and the Maestro flows/scripts themselves — kept separate even where they touched the same
+    file, since one is a behavior fix and the others are test infrastructure.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-06T00:00:00Z — Phase 5 closure pass: Expo Doctor fix, Maestro tap hardening
+
+- **Operation type:** hardening + investigation + wiki update
+- **Source material ingested:** the "Closure pass" section appended to
+  [`knowledge/raw/sessions/2026-09-05-phase5-shared-family-tasks.md`](../raw/sessions/2026-09-05-phase5-shared-family-tasks.md).
+- **Wiki pages updated:** `engineering/testing-strategy.md` (corrected the `tabBarTestID`
+  finding to name the real prop, `tabBarButtonTestID`; reframed the boundary-tab issue as a
+  tap-delivery limitation proven independent of selector type, not a matching problem; added
+  the Expo Doctor resolution).
+- **Canonical docs updated:** `docs/DECISIONS.md` — corrected the "leftmost/rightmost tab bar
+  items" entry with the conclusive investigation (real testID confirmed reaching native via
+  `tabBarButtonTestID`, tap still proven not to land 3/3 with screenshot evidence), generalized
+  the "genuine hangs" entry to include silent no-op taps, and added a new entry for the Expo
+  SDK patch-version resolution.
+- **Decisions/contradictions recorded:**
+  - **Corrected a claim from the previous entry, not silently**: `tabBarTestID` "not respected
+    by Expo Router" was actually the wrong prop name, not a real framework gap — the correct
+    prop, `tabBarButtonTestID`, works and now ships in `app/(app)/_layout.tsx`. Every middle
+    tab across all three Maestro flows now matches by this stable id instead of text.
+  - Proved, rather than assumed, that the boundary-tab tap failure is a genuine touch-delivery
+    limitation independent of selector: with a hierarchy-confirmed real testID in hand, an
+    id-based `tapOn` on the rightmost tab still failed to land 3/3 in isolation (Maestro
+    reported `COMPLETED`; the screenshot taken immediately after showed no navigation
+    occurred). The percentage-based coordinate-tap workaround is retained for exactly the two
+    edge tabs, now on stronger evidence.
+  - Generalized a prior finding: the "genuine Maestro/XCUITest hangs" technical debt isn't only
+    a hang-with-dead-output failure mode — the same underlying rare tap-delivery issue can also
+    surface as a false `COMPLETED` with no effect, observed twice on a genuine middle tab
+    during this pass's verification runs (always clean on immediate retry).
+  - Expo Doctor's 20/21 was traced to ordinary lockfile staleness (existing `~57.0.x` ranges
+    already permitted the newer patches), not a deliberate pin — explicitly distinguished from
+    this repo's real TypeScript/ESLint pins, which exist for genuine peer-dependency conflicts.
+    Fixed via `npx expo install --fix` plus a full native rebuild (required since two of the
+    three packages ship native code); re-verified clean across the full checkpoint suite.
+    `expo-doctor` now 21/21.
+  - All three Maestro flows re-verified with two consecutive fully clean, unattended runs each
+    after every change in this pass.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-06T01:00:00Z — Phase 5 final consistency pass: report corrections, backend script committed, retry hardening
+
+- **Operation type:** correction + hardening + wiki update
+- **Source material ingested:** the "Final consistency pass" section appended to
+  [`knowledge/raw/sessions/2026-09-05-phase5-shared-family-tasks.md`](../raw/sessions/2026-09-05-phase5-shared-family-tasks.md).
+- **Wiki pages updated:** `engineering/testing-strategy.md` (corrected run-count claim to the
+  3x9 final verification numbers, reframed tap-delivery flakiness as significant rather than
+  rare, documented the retry-hardening pattern and the Reduce Motion investigation).
+- **Canonical docs updated:** `docs/DECISIONS.md` (reframed the hangs/silent-no-op entry's
+  severity, added the Reduce Motion investigation result, added a new "Retry hardening" entry
+  with the 3x9 final verification numbers).
+- **Decisions/contradictions recorded:**
+  - **Corrected two errors in the previous report, not silently**: the commit count was
+    reported as 17 while only 14 hashes were listed — `git rev-list --count` confirms 14, a
+    plain counting mistake. The base commit's description ("main's successor line") was
+    imprecise — `80aae74` is exactly `develop`'s tip (verified via `git rev-parse develop` and
+    `git merge-base`), and is confirmed NOT an ancestor of `main` at all.
+  - Committed `scripts/e2e-backend.sh` (`npm run e2e:backend`), replacing the ad hoc/uncommitted
+    script: credentials now read dynamically from `supabase status`, a hard localhost-only
+    safety gate, unique per-run identities, and a `trap`-based cleanup. Building the cleanup
+    surfaced and fixed a real FK-ordering bug: `task_assignments`' composite FK to
+    `family_members` isn't cascaded from `families`, so it must be cleared first or the cascade
+    delete 409s.
+  - Investigated Maestro/Simulator animation stabilization: Maestro has no built-in option
+    (confirmed via binary search of its jars); Reduce Motion is settable at the Simulator level
+    via `simctl` and is now enabled by `scripts/e2e-ios.sh`, honestly framed as unproven since
+    the flakiness was already isolated to touch delivery, not animation timing.
+  - Hardened every mutating/navigating tap across all three flows with a bounded,
+    state-verified conditional retry (proves non-success before ever retrying — never blind).
+    Final verification: 3 consecutive full runs of all three flows (9 completions) — all
+    passed, 0 retries actually triggered, 1 genuine hang requiring a full flow restart.
+    Reported as "passed this run," explicitly not claimed as newly deterministic.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

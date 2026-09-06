@@ -63,7 +63,9 @@ export default function TomorrowScreen() {
   const onToggleComplete = async (task: Task) => {
     setTogglingTaskId(task.id);
     try {
-      await (task.completedAt ? restoreTask.mutateAsync(task.id) : completeTask.mutateAsync(task.id));
+      await (task.completedAt
+        ? restoreTask.mutateAsync(task.id)
+        : completeTask.mutateAsync(task.id));
     } finally {
       setTogglingTaskId(null);
     }
@@ -74,7 +76,7 @@ export default function TomorrowScreen() {
       <Stack.Screen options={{ title: t('screens:tomorrow.title'), headerShown: true }} />
       <View style={styles.header}>
         <OfflineBanner />
-        <QuickAddInput date={tomorrow} />
+        <QuickAddInput date={tomorrow} screenId="tomorrow" />
       </View>
 
       <TaskSectionList

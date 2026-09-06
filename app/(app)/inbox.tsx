@@ -58,7 +58,9 @@ export default function InboxScreen() {
   const onToggleComplete = async (task: Task) => {
     setTogglingTaskId(task.id);
     try {
-      await (task.completedAt ? restoreTask.mutateAsync(task.id) : completeTask.mutateAsync(task.id));
+      await (task.completedAt
+        ? restoreTask.mutateAsync(task.id)
+        : completeTask.mutateAsync(task.id));
     } finally {
       setTogglingTaskId(null);
     }
@@ -71,7 +73,7 @@ export default function InboxScreen() {
           {t('screens:inbox.title')}
         </Text>
         <OfflineBanner />
-        <QuickAddInput />
+        <QuickAddInput screenId="inbox" />
       </View>
 
       <TaskSectionList

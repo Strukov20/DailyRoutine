@@ -1,9 +1,10 @@
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { FlatList, StyleSheet, View } from 'react-native';
-import { Button, Chip, Divider, List, Menu, Text } from 'react-native-paper';
+import { Button, Chip, Divider, List, Menu, SegmentedButtons, Text } from 'react-native-paper';
 import { useState } from 'react';
 
+import { FamilyTaskBoard } from '@/components/tasks/FamilyTaskBoard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -28,6 +29,7 @@ export default function FamilyScreen() {
   const { profile } = useAuth();
   const setActiveFamilyId = useUIStore((state) => state.setActiveFamilyId);
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [view, setView] = useState<'members' | 'tasks'>('members');
 
   const { families, activeFamily, isLoading, isError } = useActiveFamily();
   const membersQuery = useFamilyMembers(activeFamily?.id ?? null);
@@ -121,54 +123,78 @@ export default function FamilyScreen() {
           {callerIsOwner ? <Chip compact>{t('family:role.owner')}</Chip> : null}
         </View>
 
-        <View style={styles.actions}>
-          {callerIsOwner ? (
-            <Button
-              mode="contained-tonal"
-              onPress={() =>
-                router.push({ pathname: '/family/invite', params: { familyId: activeFamily.id } })
-              }
-              style={styles.actionButton}
-            >
-              {t('family:inviteAction')}
-            </Button>
-          ) : null}
-          <Button
-            mode="contained-tonal"
-            onPress={() =>
-              router.push({ pathname: '/family/add-child', params: { familyId: activeFamily.id } })
-            }
-            style={styles.actionButton}
-          >
-            {t('family:addChildAction')}
-          </Button>
-        </View>
+        <SegmentedButtons
+          value={view}
+          onValueChange={(value) => setView(value as 'members' | 'tasks')}
+          style={styles.viewToggle}
+          buttons={[
+            { value: 'members', label: t('family:tabs.members') },
+            { value: 'tasks', label: t('family:tabs.tasks') },
+          ]}
+        />
 
-        {callerIsOwner && invitations.length > 0 ? (
+        {view === 'members' ? (
           <>
-            <List.Subheader style={styles.subheader}>
-              {t('family:pendingInvitations')}
-            </List.Subheader>
-            {invitations.map((invitation) => (
-              <List.Item
-                key={invitation.id}
-                title={invitation.invitedEmail}
-                description={t('family:invite.status.pending')}
-              />
-            ))}
-            <Divider style={styles.divider} />
+            <View style={styles.actions}>
+              {callerIsOwner ? (
+                <Button
+                  mode="contained-tonal"
+                  onPress={() =>
+                    router.push({
+                      pathname: '/family/invite',
+                      params: { familyId: activeFamily.id },
+                    })
+                  }
+                  style={styles.actionButton}
+                >
+                  {t('family:inviteAction')}
+                </Button>
+              ) : null}
+              <Button
+                mode="contained-tonal"
+                onPress={() =>
+                  router.push({
+                    pathname: '/family/add-child',
+                    params: { familyId: activeFamily.id },
+                  })
+                }
+                style={styles.actionButton}
+              >
+                {t('family:addChildAction')}
+              </Button>
+            </View>
+
+            {callerIsOwner && invitations.length > 0 ? (
+              <>
+                <List.Subheader style={styles.subheader}>
+                  {t('family:pendingInvitations')}
+                </List.Subheader>
+                {invitations.map((invitation) => (
+                  <List.Item
+                    key={invitation.id}
+                    title={invitation.invitedEmail}
+                    description={t('family:invite.status.pending')}
+                  />
+                ))}
+                <Divider style={styles.divider} />
+              </>
+            ) : null}
+
+            <List.Subheader style={styles.subheader}>{t('family:members')}</List.Subheader>
           </>
         ) : null}
-
-        <List.Subheader style={styles.subheader}>{t('family:members')}</List.Subheader>
       </View>
 
-      <FlatList
-        data={members}
-        keyExtractor={(item) => item.id}
-        renderItem={renderMember}
-        contentContainerStyle={{ paddingHorizontal: theme.spacing.md }}
-      />
+      {view === 'members' ? (
+        <FlatList
+          data={members}
+          keyExtractor={(item) => item.id}
+          renderItem={renderMember}
+          contentContainerStyle={{ paddingHorizontal: theme.spacing.md }}
+        />
+      ) : (
+        <FamilyTaskBoard familyId={activeFamily.id} members={members} />
+      )}
     </ScreenContainer>
   );
 }
@@ -181,6 +207,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  viewToggle: {
     marginBottom: 8,
   },
   actions: {

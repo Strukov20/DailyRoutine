@@ -19,12 +19,17 @@ jest.mock('@/lib/tasks/taskService', () => ({
 }));
 
 jest.mock('@/lib/auth/AuthProvider', () => ({
-  useAuth: () => ({ profile: { id: 'u1' }, session: null, status: 'signed-in', refreshProfile: jest.fn() }),
+  useAuth: () => ({
+    profile: { id: 'u1' },
+    session: null,
+    status: 'signed-in',
+    refreshProfile: jest.fn(),
+  }),
 }));
 
 function renderWithProviders(ui: React.ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-   
+
   const Wrapper = ({ children }: PropsWithChildren) => (
     <AppThemeProvider>
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -41,20 +46,22 @@ describe('QuickAddInput', () => {
   it('creates a task, clears the input, and shows a subtle confirmation', async () => {
     (createPersonalTask as jest.Mock).mockResolvedValue('t1');
 
-    await renderWithProviders(<QuickAddInput />);
+    await renderWithProviders(<QuickAddInput screenId="test" />);
 
     const input = screen.getByPlaceholderText('Add a task…');
     await fireEvent.changeText(input, 'Buy milk');
     await fireEvent(input, 'submitEditing');
 
-    await waitFor(() => expect(createPersonalTask).toHaveBeenCalledWith({ title: 'Buy milk', date: undefined }));
+    await waitFor(() =>
+      expect(createPersonalTask).toHaveBeenCalledWith({ title: 'Buy milk', date: undefined }),
+    );
     await waitFor(() => expect(input.props.value).toBe(''));
   });
 
   it('passes the given date through for Today/Tomorrow quick-add', async () => {
     (createPersonalTask as jest.Mock).mockResolvedValue('t1');
 
-    await renderWithProviders(<QuickAddInput date="2026-09-03" />);
+    await renderWithProviders(<QuickAddInput date="2026-09-03" screenId="test" />);
 
     const input = screen.getByPlaceholderText('Add a task…');
     await fireEvent.changeText(input, 'Timed task');
@@ -66,7 +73,7 @@ describe('QuickAddInput', () => {
   });
 
   it('never submits a blank title', async () => {
-    await renderWithProviders(<QuickAddInput />);
+    await renderWithProviders(<QuickAddInput screenId="test" />);
 
     const input = screen.getByPlaceholderText('Add a task…');
     await fireEvent(input, 'submitEditing');
@@ -82,7 +89,7 @@ describe('QuickAddInput', () => {
       }),
     );
 
-    await renderWithProviders(<QuickAddInput />);
+    await renderWithProviders(<QuickAddInput screenId="test" />);
 
     const input = screen.getByPlaceholderText('Add a task…');
     await fireEvent.changeText(input, 'Buy milk');

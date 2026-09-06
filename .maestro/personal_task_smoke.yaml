@@ -1,0 +1,294 @@
+appId: com.familyflow.app
+name: Personal task smoke
+# Sign in -> Inbox -> quick-add -> open the action menu -> schedule for
+# Today -> complete -> restore. Uses the "User A" fixture from
+# scripts/e2e-seed.sh (npm run e2e:seed) — run that (after a fresh
+# `npm run db:reset`) before this flow.
+#
+# This flow looks more elaborate than a plain type-and-tap script for two
+# real, evidenced reasons — see docs/DECISIONS.md, "Phase 5, known
+# technical debt" for the full investigation of both:
+#   1. Password text injection: typing into the password field immediately
+#      followed by `tapOn` on a DIFFERENT element could inject one extra,
+#      non-deterministic character into whatever field still held focus.
+#      Fixed by keyboardType="ascii-capable" on the field (sign-in.tsx),
+#      retyping until the exact string is verified visible, and submitting
+#      via the field's own Return key (onSubmitEditing + pressKey: Enter)
+#      rather than tapOn on the Sign in button - tapOn on ANY element
+#      right after typing was confirmed, repeatedly and reliably, to
+#      reintroduce the same injection (observed corrupting to
+#      "Maestro1234y", then "Maestro1234yy" across repeated attempts).
+#      pressKey: Enter avoids that corruption reliably but was, like a
+#      menu-item tapOn observed hanging on a separate run, observed to
+#      occasionally hang indefinitely with no further Maestro log output
+#      at all - a real, tool-level failure mode on this exact iOS 26.5
+#      Simulator + Maestro 2.10.0 combination, not localized to any one
+#      command and not something a client-side retry can wait out (a hang
+#      is not a failure state Maestro can detect and retry from).
+#      Documented as known technical debt, not silently "solved."
+#   2. Merged accessibility text: a Pressable wrapping multiple Text
+#      children (a task row, a checkbox with a label) gets its children's
+#      text merged by iOS into one VoiceOver-style accessibilityText,
+#      leaving the individual text/title fields empty on that element -
+#      exactly what Maestro's plain text selectors check (confirmed via
+#      `maestro hierarchy`). Fixed by adding dedicated testIDs
+#      (task-row-<id>, task-actions-<id>, completion-checkbox-<id>,
+#      quick-add-input-<screen>, tab-<name> on every tab bar item via
+#      `options.tabBarButtonTestID` in app/(app)/_layout.tsx - NOT
+#      `tabBarTestID`, which silently does nothing on this Expo Router/
+#      React Navigation version despite being the more commonly
+#      documented prop name) to every such element and matching on those
+#      instead of visible text.
+#
+# Tap-delivery flakiness: this Simulator/Maestro combination occasionally
+# reports a `tapOn` as COMPLETED while the touch never actually reaches
+# the app - confirmed repeatedly this phase, at a rate significant enough
+# (observed ~2-in-10 on ordinary, non-edge elements; effectively 10-in-10
+# at the tab bar's screen-edge items - see below) to treat as a real,
+# ongoing risk, not a rare curiosity. Every tap in this flow that creates,
+# mutates, or navigates state is followed by an assertion of the expected
+# outcome and, where a silent no-op would otherwise strand the flow, a
+# SINGLE bounded conditional retry that only fires after confirming the
+# original tap did NOT produce its effect (never a blind/unconditional
+# repeat - repeating an action that succeeded the first time would create
+# or mutate data twice). Assumes an iPhone 17 Pro / iOS 26.5 Simulator;
+# scripts/e2e-ios.sh enables Reduce Motion on that Simulator via
+# `xcrun simctl` before every run (Maestro itself has no built-in option
+# for this - checked its bundled jars directly) as a genuine attempt at
+# stabilization, though the root cause here has been isolated to
+# touch-delivery, not an animation race, so it is not expected to be a
+# full fix - see docs/DECISIONS.md, "Phase 5" for the complete writeup
+# and the honest reliability numbers, including the leftmost tab
+# ("Today") still not being reliably tappable by ANY selector even after
+# this hardening, which is why it alone keeps the coordinate-tap
+# workaround.
+---
+- launchApp:
+    clearState: true
+- tapOn: 'Continue'
+- tapOn:
+    id: 'sign-in-email'
+- inputText: 'maestro-user-a@familyflow.test'
+- tapOn:
+    id: 'sign-in-password'
+- tapOn: 'Show password'
+- extendedWaitUntil:
+    visible:
+      id: 'sign-in-password'
+    timeout: 15000
+- repeat:
+    while:
+      notVisible: '^Maestro1234$'
+    commands:
+      - tapOn:
+          id: 'sign-in-password'
+      - eraseText: 50
+      - inputText: 'Maestro1234'
+      - waitForAnimationToEnd
+# A single tap can register without the field actually taking real
+# first-responder focus - a second tap right before pressing Return makes
+# submission land reliably.
+- tapOn:
+    id: 'sign-in-password'
+- pressKey: Enter
+# A real successful sign-in triggers iOS's own "Save Password?" system
+# dialog (Keychain) - dismiss it before continuing.
+- extendedWaitUntil:
+    visible: 'Not Now'
+    timeout: 10000
+    optional: true
+- tapOn:
+    text: 'Not Now'
+    optional: true
+- extendedWaitUntil:
+    visible: 'Today'
+    timeout: 10000
+
+# --- Navigate to Inbox (id-based tap, occasionally silent-no-ops - see
+# header) ---
+- waitForAnimationToEnd
+- tapOn:
+    id: 'tab-inbox'
+- extendedWaitUntil:
+    visible:
+      id: 'quick-add-input-inbox'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: 'quick-add-input-inbox'
+    commands:
+      - tapOn:
+          id: 'tab-inbox'
+      - extendedWaitUntil:
+          visible:
+            id: 'quick-add-input-inbox'
+          timeout: 10000
+
+- tapOn:
+    id: 'quick-add-input-inbox'
+- inputText: 'Maestro Smoke Task'
+- tapOn:
+    id: 'quick-add-submit-inbox'
+- extendedWaitUntil:
+    visible:
+      id: 'task-row-.*'
+    timeout: 15000
+
+# The action menu (react-native-paper <Menu>) can occasionally not open on
+# the first tap under fast programmatic taps - a second tap makes it
+# reliable (same "first tap sometimes doesn't take" pattern as the
+# password field above). Opening a menu twice is harmless (idempotent),
+# unlike the mutation below it. The open-check itself is NOT a mutation
+# either, so it retries unconditionally on "menu didn't open" - confirmed
+# necessary in practice: an earlier version of this flow made this
+# specific assertion non-optional with no recovery, and it was the one
+# that failed in the batched `npm run e2e:ios` (all three flows) run that
+# validated this hardening pass, while every isolated single-flow run
+# passed - see docs/DECISIONS.md, "Phase 5" for the honest numbers from
+# both.
+- tapOn:
+    id: 'task-actions-.*'
+- waitForAnimationToEnd
+- tapOn:
+    id: 'task-actions-.*'
+- extendedWaitUntil:
+    visible:
+      id: 'task-move-to-today-.*'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: 'task-move-to-today-.*'
+    commands:
+      - tapOn:
+          id: 'task-actions-.*'
+      - waitForAnimationToEnd
+      - tapOn:
+          id: 'task-actions-.*'
+      - extendedWaitUntil:
+          visible:
+            id: 'task-move-to-today-.*'
+          timeout: 10000
+# Moving the task is a real mutation - only retry if the inbox row is
+# still there, proving the move genuinely did not happen yet (not just
+# that this assertion hasn't caught up).
+- tapOn:
+    id: 'task-move-to-today-.*'
+- extendedWaitUntil:
+    notVisible:
+      id: 'task-row-.*'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      visible:
+        id: 'task-row-.*'
+    commands:
+      - tapOn:
+          id: 'task-actions-.*'
+      - waitForAnimationToEnd
+      - tapOn:
+          id: 'task-actions-.*'
+      - extendedWaitUntil:
+          visible:
+            id: 'task-move-to-today-.*'
+          timeout: 8000
+      - tapOn:
+          id: 'task-move-to-today-.*'
+      - extendedWaitUntil:
+          notVisible:
+            id: 'task-row-.*'
+          timeout: 15000
+
+# A plain tapOn("Today")/assertVisible("Today") here fails deterministically,
+# and so does tapOn: { id: "tab-today" } after adding a real testID via
+# options.tabBarButtonTestID - confirmed the id genuinely reaches the
+# native element (`maestro hierarchy` shows resource-id: "tab-today"),
+# then confirmed 3/3 that tapping it by that id still leaves the app on
+# whatever screen it started on (screenshot evidence: tab bar still shows
+# the previous tab selected). So this is not a selector-discovery problem
+# (semantic id and text both resolve the element) but the touch itself
+# not registering for this specific position - "Today" is the leftmost
+# tab, its bounds flush against the screen's own x=0 edge (mirroring
+# "Profile" as the rightmost tab, flush against the right edge) on this
+# iPhone 17 Pro / iOS 26.5 Simulator. A coordinate tap on the tab bar's
+# own reported bounds is the only thing that reliably works here, and even
+# that is not perfectly deterministic - retry once, bounded, if the
+# destination hasn't loaded (navigating a tab twice is harmless). See
+# docs/DECISIONS.md, "Phase 5" for the full investigation and evidence.
+- waitForAnimationToEnd
+- tapOn:
+    point: '10%, 93%'
+- extendedWaitUntil:
+    visible:
+      id: 'task-row-.*'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: 'task-row-.*'
+    commands:
+      - tapOn:
+          point: '10%, 93%'
+      - extendedWaitUntil:
+          visible:
+            id: 'task-row-.*'
+          timeout: 10000
+
+# The structured `checked` selector attribute was confirmed (via `maestro
+# hierarchy`) to always report "false" for this component regardless of
+# actual state - a custom Pressable's RN accessibilityState.checked
+# doesn't surface as XCUITest's own "checked" trait. The real state IS
+# reliably exposed as plain text/value ("checkbox, checked" /
+# "checkbox, unchecked") - see docs/DECISIONS.md, "Phase 5." Completing a
+# task is a real mutation - only retry if the checkbox is still reporting
+# "unchecked", proving the toggle genuinely did not register.
+- tapOn:
+    id: 'completion-checkbox-.*'
+- extendedWaitUntil:
+    visible:
+      id: 'completion-checkbox-.*'
+      text: 'checkbox, checked'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      visible:
+        id: 'completion-checkbox-.*'
+        text: 'checkbox, unchecked'
+    commands:
+      - tapOn:
+          id: 'completion-checkbox-.*'
+      - extendedWaitUntil:
+          visible:
+            id: 'completion-checkbox-.*'
+            text: 'checkbox, checked'
+          timeout: 15000
+
+# Restoring (un-completing) is the same kind of mutation, in reverse -
+# only retry if it's still reporting "checked".
+- tapOn:
+    id: 'completion-checkbox-.*'
+- extendedWaitUntil:
+    visible:
+      id: 'completion-checkbox-.*'
+      text: 'checkbox, unchecked'
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      visible:
+        id: 'completion-checkbox-.*'
+        text: 'checkbox, checked'
+    commands:
+      - tapOn:
+          id: 'completion-checkbox-.*'
+      - extendedWaitUntil:
+          visible:
+            id: 'completion-checkbox-.*'
+            text: 'checkbox, unchecked'
+          timeout: 15000

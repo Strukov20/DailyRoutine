@@ -45,7 +45,9 @@ export function buildDaySections(tasks: readonly Task[]): DaySections {
 
   const anytime = active
     .filter((task) => task.startTime === null)
-    .sort((a, b) => comparePriorityDescending(a.priority, b.priority) || byCreatedAtAscending(a, b));
+    .sort(
+      (a, b) => comparePriorityDescending(a.priority, b.priority) || byCreatedAtAscending(a, b),
+    );
 
   return { timed, anytime, completed };
 }

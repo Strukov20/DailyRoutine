@@ -214,9 +214,9 @@ describe('familyService', () => {
     it('createChildProfile returns the new member id', async () => {
       (supabase.rpc as jest.Mock).mockResolvedValue({ data: 'm3', error: null });
 
-      await expect(
-        createChildProfile({ familyId: 'f1', displayName: 'Kid Two' }),
-      ).resolves.toBe('m3');
+      await expect(createChildProfile({ familyId: 'f1', displayName: 'Kid Two' })).resolves.toBe(
+        'm3',
+      );
     });
 
     it('updateChildProfile and removeFamilyMember resolve on success', async () => {

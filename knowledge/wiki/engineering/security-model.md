@@ -9,6 +9,7 @@ sources:
   - ../../raw/sessions/2026-09-02-phase2-docker-resolved.md
   - ../../raw/sessions/2026-09-03-phase3-family-space.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
+  - ../../raw/sessions/2026-09-05-phase5-shared-family-tasks.md
 tags: [engineering, security, rls, privacy]
 ---
 
@@ -102,6 +103,26 @@ to remove a `role = 'owner'` row), invitation-token validity, child-profile fiel
 [Family Spaces](../domain/family-spaces.md) for the full RPC list and
 [DECISIONS.md, "Phase 3"](../../../docs/DECISIONS.md) for why the table-write boundary from
 Phase 2 was kept rather than opened up.
+
+## Shared-task assignment mutations are RPC-only, and one helper has zero grants (Phase 5)
+
+The nine assignment RPCs (`create_shared_family_task` through `restore_shared_task` — full
+list in [tasks-and-assignments](../domain/tasks-and-assignments.md)) follow the same
+`SECURITY DEFINER`, fixed-`search_path`, revoke-then-grant-`authenticated`-only pattern as
+Phase 3/4. One goes further: `set_task_assignment`, the internal helper `assign_family_task`/
+`reassign_family_task` both delegate to, has **no `grant execute` to any role at all** —
+confirmed via `pg_proc.proacl`, not just by reading the migration's intent (the same
+verification discipline the Phase 3 `anon`-grant finding established). It's reachable only
+function-to-function from its two callers. The migration's first draft repeated the Phase 3
+"Supabase grants `anon`/`authenticated` EXECUTE directly, `revoke ... from public` alone
+doesn't touch it" mistake for this function specifically — caught and fixed before the
+migration was applied, not after. Full writeup:
+[DECISIONS.md, "Phase 5"](../../../docs/DECISIONS.md).
+
+`remove_family_member`'s soft-delete (`removed_at`) means immediate access loss for a removed
+member is enforced the same way as everywhere else in this design: `is_family_member()` and
+the sanitized views' inline subqueries all filter `removed_at is null`, so there is no window
+where a removed member's row still counts as active membership.
 
 ## Personal-task mutations are RPC-only too (Phase 4)
 

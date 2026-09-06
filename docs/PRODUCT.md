@@ -96,13 +96,16 @@ claimed via "Take task," scheduled (date+time or date-only), or parked in Inbox 
 
 When one adult assigns a task to another:
 
-- the recipient is notified;
+- the recipient sees it in-app (a pending-assignment count on the Family tab this phase — see
+  SECURITY_AND_PRIVACY.md, "Not yet implemented," for push/response notifications, which are
+  a later phase, not this one);
 - the assignment can require **Accept** or **Decline** — assignment is never assumed to be
-  automatic acceptance;
+  automatic acceptance (the one exception: assigning to yourself, or "Take task," accepts
+  immediately — there is no one else to ask);
 - assignment status is an explicit, queryable field, not inferred from other state;
 - assignment history is auditable (who assigned, who accepted/declined, when).
 
-See DATA_MODEL.md, "task_assignments," for the proposed shape.
+See DATA_MODEL.md, "task_assignments," for the implemented shape.
 
 ## Privacy
 

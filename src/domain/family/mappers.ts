@@ -61,6 +61,7 @@ export function mapFamilyMemberRow(row: Tables<'family_members'>): FamilyMember 
     displayName: row.display_name,
     avatarUrl: row.avatar_url,
     dateOfBirth: row.date_of_birth,
+    removedAt: row.removed_at,
   };
 }
 
