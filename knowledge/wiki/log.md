@@ -322,3 +322,39 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
   - All three Maestro flows re-verified with two consecutive fully clean, unattended runs each
     after every change in this pass.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-06T01:00:00Z — Phase 5 final consistency pass: report corrections, backend script committed, retry hardening
+
+- **Operation type:** correction + hardening + wiki update
+- **Source material ingested:** the "Final consistency pass" section appended to
+  [`knowledge/raw/sessions/2026-09-05-phase5-shared-family-tasks.md`](../raw/sessions/2026-09-05-phase5-shared-family-tasks.md).
+- **Wiki pages updated:** `engineering/testing-strategy.md` (corrected run-count claim to the
+  3x9 final verification numbers, reframed tap-delivery flakiness as significant rather than
+  rare, documented the retry-hardening pattern and the Reduce Motion investigation).
+- **Canonical docs updated:** `docs/DECISIONS.md` (reframed the hangs/silent-no-op entry's
+  severity, added the Reduce Motion investigation result, added a new "Retry hardening" entry
+  with the 3x9 final verification numbers).
+- **Decisions/contradictions recorded:**
+  - **Corrected two errors in the previous report, not silently**: the commit count was
+    reported as 17 while only 14 hashes were listed — `git rev-list --count` confirms 14, a
+    plain counting mistake. The base commit's description ("main's successor line") was
+    imprecise — `80aae74` is exactly `develop`'s tip (verified via `git rev-parse develop` and
+    `git merge-base`), and is confirmed NOT an ancestor of `main` at all.
+  - Committed `scripts/e2e-backend.sh` (`npm run e2e:backend`), replacing the ad hoc/uncommitted
+    script: credentials now read dynamically from `supabase status`, a hard localhost-only
+    safety gate, unique per-run identities, and a `trap`-based cleanup. Building the cleanup
+    surfaced and fixed a real FK-ordering bug: `task_assignments`' composite FK to
+    `family_members` isn't cascaded from `families`, so it must be cleared first or the cascade
+    delete 409s.
+  - Investigated Maestro/Simulator animation stabilization: Maestro has no built-in option
+    (confirmed via binary search of its jars); Reduce Motion is settable at the Simulator level
+    via `simctl` and is now enabled by `scripts/e2e-ios.sh`, honestly framed as unproven since
+    the flakiness was already isolated to touch delivery, not animation timing.
+  - Hardened every mutating/navigating tap across all three flows with a bounded,
+    state-verified conditional retry (proves non-success before ever retrying — never blind).
+    Final verification: 3 consecutive full runs of all three flows (9 completions) — all
+    passed, 0 retries actually triggered, 1 genuine hang requiring a full flow restart.
+    Reported as "passed this run," explicitly not claimed as newly deterministic.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

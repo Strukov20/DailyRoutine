@@ -90,9 +90,12 @@ supabase test db`), plus real curl-driven multi-user flows for both Family Space
   Simulator: `personal_task_smoke.yaml` (sign in → quick-add → schedule for today → complete
   → restore), `family_task_workflow.yaml` (User A creates an unassigned shared task → signs
   out → User B takes and completes it), `assignment_decline.yaml` (User A assigns to User B →
-  User B declines → User A sees it back unassigned after a fresh sign-in). Each achieved two
-  consecutive fully clean, unattended runs (every Maestro command `COMPLETED`, cross-checked
-  against real database state after each run — not just the terminal summary).
+  User B declines → User A sees it back unassigned after a fresh sign-in). Final verification:
+  3 consecutive full runs of all three flows from a fresh `db reset` + `e2e:seed` each time (9
+  flow completions, cross-checked against real database state after each run — not just the
+  terminal summary); every completion passed, every conditional retry evaluated `SKIPPED` (0
+  actually triggered), and 1 genuine hang occurred (required a full flow restart — see "Retry
+  hardening" below).
   `scripts/e2e-seed.sh` provisions the two Maestro fixture users in one shared family and
   writes their member ids to the gitignored `.maestro/.env.local` (both users' display names
   default to the same placeholder text, so the assignee picker can only be targeted reliably
@@ -108,11 +111,17 @@ e2e:seed` then `npm run e2e:ios`. Tab bar items get a real testID via
   `TaskEditorForm` stale-closure bug found and fixed) plus two flow-logic bugs found in the
   flows themselves (a blind recovery retry that could double-submit a task, a blind
   double-tap trigger that could self-assign one): [DECISIONS.md, "Phase
-  5"](../../../docs/DECISIONS.md). Known technical debt: genuine Maestro/XCUITest hangs and
-  silent no-op taps (`COMPLETED` reported, no effect) are a real rare tool-level failure mode
-  on this exact Simulator/Maestro combination, not fixable from flow
-  engineering — this is why each flow was verified with two clean runs rather than pursued
-  toward indefinite reliability.
+  5"](../../../docs/DECISIONS.md). **Known technical debt, treated as significant, not
+  rare**: genuine Maestro/XCUITest hangs and silent no-op taps (`COMPLETED` reported, no
+  effect — observed ~2-in-10 on ordinary elements during investigation) are a real tool-level
+  failure mode on this exact Simulator/Maestro combination, not fixable from flow engineering.
+  Every mutating or navigating tap now carries a bounded, state-verified conditional retry
+  (proves the original tap did NOT succeed before ever retrying — never a blind repeat of an
+  action that can create/mutate data); Reduce Motion is also enabled on the Simulator via
+  `scripts/e2e-ios.sh` (Maestro itself has no such built-in option — confirmed by searching its
+  bundled jars) as a genuine but unproven stabilization attempt, since the root cause was
+  isolated to touch delivery, not an animation race. A hang, unlike a silent no-op, cannot be
+  retried around within a flow at all.
 
 ## Conventions to follow in new tests
 

@@ -1038,24 +1038,70 @@ disambiguate "User B" from "User A" by visible text at all, only by member id. T
 names, and it's worth remembering for any future flow that needs to target a _specific_ member in a
 multi-member family.
 
-#### Known technical debt: genuine Maestro/XCUITest hangs and silent no-op taps, not fixable from flow engineering
+#### Known technical debt: genuine Maestro/XCUITest hangs and silent no-op taps — significant, not rare
 
 Independent of every issue above, individual Maestro commands (`pressKey: Enter` once, a
 menu-item `tapOn` once, a `tab-inbox` `tapOn` twice — see "Leftmost/rightmost tab bar items" above
 for the last one — on separate runs) were observed to either hang indefinitely with no further log
-output at all, or report `COMPLETED` while the tap silently failed to register — a real, rare,
-tool-level failure mode on this exact iOS 26.5 Simulator + Maestro 2.10.0 combination, not localized
-to one command and not something a client-side retry can wait out or detect from Maestro's own
-reported status (a hang is not a failure state Maestro can detect and retry from; a false-`COMPLETED`
-silent no-op is worse — the flow has to notice the _effect_ didn't happen, via a subsequent
-assertion, not the command's own result). A bounded/unbounded retry-loop wrapper around sign-in was
-attempted and itself got stuck in a real infinite-loop-like scenario; abandoned in favor of the
-simpler, previously-proven single-attempt sequence. This is the reason individual flow runs were
-verified via **two** consecutive clean runs each rather than pursued toward some larger number for
-statistical confidence — per the brief's own explicit allowance to document the exact gap rather than
-chase indefinite reliability. Practical rate observed this phase: near-100% at the two screen-edge
-tab positions (which is why they get the coordinate-tap fix above), roughly 2 failures in ~10
-attempts elsewhere, always clean on an immediate retry with no code change.
+output at all, or report `COMPLETED` while the tap silently failed to register — a real tool-level
+failure mode on this exact iOS 26.5 Simulator + Maestro 2.10.0 combination, not localized to one
+command and not something a client-side retry can wait out or detect from Maestro's own reported
+status (a hang is not a failure state Maestro can detect and retry from; a false-`COMPLETED` silent
+no-op is worse — the flow has to notice the _effect_ didn't happen, via a subsequent assertion, not
+the command's own result). Practical rate observed during initial investigation: near-100% at the two
+screen-edge tab positions (which is why they get the coordinate-tap fix above), roughly 2 failures in
+~10 attempts elsewhere. **This is treated as significant, ongoing flakiness, not a rare curiosity** —
+see "Retry hardening" below for the mitigation and the honest numbers from the final verification
+pass, which found 0 silent no-ops across 9 full flow completions but 1 genuine hang (a full-flow
+restart was needed; a hang cannot be retried around within a flow, since Maestro itself never returns
+control). A bounded/unbounded retry-loop wrapper around sign-in was attempted and itself got stuck in
+a real infinite-loop-like scenario; abandoned in favor of the simpler, previously-proven
+single-attempt sequence for the sign-in step itself.
+
+Investigated whether Maestro or the Simulator can stabilize this. **Maestro has no built-in option**
+for disabling animations or reducing motion — confirmed by searching every string in its bundled
+CLI/client/iOS-driver jars (`~/.maestro/lib/*.jar`) for `reducemotion`/`animationdrag`/
+`disableanimation`: zero matches. The iOS Simulator itself does support Reduce Motion
+(`xcrun simctl spawn <udid> defaults write com.apple.Accessibility ReduceMotionEnabled -bool YES`,
+confirmed to write and read back successfully) and `scripts/e2e-ios.sh` now sets it, best-effort,
+before every run. This is a genuine stabilization attempt, not a proven fix: the root cause here was
+independently isolated to touch/tap **delivery**, not an animation timing race (the boundary-tab
+investigation above found the exact same failure with `waitForAnimationToEnd` already in place), so
+Reduce Motion was not expected to eliminate it and the verification numbers below should be read with
+that caveat rather than credited to this setting.
+
+#### Retry hardening: bounded, state-verified, never blind about mutations
+
+Every coordinate-based tap (the two screen-edge tab bar items) and every tap on an element already
+shown to occasionally silent-no-op (ordinary tab bar navigation, Take, Decline, the assignee-option
+selection, completion toggles) now follows the same pattern in all three flows:
+
+1. Tap once.
+2. Check the expected resulting state with a short (5s) `optional` wait.
+3. Only if that check fails, verify — via `runFlow: { when: ... } }` — that the **original** state is
+   still present (proof the action genuinely did not happen, not just that the assertion hasn't
+   caught up yet), and only then retry the same tap once, with a full timeout on the final assertion.
+
+Navigation taps (tab bar) retry unconditionally on "destination not reached," since re-tapping a tab
+is always safe. **Mutating actions never do** — task creation, the assignee-option selection, Take,
+Decline, and both completion-toggle directions each gate their retry on direct proof the mutation did
+not go through (e.g., Take only retries while the Take button — meaning `unassigned` — is still
+present; a completion toggle only retries while the checkbox still reports the pre-tap text). This
+was already true for task creation and the assignee-picker trigger (see the two flow-logic bugs
+above); this pass extended the identical discipline to every other mutating tap so that no action in
+these flows can ever be blindly repeated. Nothing is retried more than once, and no failure is
+suppressed globally — a retry's own final assertion has a normal, non-optional timeout and fails the
+flow like any other if the retry doesn't land either.
+
+**Final verification**: 3 consecutive full runs of all three flows from a fresh `db reset` +
+`e2e:seed` each time (9 flow completions total). Every completion passed; every conditional retry
+block evaluated `SKIPPED` (0 retries actually triggered — every tap landed on its first attempt in
+this batch). One genuine hang occurred (`assignment_decline.yaml`, iteration 1, stuck mid-way through
+the second sign-in's password-retype loop) and required a full flow restart, which then completed
+cleanly. Simulator: iPhone 17 Pro, iOS 26.5. This confirms the hardening is real defense-in-depth and
+the flows remain usable, but Maestro on this Simulator/OS combination is **not deterministic** — a
+hang can still strand a run and no amount of in-flow retry logic can recover from it, since Maestro
+itself stops returning control. Treat "green" as "passed this run," not as a guarantee.
 
 #### Expo SDK patch-version drift: `expo`/`expo-router`/`expo-notifications` — resolved, not pinned
 

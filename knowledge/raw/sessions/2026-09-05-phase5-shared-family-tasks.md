@@ -353,3 +353,61 @@ elsewhere, never seen to survive a retry.
 All three flows re-verified with two consecutive fully clean, unattended runs each after every
 change in this pass (five additional full end-to-end runs total across the debugging and
 verification process, on top of the two each already recorded above).
+
+## Final consistency pass: commit count correction, backend script committed, retry hardening
+
+A follow-up request caught two real errors in the previous report and asked for further
+hardening. Both corrections are recorded here rather than silently fixed in place.
+
+### Report correction: 14 commits, not 17; base is `develop`'s tip, not "main's successor line"
+
+The previous report said "17 Phase 5 commits" while listing 14 hashes - the 17 was a plain
+counting error, not a discrepancy in the list itself. `git rev-list --count 80aae74..HEAD`
+gives 14. Separately, `80aae74` is not merely "on the way to main" - `git rev-parse develop`
+and `git merge-base feature/shared-family-tasks develop` both resolve to exactly `80aae74`,
+and it is confirmed NOT an ancestor of `main` at all (`git merge-base --is-ancestor 80aae74
+main` fails). It is `develop`'s tip at the exact moment this branch was cut, from the PR #3
+merge of `feature/personal-tasks`.
+
+### Backend integration script committed, sanitized and hardened
+
+The real 32-check multi-user backend integration script (previously ad hoc, uncommitted, with
+hardcoded local demo keys) is now `scripts/e2e-backend.sh` (`npm run e2e:backend`), tracked in
+the repo. Hardening applied: credentials read dynamically from `supabase status -o json`
+(never hardcoded, never echoed); a hard safety gate refuses to run against any API_URL that
+isn't 127.0.0.1/localhost; `set -euo pipefail`, no `set -x`; unique identities per run
+(timestamp + PID + `$RANDOM`); a `trap ... EXIT` cleanup that deletes every row and
+`auth.users` account it created, on any exit. Getting the trap-based cleanup right surfaced a
+real FK-ordering bug worth remembering: `task_assignments` has a composite FK to
+`family_members` (`assigned_to_member_id`, `family_id`) that is NOT cascaded, so a direct
+`DELETE` on `families` (relying on ITS cascade to `family_members`) hits that FK and fails with
+409 - `task_assignments` (which carries its own denormalized `family_id`) must be cleared
+first. Verified 32/32 on a fresh reset, verified again immediately after with no reset in
+between (repeatability), and verified cleanup actually leaves zero residue both times.
+
+### Maestro retry hardening
+
+Reframed the tap-delivery flakiness as significant, not rare, per explicit instruction. Checked
+whether Maestro or the Simulator can stabilize it: Maestro has no built-in Reduce-Motion/
+disable-animations option (confirmed by grepping every string in its bundled jars); the iOS
+Simulator itself does support `ReduceMotionEnabled` via `xcrun simctl spawn ... defaults
+write`, now enabled best-effort by `scripts/e2e-ios.sh` before every run - a genuine attempt,
+explicitly not claimed as a proven fix, since the root cause was already isolated to touch
+delivery rather than animation timing.
+
+Every mutating or navigating tap in all three flows now follows one pattern: tap once, check
+the expected state with a short optional wait, and only if that fails, verify via
+`runFlow: { when: ... }` that the ORIGINAL state is still present (proof the action genuinely
+did not happen) before retrying once, bounded, with a full-timeout final assertion. Navigation
+taps retry unconditionally on "destination not reached" (always safe); every mutation - task
+creation, the assignee-option selection, Take, Decline, and both completion-toggle directions -
+gates its retry on direct proof of non-success first.
+
+Final verification: 3 consecutive full runs of all three flows from a fresh `db reset` +
+`e2e:seed` each time (9 flow completions). Every completion passed; every conditional retry
+block evaluated `SKIPPED` (0 actually triggered in this batch - every tap landed first try).
+One genuine hang occurred (`assignment_decline.yaml`, iteration 1, stuck mid the second
+sign-in's password-retype loop) and required a full flow restart, which then completed
+cleanly - a hang cannot be recovered from within a flow at all, since Maestro stops returning
+control. Simulator: iPhone 17 Pro, iOS 26.5. Reported honestly as "passed this run," not as
+newly deterministic.
