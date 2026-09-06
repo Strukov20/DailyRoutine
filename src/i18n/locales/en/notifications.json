@@ -1,0 +1,19 @@
+{
+  "settings": {
+    "title": "Notifications",
+    "pushSection": "Push notifications",
+    "preferenceSection": "What you're notified about",
+    "assignmentPreferenceLabel": "Family task assignments",
+    "assignmentPreferenceDescription": "Someone assigns you a task, accepts or declines one you assigned, or takes an unassigned task.",
+    "statusRegistered": "Push notifications are on for this device.",
+    "statusNotRegistered": "Push notifications are off for this device.",
+    "statusDenied": "Notifications are blocked for FamilyFlow in system settings.",
+    "statusUnsupported": "This device can't receive push notifications (simulators and emulators don't support real delivery).",
+    "statusUnknown": "Checking notification status…",
+    "enableAction": "Enable push notifications",
+    "openSettingsAction": "Open system settings",
+    "errorMissingProjectId": "This build isn't linked to a push notification project yet.",
+    "errorRegistrationFailed": "Couldn't register this device for push notifications. Try again.",
+    "errorUnknown": "Something went wrong. Try again."
+  }
+}
