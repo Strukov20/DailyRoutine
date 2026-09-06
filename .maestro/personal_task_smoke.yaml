@@ -18,19 +18,18 @@ name: Personal task smoke
 #      right after typing was confirmed, repeatedly and reliably, to
 #      reintroduce the same injection (observed corrupting to
 #      "Maestro1234y", then "Maestro1234yy" across repeated attempts).
-#      pressKey: Enter avoids that corruption reliably but was, like
-#      several other individual commands later in this flow (a menu-item
-#      tapOn observed hanging on a separate run, for one), observed to
+#      pressKey: Enter avoids that corruption reliably but was, like a
+#      menu-item tapOn observed hanging on a separate run, observed to
 #      occasionally hang indefinitely with no further Maestro log output
 #      at all - a rare, real, tool-level failure mode on this exact iOS
 #      26.5 Simulator + Maestro 2.10.0 combination, not localized to any
 #      one command and not something a client-side retry can wait out (a
 #      hang is not a failure state Maestro can detect and retry from).
-#      Every individual step in this flow has been confirmed working via
-#      screenshot evidence in isolation; a single unattended clean run
-#      start-to-finish was not achieved in this session. Documented as
-#      known technical debt, not silently "solved" - see
-#      docs/DECISIONS.md, "Phase 5."
+#      Documented as known technical debt, not silently "solved" - this
+#      flow has since achieved multiple consecutive fully clean,
+#      unattended runs (see docs/DECISIONS.md, "Phase 5"), so the hang is
+#      rare enough not to block confidence in the flow, just not provably
+#      eliminated.
 #   2. Merged accessibility text: a Pressable wrapping multiple Text
 #      children (a task row, a checkbox with a label) gets its children's
 #      text merged by iOS into one VoiceOver-style accessibilityText,
@@ -38,12 +37,15 @@ name: Personal task smoke
 #      exactly what Maestro's plain text selectors check (confirmed via
 #      `maestro hierarchy`). Fixed by adding dedicated testIDs
 #      (task-row-<id>, task-actions-<id>, completion-checkbox-<id>,
-#      quick-add-input-<screen>) to every such element and matching on
-#      those instead of visible text. The tab bar turned out NOT to need
-#      this - `tabBarTestID` isn't respected by Expo Router's Tabs
-#      (confirmed via hierarchy dump: no resource-id appears anywhere),
-#      but plain text matching for tab labels ("Inbox", "Today") was
-#      reliable throughout, so those stayed as-is.
+#      quick-add-input-<screen>, tab-<name> on every tab bar item via
+#      `options.tabBarButtonTestID` in app/(app)/_layout.tsx - NOT
+#      `tabBarTestID`, which silently does nothing on this Expo Router/
+#      React Navigation version despite being the more commonly
+#      documented prop name) to every such element and matching on those
+#      instead of visible text. The leftmost tab ("Today") still can't be
+#      reliably *tapped* even with a real, hierarchy-confirmed testID -
+#      see the coordinate-tap workaround below and docs/DECISIONS.md,
+#      "Phase 5" for the full evidence.
 ---
 - launchApp:
     clearState: true
@@ -87,7 +89,8 @@ name: Personal task smoke
     timeout: 10000
 
 - waitForAnimationToEnd
-- tapOn: 'Inbox'
+- tapOn:
+    id: 'tab-inbox'
 - extendedWaitUntil:
     visible:
       id: 'quick-add-input-inbox'
@@ -122,15 +125,21 @@ name: Personal task smoke
       id: 'task-row-.*'
     timeout: 15000
 
-# A plain tapOn("Today")/assertVisible("Today") here was confirmed (via
-# `maestro hierarchy`, matching the "Profile" tab finding in
-# family_task_workflow.yaml) to fail deterministically: "Today" is the
-# leftmost tab, its bounds flush against the screen's own x=0 edge
-# (mirroring "Profile" as the rightmost tab, flush against the right
-# edge) - the same plausible visibility-bounds edge case for boundary-
-# touching tab bar items, not a timing race. Falling back to a coordinate
-# tap on the tab bar's own reported bounds sidesteps it - see
-# docs/DECISIONS.md, "Phase 5."
+# A plain tapOn("Today")/assertVisible("Today") here fails deterministically,
+# and so does tapOn: { id: "tab-today" } after adding a real testID via
+# options.tabBarButtonTestID - confirmed the id genuinely reaches the
+# native element (`maestro hierarchy` shows resource-id: "tab-today"),
+# then confirmed 3/3 that tapping it by that id still leaves the app on
+# whatever screen it started on (screenshot evidence: tab bar still shows
+# "Today" selected after tapping "Profile" the same way in
+# family_task_workflow.yaml). So this is not a selector-discovery problem
+# (semantic id and text both resolve the element) but the touch itself
+# not registering for this specific position - "Today" is the leftmost
+# tab, its bounds flush against the screen's own x=0 edge (mirroring
+# "Profile" as the rightmost tab, flush against the right edge) on this
+# iPhone 17 Pro / iOS 26.5 Simulator. A coordinate tap on the tab bar's
+# own reported bounds is the only thing that reliably works here - see
+# docs/DECISIONS.md, "Phase 5" for the full investigation and evidence.
 - waitForAnimationToEnd
 - tapOn:
     point: '10%, 93%'

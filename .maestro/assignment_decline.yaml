@@ -56,7 +56,8 @@ name: Assignment decline
 
 # --- User A creates an unassigned shared task ---
 - waitForAnimationToEnd
-- tapOn: 'Family'
+- tapOn:
+    id: 'tab-family'
 - extendedWaitUntil:
     visible: 'Tasks'
     timeout: 8000
@@ -159,13 +160,15 @@ name: Assignment decline
     timeout: 8000
 
 # --- User A signs out ---
-# Both assertVisible("Profile") and tapOn("Profile") were confirmed (via
-# `maestro hierarchy`) to fail deterministically even though the tab is
-# plainly on screen: accessibilityText-only, no resource-id, and its tap
-# target's right edge sits flush against the screen's own width (rightmost
-# tab) - a plausible visibility-bounds edge case, not a timing race (see
-# family_task_workflow.yaml's header). Falling back to a coordinate tap on
-# the tab bar's own reported bounds sidesteps it.
+# assertVisible("Profile") and tapOn("Profile") both fail deterministically
+# here, and so does tapOn: { id: "tab-profile" } - even with a real
+# testID reaching the native element (options.tabBarButtonTestID,
+# confirmed via `maestro hierarchy`). The tap itself never lands for this
+# specific element regardless of selector - see
+# family_task_workflow.yaml's header for the full investigation and
+# evidence (3 isolated id-based-tap runs, screenshot-confirmed each time)
+# and docs/DECISIONS.md, "Phase 5." Coordinate tap on the tab bar's own
+# reported bounds is the only thing that reliably works.
 - waitForAnimationToEnd
 - tapOn:
     point: '90%, 93%'
@@ -216,7 +219,8 @@ name: Assignment decline
 
 # --- User B sees the pending assignment and declines it ---
 - waitForAnimationToEnd
-- tapOn: 'Family'
+- tapOn:
+    id: 'tab-family'
 - extendedWaitUntil:
     visible: 'Tasks'
     timeout: 8000
@@ -285,7 +289,8 @@ name: Assignment decline
     visible: 'Today'
     timeout: 10000
 - waitForAnimationToEnd
-- tapOn: 'Family'
+- tapOn:
+    id: 'tab-family'
 - extendedWaitUntil:
     visible: 'Tasks'
     timeout: 8000

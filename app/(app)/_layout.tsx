@@ -52,14 +52,24 @@ export default function AppTabsLayout() {
         ),
       })}
     >
-      <Tabs.Screen name="today" options={{ title: t('today') }} />
-      <Tabs.Screen name="calendar" options={{ title: t('calendar') }} />
-      <Tabs.Screen name="inbox" options={{ title: t('inbox') }} />
+      <Tabs.Screen name="today" options={{ title: t('today'), tabBarButtonTestID: 'tab-today' }} />
+      <Tabs.Screen
+        name="calendar"
+        options={{ title: t('calendar'), tabBarButtonTestID: 'tab-calendar' }}
+      />
+      <Tabs.Screen name="inbox" options={{ title: t('inbox'), tabBarButtonTestID: 'tab-inbox' }} />
       <Tabs.Screen
         name="family"
-        options={{ title: t('family'), tabBarBadge: pendingCount > 0 ? pendingCount : undefined }}
+        options={{
+          title: t('family'),
+          tabBarBadge: pendingCount > 0 ? pendingCount : undefined,
+          tabBarButtonTestID: 'tab-family',
+        }}
       />
-      <Tabs.Screen name="profile" options={{ title: t('profile') }} />
+      <Tabs.Screen
+        name="profile"
+        options={{ title: t('profile'), tabBarButtonTestID: 'tab-profile' }}
+      />
     </Tabs>
   );
 }

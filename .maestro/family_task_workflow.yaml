@@ -52,7 +52,8 @@ name: Family task workflow
 
 # --- User A creates an unassigned shared task ---
 - waitForAnimationToEnd
-- tapOn: 'Family'
+- tapOn:
+    id: 'tab-family'
 - extendedWaitUntil:
     visible: 'Tasks'
     timeout: 8000
@@ -117,19 +118,22 @@ name: Family task workflow
     timeout: 15000
 
 # --- User A signs out ---
-# Both assertVisible("Profile") and tapOn("Profile") were confirmed (via
-# `maestro hierarchy`, three runs, including with an 8s extendedWaitUntil
-# first) to fail deterministically even though the tab is plainly on
-# screen and structurally identical to "Family"/"Today"/the segmented
-# "Tasks" control (all matched fine moments earlier in this same flow):
-# accessibilityText-only ("Profile, tab, 5 of 5"), no resource-id, sole
-# match anywhere in the tree. Not a timing race (extra waits didn't help)
-# and not the already-known tabBarTestID gap (no selector change helps a
-# text match that can't find the element at all). Falling back to a
-# coordinate tap on the tab bar's own reported bounds
-# ([321,791][402,840] of a 402x874 screen) sidesteps whatever is making
-# this specific element's text/accessibilityText unmatchable - documented
-# as unresolved technical debt in docs/DECISIONS.md, "Phase 5."
+# assertVisible("Profile") and tapOn("Profile") both fail deterministically
+# here, and so does tapOn: { id: "tab-profile" } - even after adding a
+# real testID via options.tabBarButtonTestID (app/(app)/_layout.tsx) and
+# confirming via `maestro hierarchy` that it genuinely reaches the native
+# element (resource-id: "tab-profile", not just accessibilityText). Ran
+# the id-based tap 3 times in isolation: Maestro reports each `tapOn`
+# COMPLETED, but the screenshot taken right after every single time still
+# shows the "Today" tab selected - the touch itself never lands, not a
+# selector-resolution problem. The one structural property "Profile"
+# (rightmost) and "Today" (leftmost) share, that no middle tab does: their
+# bounds sit flush against the screen's own edge
+# ([321,791][402,840] of a 402x874 screen, for "Profile"). Coordinate tap
+# on those same reported bounds is the only thing that reliably works -
+# see docs/DECISIONS.md, "Phase 5" for the full investigation, evidence,
+# and the exact simulator/OS configuration this assumes
+# (iPhone 17 Pro, iOS 26.5).
 - waitForAnimationToEnd
 - tapOn:
     point: '90%, 93%'
@@ -180,7 +184,8 @@ name: Family task workflow
 
 # --- User B takes and completes the task ---
 - waitForAnimationToEnd
-- tapOn: 'Family'
+- tapOn:
+    id: 'tab-family'
 - extendedWaitUntil:
     visible: 'Tasks'
     timeout: 8000
