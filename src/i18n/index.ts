@@ -7,6 +7,7 @@ import enCommon from './locales/en/common.json';
 import enErrors from './locales/en/errors.json';
 import enFamily from './locales/en/family.json';
 import enNavigation from './locales/en/navigation.json';
+import enNotifications from './locales/en/notifications.json';
 import enScreens from './locales/en/screens.json';
 import enTasks from './locales/en/tasks.json';
 import ukAuth from './locales/uk/auth.json';
@@ -14,6 +15,7 @@ import ukCommon from './locales/uk/common.json';
 import ukErrors from './locales/uk/errors.json';
 import ukFamily from './locales/uk/family.json';
 import ukNavigation from './locales/uk/navigation.json';
+import ukNotifications from './locales/uk/notifications.json';
 import ukScreens from './locales/uk/screens.json';
 import ukTasks from './locales/uk/tasks.json';
 
@@ -32,6 +34,7 @@ export const resources = {
     tasks: enTasks,
     errors: enErrors,
     family: enFamily,
+    notifications: enNotifications,
   },
   uk: {
     common: ukCommon,
@@ -41,6 +44,7 @@ export const resources = {
     tasks: ukTasks,
     errors: ukErrors,
     family: ukFamily,
+    notifications: ukNotifications,
   },
 } as const;
 

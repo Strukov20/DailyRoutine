@@ -29,6 +29,16 @@ interface UIState {
    */
   pendingInviteToken: string | null;
   setPendingInviteToken: (token: string | null) => void;
+
+  /**
+   * A route resolved from a push notification tapped while signed out —
+   * set by notificationResponseRouter.ts, consumed by app/_layout.tsx's
+   * redirect effect once auth completes, then cleared. Same lifetime and
+   * rationale as pendingInviteToken above (a deliberate, small, transient
+   * Zustand exception — not persisted across app restarts).
+   */
+  pendingNotificationRoute: string | null;
+  setPendingNotificationRoute: (route: string | null) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -40,4 +50,7 @@ export const useUIStore = create<UIState>((set) => ({
 
   pendingInviteToken: null,
   setPendingInviteToken: (token) => set({ pendingInviteToken: token }),
+
+  pendingNotificationRoute: null,
+  setPendingNotificationRoute: (route) => set({ pendingNotificationRoute: route }),
 }));

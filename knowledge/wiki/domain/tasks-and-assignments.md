@@ -1,7 +1,7 @@
 ---
 title: Tasks and assignments
 status: current
-updated: 2026-09-03
+updated: 2026-09-06
 sources:
   - ../../../docs/PRODUCT.md
   - ../../../docs/DATA_MODEL.md
@@ -9,6 +9,7 @@ sources:
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
   - ../../raw/sessions/2026-09-05-phase5-shared-family-tasks.md
+  - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
 tags: [domain, tasks, assignments]
 ---
 
@@ -114,6 +115,14 @@ history. Before soft-deleting, it atomically resolves any of the removed member'
 a task can never stay silently assigned to someone who no longer has family access. See
 [family-spaces](family-spaces.md) for the removal RPC itself.
 
+## Push notifications (Phase 6)
+
+Each of the four transitions that matters to a *different* member than the one who acted
+(assigned/reassigned, accepted, declined, took) now also enqueues a push notification,
+derived server-side from this same `task_assignments` insert via a second trigger — never
+from anything the client supplies, and never to the actor themself. Full design:
+[Push notifications](../engineering/push-notifications.md).
+
 ## See also
 
 - [Events and responsibilities](events-and-responsibilities.md) — a _different_ assignment
@@ -121,4 +130,6 @@ a task can never stay silently assigned to someone who no longer has family acce
   share a similar accept/decline shape but are separate tables
 - [Privacy and availability](privacy-and-availability.md) — the private-task/assignment
   constraint above
+- [Push notifications](../engineering/push-notifications.md) — what fires a notification and
+  who receives it
 - [Testing strategy](../engineering/testing-strategy.md) — pgTAP conventions used to test this

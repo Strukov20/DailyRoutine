@@ -36,10 +36,25 @@ Full product/architecture documentation lives in [`docs/`](docs/):
   custom creation). Recurring tasks and reminder scheduling remain MVP-scope but not yet
   built — see [docs/ROADMAP.md](docs/ROADMAP.md), "MVP-scope items not yet built." See
   [docs/DECISIONS.md](docs/DECISIONS.md), "Phase 4."
+- **Phase 5 (Shared Family Tasks)**: assign/reassign/take/accept/decline for family-visible
+  tasks, an auditable `task_assignments` history, and a Family task board UI — all RPC-only
+  writes, real multi-user backend integration (`scripts/e2e-backend.sh`), and Maestro E2E
+  coverage of the full assignment workflow. See [docs/DECISIONS.md](docs/DECISIONS.md), "Phase
+  5."
+- **Phase 6 (Push Notifications)**: push notifications for the four shared-task assignment
+  events (assigned/reassigned, accepted, declined, taken) via a durable transactional outbox
+  and a Supabase Edge Function dispatcher (Expo Push Service) — see
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), "Push notifications," and
+  [docs/SECURITY_AND_PRIVACY.md](docs/SECURITY_AND_PRIVACY.md), "Mechanism 4." Client-side
+  token registration, a Notification Settings screen, and tap-to-navigate routing are
+  implemented and tested against real local infrastructure; **no real device/EAS build has
+  sent or received an actual push this phase** — see [docs/DECISIONS.md](docs/DECISIONS.md),
+  "Phase 6," for the exact manual configuration steps still required.
 
-Still not implemented: shared task assignment UI, event/calendar CRUD UI, Family Today,
-recurring-task generation, reminder scheduling, Realtime sync, push notifications — see
-[docs/MVP_SCOPE.md](docs/MVP_SCOPE.md) for the exact boundary and
+Still not implemented: event/calendar CRUD UI, Family Today, recurring-task generation,
+reminder scheduling/delivery, Realtime sync, and notifications for anything beyond shared-task
+assignment — see [docs/MVP_SCOPE.md](docs/MVP_SCOPE.md) for the exact boundary,
+[docs/ROADMAP.md](docs/ROADMAP.md) for what's deliberately deferred, and
 [docs/DECISIONS.md](docs/DECISIONS.md) for why things were built the way they were.
 
 ## Getting started
@@ -71,6 +86,10 @@ placeholder), but sign-up/sign-in will fail — see `src/lib/supabase/client.ts`
 | `npm run db:reset`                         | Rebuild the local database from migrations + seed data       |
 | `npm run db:test`                          | Run the pgTAP suite in `supabase/tests/`                     |
 | `npm run db:types`                         | Regenerate `src/lib/supabase/types.ts` from the local schema |
+| `npm run e2e:seed`                         | Seed real accounts/data for Maestro E2E runs                 |
+| `npm run e2e:ios`                          | Run the Maestro E2E flows in `.maestro/` against the iOS Simulator |
+| `npm run e2e:backend`                      | Real multi-user backend integration — shared tasks (`scripts/e2e-backend.sh`) |
+| `npm run e2e:notifications`                | Real multi-user backend integration — notification outbox/dispatcher (`scripts/e2e-notifications.sh`) |
 
 ## Git workflow
 

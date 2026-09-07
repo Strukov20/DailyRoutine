@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, View } from 'react-native';
@@ -9,6 +10,7 @@ import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '@/i18n';
 import { AuthServiceError, signOut } from '@/lib/auth/authService';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { createLogger } from '@/lib/logger/logger';
+import { deactivateCurrentDeviceToken } from '@/lib/notifications/notificationService';
 import { useUIStore } from '@/store/uiStore';
 import { useAppTheme } from '@/theme';
 
@@ -32,6 +34,10 @@ export default function ProfileScreen() {
     setSignOutError(null);
     setIsSigningOut(true);
     try {
+      // Best-effort, never blocks sign-out (see that function's own
+      // comment) — deliberately awaited before signOut() so it still has
+      // a valid session to identify "this device's token" with.
+      await deactivateCurrentDeviceToken();
       await signOut();
       // No manual navigation needed — AuthProvider flips status to
       // 'signed-out' and the root Stack.Protected guard takes it from
@@ -79,6 +85,16 @@ export default function ProfileScreen() {
           { value: 'light', label: t('profile.appearanceLight') },
           { value: 'dark', label: t('profile.appearanceDark') },
         ]}
+      />
+
+      <Divider style={styles.divider} />
+
+      <List.Item
+        testID="profile-notification-settings"
+        title={t('notifications:settings.title')}
+        left={(props) => <List.Icon {...props} icon="bell-outline" />}
+        right={(props) => <List.Icon {...props} icon="chevron-right" />}
+        onPress={() => router.push('/notification-settings')}
       />
 
       <Divider style={styles.divider} />

@@ -1,4 +1,4 @@
-import { Stack, router } from 'expo-router';
+import { Stack, router, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -9,6 +9,7 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { initI18n } from '@/i18n';
 import { AuthProvider, useAuth } from '@/lib/auth/AuthProvider';
+import { useNotificationResponseRouter } from '@/lib/notifications/notificationResponseRouter';
 import { QueryProvider } from '@/lib/query/QueryProvider';
 import { useUIStore } from '@/store/uiStore';
 import { AppThemeProvider, useAppTheme } from '@/theme';
@@ -40,6 +41,14 @@ function RootNavigator() {
   const { status } = useAuth();
   const pendingInviteToken = useUIStore((state) => state.pendingInviteToken);
   const setPendingInviteToken = useUIStore((state) => state.setPendingInviteToken);
+  const pendingNotificationRoute = useUIStore((state) => state.pendingNotificationRoute);
+  const setPendingNotificationRoute = useUIStore((state) => state.setPendingNotificationRoute);
+
+  // Active for the app's whole lifetime (not just while signed in), so a
+  // cold-start/background tap while signed out still resolves to a
+  // pending route via the effect below, rather than being missed because
+  // no listener was mounted yet.
+  useNotificationResponseRouter(status === 'signed-in');
 
   // A signed-out visitor who opened an invitation deep link
   // (app/invite/[token].tsx) was sent to sign in/up with no way to carry
@@ -52,6 +61,18 @@ function RootNavigator() {
       router.replace(`/invite/${pendingInviteToken}`);
     }
   }, [status, pendingInviteToken, setPendingInviteToken]);
+
+  // Same pattern, for a push notification tapped while signed out (see
+  // src/lib/notifications/notificationResponseRouter.ts).
+  useEffect(() => {
+    if (status === 'signed-in' && pendingNotificationRoute) {
+      setPendingNotificationRoute(null);
+      // Resolved at runtime from a parsed push payload — see
+      // notificationResponseRouter.ts's own cast for why this can't be a
+      // statically-checked route literal.
+      router.push(pendingNotificationRoute as Href);
+    }
+  }, [status, pendingNotificationRoute, setPendingNotificationRoute]);
 
   if (status === 'loading') {
     // Nothing renders behind this while the session restores — prevents a
@@ -93,6 +114,7 @@ function RootNavigator() {
             options={{ presentation: 'modal', headerShown: true }}
           />
           <Stack.Screen name="family/member/[id]" options={{ headerShown: true }} />
+          <Stack.Screen name="notification-settings" options={{ headerShown: true }} />
         </Stack.Protected>
         <Stack.Screen name="index" />
         <Stack.Screen name="reset-password" />

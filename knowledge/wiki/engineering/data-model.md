@@ -1,7 +1,7 @@
 ---
 title: Data model
 status: current
-updated: 2026-09-03
+updated: 2026-09-06
 sources:
   - ../../../docs/DATA_MODEL.md
   - ../../../docs/DECISIONS.md
@@ -9,12 +9,13 @@ sources:
   - ../../raw/sessions/2026-09-02-phase2-docker-resolved.md
   - ../../raw/sessions/2026-09-03-phase3-family-space.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
+  - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
 tags: [engineering, data-model, supabase]
 ---
 
 ## Status: implemented
 
-`supabase/migrations/` (11 files) implements this schema against a local Supabase project
+`supabase/migrations/` (13 files) implements this schema against a local Supabase project
 only — no hosted/production project connected. See [`docs/DATA_MODEL.md`](../../../docs/DATA_MODEL.md)
 for the normative description; the migrations are the source of truth for exact syntax.
 
@@ -25,7 +26,9 @@ for the normative description; the migrations are the source of truth for exact 
 `task_assignments` (audit trail — see [tasks-and-assignments](../domain/tasks-and-assignments.md)),
 `reminders`, `recurrence_rules`, `events`, `event_participants`, `responsibilities` (see
 [events-and-responsibilities](../domain/events-and-responsibilities.md)),
-`notification_tokens`.
+`notification_tokens`, `notification_preferences` (Phase 6), plus a private `notifications`
+schema (`outbox`, `deliveries`) not reachable via the client API at all — see
+[Push notifications](push-notifications.md).
 
 **Availability/"Busy" is not a table** — it's the `family_schedule`/`family_task_board`
 views over `events`/`tasks`; see [security model](security-model.md) and
@@ -64,8 +67,11 @@ See [`docs/DATA_MODEL.md`, "Ownership and authorization
 summary"](../../../docs/DATA_MODEL.md#ownership-and-authorization-summary) for the full
 table. Key points not to get wrong:
 
-- `reminders` and `notification_tokens` are **owner-only, always** — never visible to other
-  family members, even for a shared task.
+- `reminders`, `notification_tokens`, and `notification_preferences` are **owner-only,
+  always** — never visible to other family members, even for a shared task.
+- `notifications.outbox`/`deliveries` (Phase 6) aren't owned by any *user* at all in the usual
+  sense — the whole schema is excluded from PostgREST's routing config, so no client role,
+  including `service_role`, can reach it. See [Push notifications](push-notifications.md).
 - `tasks`/`events` split personal (`family_id NULL`) vs. shared (`family_id` set); a shared
   item can still be `visibility = 'private'` (family-linked for scheduling/Busy purposes, but
   full content owner-only) — this is why the assignment constraint in

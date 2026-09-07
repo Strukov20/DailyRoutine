@@ -96,9 +96,11 @@ claimed via "Take task," scheduled (date+time or date-only), or parked in Inbox 
 
 When one adult assigns a task to another:
 
-- the recipient sees it in-app (a pending-assignment count on the Family tab this phase — see
-  SECURITY_AND_PRIVACY.md, "Not yet implemented," for push/response notifications, which are
-  a later phase, not this one);
+- the recipient sees it in-app (a pending-assignment count on the Family tab) **and**, since
+  Phase 6, as a push notification (assigned/reassigned, accepted, declined, and "took"/claimed
+  — see SECURITY_AND_PRIVACY.md, "Mechanism 4," and ARCHITECTURE.md, "Push notifications," for
+  the implemented design; a device only receives one if its owner opted in via the
+  Notification Settings screen — permission is never requested on app launch);
 - the assignment can require **Accept** or **Decline** — assignment is never assumed to be
   automatic acceptance (the one exception: assigning to yourself, or "Take task," accepts
   immediately — there is no one else to ask);

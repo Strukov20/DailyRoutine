@@ -9,6 +9,7 @@ sources:
   - ../../raw/sessions/2026-09-03-phase3-family-space.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
   - ../../raw/sessions/2026-09-05-phase5-shared-family-tasks.md
+  - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
 tags: [engineering, testing]
 ---
 
@@ -55,27 +56,44 @@ tags: [engineering, testing]
   optimistic-update architecture rule (see [system-architecture](system-architecture.md))
   requires before any hook is allowed to use one.
 - **RLS/privacy tests** — pgTAP via `supabase test db`, against a real local Postgres
-  instance with RLS enabled. `supabase/tests/*.sql` (10 files, 192 assertions through Phase 4
-  - 71 more added in Phase 5's `100_shared_family_tasks_test.sql` = 263 total), including a
-    dedicated secret-marker privacy-regression test (`060_privacy_regression_test.sql`), the
-    full family/invitation/child-profile RPC suite (`080_family_management_test.sql`), the
+  instance with RLS enabled. `supabase/tests/*.sql` (11 files, 293 assertions total: 192
+    through Phase 4, +71 in Phase 5's `100_shared_family_tasks_test.sql`, +30 in Phase 6's
+    `110_notification_outbox_test.sql`), including a dedicated secret-marker
+    privacy-regression test (`060_privacy_regression_test.sql`), the full
+    family/invitation/child-profile RPC suite (`080_family_management_test.sql`), the
     personal-task RPC suite (`090_personal_task_management_test.sql`, itself extending the
-    secret-marker sweep to the new RPC-only task write path), and the shared-task assignment
+    secret-marker sweep to the new RPC-only task write path), the shared-task assignment
     suite (`100_shared_family_tasks_test.sql`) — creation/outsider-rejection, the full
     assignment state machine, stale-acceptance-after-reassignment, Take Task concurrency proxy,
     completion permissions, member-removal resolution (both pending and accepted), and every new
-    RPC's anon/authenticated privilege check.
-    **Verified: all 192 assertions pass** against a real local instance (`supabase db reset &&
-supabase test db`), plus real curl-driven multi-user flows for both Family Space and personal
-    tasks (real `auth.users` accounts, not simulated `set local role`) — see
-    [`knowledge/raw/sessions/2026-09-03-phase3-family-space.md`](../../raw/sessions/2026-09-03-phase3-family-space.md)
+    RPC's anon/authenticated privilege check — and the notification outbox suite
+    (`110_notification_outbox_test.sql`, Phase 6) — every event type, self-notification/
+    removed-member/disabled-preference suppression, dedup via idempotency key, RPC-replay
+    safety, and complete `notifications`-schema inaccessibility (every table/function, both
+    `authenticated` and `anon`).
+    **Verified: all 293 assertions pass** against a real local instance (`supabase db reset &&
+supabase test db`), plus real curl-driven multi-user flows for Family Space, personal
+    tasks, shared tasks, and notifications (real `auth.users` accounts, not simulated `set
+    local role`) — see
+    [`knowledge/raw/sessions/2026-09-03-phase3-family-space.md`](../../raw/sessions/2026-09-03-phase3-family-space.md),
+    [`knowledge/raw/sessions/2026-09-03-phase4-personal-tasks.md`](../../raw/sessions/2026-09-03-phase4-personal-tasks.md),
     and
-    [`knowledge/raw/sessions/2026-09-03-phase4-personal-tasks.md`](../../raw/sessions/2026-09-03-phase4-personal-tasks.md).
+    [`knowledge/raw/sessions/2026-09-06-phase6-push-notifications.md`](../../raw/sessions/2026-09-06-phase6-push-notifications.md).
     Running the Phase 2 suite for real surfaced and fixed one migration-ordering bug and two
-    test-assertion bugs; the Phase 3 audit surfaced a real `anon`-EXECUTE-grant gap and the
-    Phase 4 audit surfaced a real `tasks`-direct-`UPDATE` gap (see
+    test-assertion bugs; the Phase 3 audit surfaced a real `anon`-EXECUTE-grant gap, the
+    Phase 4 audit surfaced a real `tasks`-direct-`UPDATE` gap, and the Phase 6 audit surfaced
+    the same anon-EXECUTE gap recurring on two new functions (see
     [security-model](security-model.md)) — none of these were caught by static review alone.
     CI's `database` job also runs them on every push/PR.
+- **Edge Function tests (Phase 6)** — Deno's own test runner (`deno test`), not Jest — the
+  `dispatch-notifications` Edge Function is a separate Deno module tree
+  (`supabase/functions/`), explicitly excluded from `tsconfig.json`/`eslint.config.js`/
+  `jest.config.js` so the Node tooling never tries to parse Deno-specific syntax (`npm:`
+  imports, a global `Deno`, `import.meta.main`). `dispatch-notifications/index.test.ts` runs
+  `dispatchNotifications()` against a *real* local Postgres connection (via `npm:postgres`)
+  with a fully fake, network-free `PushTransport` — 11 test steps, all passing, covering
+  claim/send/classify/receipt-check and the token-deactivation path. See [Push
+  notifications](push-notifications.md).
 - **Build/bundle smoke test** — `npx expo export --platform ios|android`, `npx expo config`,
   `npx expo-doctor`; catches what lint/typecheck can't (see the `expo-router` vs.
   `@react-navigation/native` case in [system-architecture](system-architecture.md)). Wired
@@ -168,6 +186,23 @@ e2e:seed` then `npm run e2e:ios`. Tab bar items get a real testID via
   to CI; a one-off manual `--forceExit` during ad hoc single-file debugging is fine. Full
   bisection and evidence: [DECISIONS.md, "Phase 5, known technical
   debt"](../../../docs/DECISIONS.md).
+
+- **`act(() => {...})` (sync) after an `await renderHook(...)` can corrupt React's act-scope
+  for the *next* test's `renderHook` in the same file (Phase 6)** — observed as a mock's call
+  history mysteriously empty on every test after the one that used a bare `act()`, even though
+  each test's own `renderHook` looked normal in isolation. Always `await act(async () => {
+  ... })`, even with nothing to `await` inside the callback; `unmount()` from RNTL 14's
+  `renderHook` result is also async and needs the same treatment. Root-caused via an isolated
+  two-test repro, not guessed. See `src/lib/notifications/notificationResponseRouter.test.ts`.
+- **Mocking a plain boolean/data export a test needs to mutate per-test needs a live getter,
+  not a plain data property (Phase 6)** — `jest.mock('expo-device', () => ({ isDevice: true
+  }))` plus `(Device as any).isDevice = false` in a test looks correct but doesn't work:
+  each file's own `import * as Device` gets its own ESM-interop-wrapped copy (Babel's
+  `_interopRequireWildcard` snapshots a plain data property's *value*), so the test's mutation
+  never reaches the copy the code under test reads. Fix: back it with a module-level `let` and
+  expose a getter (`get isDevice() { return mockIsDevice; }`) — a getter descriptor survives
+  the interop copy as a live accessor. Confirmed via an isolated repro comparing `import * as
+  X` against a direct `require()`. See `src/lib/notifications/notificationService.test.ts`.
 
 ## Running
 

@@ -1,12 +1,13 @@
 ---
 title: System architecture
 status: current
-updated: 2026-09-03
+updated: 2026-09-06
 sources:
   - ../../../docs/ARCHITECTURE.md
   - ../../../docs/DECISIONS.md
   - ../../raw/sessions/2026-09-03-phase3-family-space.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
+  - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
 tags: [engineering, architecture]
 ---
 
@@ -23,7 +24,9 @@ and [`docs/DECISIONS.md`](../../../docs/DECISIONS.md).
 
 **State boundary rule** (the thing most likely to erode if not checked): anything with a
 server owner is TanStack Query; Zustand (`src/store/uiStore.ts`) holds only
-`colorSchemeOverride`, `activeFamilyId`, and (Phase 3) `pendingInviteToken`; auth session
+`colorSchemeOverride`, `activeFamilyId`, (Phase 3) `pendingInviteToken`, and (Phase 6)
+`pendingNotificationRoute` — the same "preserve a signed-out deep-link target until sign-in
+completes" pattern as `pendingInviteToken`, not a new one; auth session
 state lives in its own `AuthProvider` context (`src/lib/auth/AuthProvider.tsx`) — it doesn't
 fit Query (its source of truth is the Supabase SDK's own session state, not a
 request/response cache) or Zustand (nearly every screen depends on it for routing, not
@@ -87,4 +90,7 @@ a later Supabase call. Also validates the OAuth config-gate flags — see
 - [Data model](data-model.md)
 - [Security model](security-model.md)
 - [Authentication](authentication.md)
+- [Push notifications](push-notifications.md) — a fourth reference implementation of the
+  screens → hooks → service layering, plus a second runtime (Deno Edge Functions) this app's
+  main tooling deliberately excludes
 - [Development workflow](development-workflow.md)

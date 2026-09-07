@@ -16,6 +16,7 @@
     "expo-asset": "~57.0.16",
     "expo-clipboard": "~57.0.1",
     "expo-constants": "~57.0.17",
+    "expo-device": "~57.0.1",
     "expo-font": "~57.0.3",
     "expo-linking": "~57.0.9",
     "expo-localization": "~57.0.1",
@@ -81,6 +82,7 @@
     "db:types": "supabase gen types typescript --local > src/lib/supabase/types.ts",
     "e2e:seed": "bash scripts/e2e-seed.sh",
     "e2e:ios": "bash scripts/e2e-ios.sh",
-    "e2e:backend": "bash scripts/e2e-backend.sh"
+    "e2e:backend": "bash scripts/e2e-backend.sh",
+    "e2e:notifications": "bash scripts/e2e-notifications.sh"
   }
 }

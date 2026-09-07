@@ -1,11 +1,12 @@
 ---
 title: Glossary
 status: current
-updated: 2026-09-03
+updated: 2026-09-06
 sources:
   - ../../../docs/PRODUCT.md
   - ../../../docs/DATA_MODEL.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
+  - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
 tags: [product, glossary]
 ---
 
@@ -37,7 +38,7 @@ Fast lookup for domain terms. Each links to the wiki page or doc with full detai
   built yet — Phase 4 is personal tasks only.
 - **Task** — only `title` is mandatory; see [personal-planning](../domain/personal-planning.md)
   (personal tasks) and [tasks-and-assignments](../domain/tasks-and-assignments.md) (the
-  family-facing assignment half, not yet built).
+  family-facing assignment half, implemented Phase 5).
 - **Event** — has a start/end time; never carries a responsibility as a text field. See
   [events-and-responsibilities](../domain/events-and-responsibilities.md).
 - **Responsibility** — a discrete, assignable duty tied to an event (e.g. drop-off, pickup),
@@ -56,3 +57,9 @@ Fast lookup for domain terms. Each links to the wiki page or doc with full detai
   `src/domain/tasks/priority.ts`.
 - **Category** — `Work | Family | Home | Shopping | Health | Other` by default,
   family-extensible.
+- **Notification outbox** — the durable table (`notifications.outbox`) a database trigger
+  writes to inside the same transaction as an assignment mutation; a separate dispatcher sends
+  from it later. See [Push notifications](../engineering/push-notifications.md).
+- **Dispatcher** — the Deno Edge Function (`dispatch-notifications`) that claims outbox rows
+  and sends them via Expo's Push Service. See
+  [Push notifications](../engineering/push-notifications.md).

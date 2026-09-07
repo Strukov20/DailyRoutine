@@ -15,6 +15,12 @@ module.exports = defineConfig([
     'android/*',
     'ios/*',
     'knowledge/*',
+    // Supabase Edge Functions run on Deno, a separate runtime with its own
+    // module resolution (npm:/https:// specifiers, a Deno global, no
+    // tsconfig.json) — linted/type-checked independently via `deno test`/
+    // `deno check`, not this project's Node-oriented ESLint/tsc setup. See
+    // docs/DECISIONS.md, "Phase 6."
+    'supabase/functions/**',
   ]),
   expoConfig,
   {

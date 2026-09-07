@@ -1,7 +1,7 @@
 ---
 title: Security model
 status: current
-updated: 2026-09-03
+updated: 2026-09-06
 sources:
   - ../../../docs/SECURITY_AND_PRIVACY.md
   - ../../../docs/DECISIONS.md
@@ -10,19 +10,20 @@ sources:
   - ../../raw/sessions/2026-09-03-phase3-family-space.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
   - ../../raw/sessions/2026-09-05-phase5-shared-family-tasks.md
+  - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
 tags: [engineering, security, rls, privacy]
 ---
 
-## Status: implemented and verified (Mechanisms 1, 2, 5) / not yet implemented (3, 4)
+## Status: implemented and verified (Mechanisms 1, 2, 4, 5) / not yet implemented (3)
 
-`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 192 assertions
-passing against a real local Postgres instance) proves it, particularly
-`060_privacy_regression_test.sql`, `080_family_management_test.sql`, and
-`090_personal_task_management_test.sql`. See
+`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 293 assertions
+across 11 files passing against a real local Postgres instance) proves it, particularly
+`060_privacy_regression_test.sql`, `080_family_management_test.sql`,
+`090_personal_task_management_test.sql`, and `110_notification_outbox_test.sql`. See
 [privacy-and-availability](../domain/privacy-and-availability.md) for the domain-facing
 version of this same content; this page is the engineering-facing index.
 
-**Three real gaps have been found and fixed while implementing this, not bugs shipped and
+**Four real gaps have been found and fixed while implementing this, not bugs shipped and
 later caught** — design corrections made during the same phase that built the feature:
 
 - Mechanism 2 (sanitized views, Phase 2):
@@ -45,6 +46,14 @@ CHECK` protected only `owner_profile_id`; a client could rewrite `family_id`,
   `INSERT`/`UPDATE`/`DELETE` on `tasks` entirely and moving every mutation to a
   `SECURITY DEFINER` RPC, continuing the Phase 3 RPC-only pattern. Full writeup:
   [DECISIONS.md, "Phase 4"](../../../docs/DECISIONS.md).
+- **The Phase 3 anon-EXECUTE gap recurred on two new functions (Phase 6)** — despite the
+  instruction to check `pg_proc.proacl` on every new `SECURITY DEFINER` function, the first
+  draft of this phase's migration still missed it on
+  `enqueue_task_assignment_notification` (the trigger function) and `backoff_interval` (an
+  internal helper). Caught the same way as every prior time — a direct `pg_proc`/
+  `has_function_privilege` query against a real local instance, not code review. This is
+  evidence the checklist item is genuinely load-bearing, not a one-time Phase 3 cleanup. Full
+  writeup: [DECISIONS.md, "Phase 6"](../../../docs/DECISIONS.md).
 
 ## The five mechanisms
 
@@ -65,10 +74,18 @@ CHECK` protected only `owner_profile_id`; a client could rewrite `family_id`,
    used by both the view and a future broadcast trigger) still stands as the requirement for
    whoever adds it.
 4. **Notifications** built server-side from the same authorized query path; never trust a
-   client-supplied payload for what goes to another user. **Not implemented** — no
-   notification-sending code exists yet; the constraint that makes it safe
-   (`tasks_assert_integrity` rejects a private task with a non-owner assignee) is already in
-   place and tested.
+   client-supplied payload for what goes to another user. **Implemented (Phase 6), scoped to
+   shared family task assignment events only.** The push payload carries ids only
+   (`schemaVersion`/`eventType`/`familyId`/`taskId` — see
+   [`src/domain/notifications/payload.ts`](../../../src/domain/notifications/payload.ts)),
+   never task/user content; the on-device title/body are static strings chosen by
+   `event_type`, not interpolated from row data. The recipient is derived entirely
+   server-side, inside the same transaction as the mutation, from `family_members`/
+   `task_assignments` state — never from anything the client supplies. See
+   [Push notifications](push-notifications.md) for the full design.
+   - **4a. The `notifications` outbox schema is excluded from PostgREST routing entirely** —
+     a schema-level control, not just RLS/grants, and the only mechanism in this document
+     that holds even against `service_role`. See [Push notifications](push-notifications.md).
 5. **Logs** — `src/lib/logger/logger.ts` / `ErrorBoundary.tsx` log ids and error text only,
    never content fields. **Implemented**, unchanged since Phase 1 (it's app code, not a
    migration).
