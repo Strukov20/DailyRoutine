@@ -132,6 +132,7 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string
+          deleted_at: string | null
           description: string | null
           ends_at: string
           family_id: string | null
@@ -148,6 +149,7 @@ export type Database = {
         Insert: {
           created_at?: string
           created_by: string
+          deleted_at?: string | null
           description?: string | null
           ends_at: string
           family_id?: string | null
@@ -164,6 +166,7 @@ export type Database = {
         Update: {
           created_at?: string
           created_by?: string
+          deleted_at?: string | null
           description?: string | null
           ends_at?: string
           family_id?: string | null
@@ -658,6 +661,65 @@ export type Database = {
           },
         ]
       }
+      responsibility_assignments: {
+        Row: {
+          action: string
+          assigned_by_member_id: string | null
+          assigned_to_member_id: string
+          created_at: string
+          family_id: string
+          id: string
+          responsibility_id: string
+        }
+        Insert: {
+          action: string
+          assigned_by_member_id?: string | null
+          assigned_to_member_id: string
+          created_at?: string
+          family_id: string
+          id?: string
+          responsibility_id: string
+        }
+        Update: {
+          action?: string
+          assigned_by_member_id?: string | null
+          assigned_to_member_id?: string
+          created_at?: string
+          family_id?: string
+          id?: string
+          responsibility_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "responsibility_assignments_by_same_family"
+            columns: ["assigned_by_member_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "family_members"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "responsibility_assignments_responsibility_id_fkey"
+            columns: ["responsibility_id"]
+            isOneToOne: false
+            referencedRelation: "family_responsibilities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "responsibility_assignments_responsibility_id_fkey"
+            columns: ["responsibility_id"]
+            isOneToOne: false
+            referencedRelation: "responsibilities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "responsibility_assignments_to_same_family"
+            columns: ["assigned_to_member_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "family_members"
+            referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
       task_assignments: {
         Row: {
           action: string
@@ -831,6 +893,44 @@ export type Database = {
       }
     }
     Views: {
+      family_responsibilities: {
+        Row: {
+          assignee_member_id: string | null
+          due_at: string | null
+          event_ends_at: string | null
+          event_id: string | null
+          event_starts_at: string | null
+          event_title: string | null
+          family_id: string | null
+          id: string | null
+          label: string | null
+          status: string | null
+          type: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "responsibilities_assignee_same_family"
+            columns: ["assignee_member_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "family_members"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "responsibilities_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "responsibilities_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "family_schedule"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       family_schedule: {
         Row: {
           description: string | null
@@ -839,6 +939,7 @@ export type Database = {
           id: string | null
           location: string | null
           owner_profile_id: string | null
+          participant_member_id: string | null
           starts_at: string | null
           title: string | null
           visibility: string | null
@@ -850,6 +951,7 @@ export type Database = {
           id?: string | null
           location?: never
           owner_profile_id?: string | null
+          participant_member_id?: never
           starts_at?: string | null
           title?: never
           visibility?: string | null
@@ -861,6 +963,7 @@ export type Database = {
           id?: string | null
           location?: never
           owner_profile_id?: string | null
+          participant_member_id?: never
           starts_at?: string | null
           title?: never
           visibility?: string | null
@@ -950,6 +1053,10 @@ export type Database = {
       }
     }
     Functions: {
+      accept_event_responsibility: {
+        Args: { p_responsibility_id: string }
+        Returns: undefined
+      }
       accept_family_invitation: {
         Args: { p_token: string }
         Returns: {
@@ -961,15 +1068,39 @@ export type Database = {
         Args: { p_task_id: string }
         Returns: undefined
       }
+      assign_event_responsibility: {
+        Args: { p_assignee_member_id: string; p_responsibility_id: string }
+        Returns: undefined
+      }
       assign_family_task: {
         Args: { p_assignee_member_id: string; p_task_id: string }
         Returns: undefined
       }
+      cancel_event: { Args: { p_event_id: string }; Returns: undefined }
       complete_personal_task: {
         Args: { p_task_id: string }
         Returns: undefined
       }
       complete_shared_task: { Args: { p_task_id: string }; Returns: undefined }
+      create_bare_responsibility: {
+        Args: { p_event_id: string; p_label: string; p_type: string }
+        Returns: string
+      }
+      create_child_event: {
+        Args: {
+          p_child_member_id: string
+          p_description?: string
+          p_drop_off_assignee_member_id?: string
+          p_ends_at: string
+          p_family_id: string
+          p_location?: string
+          p_pick_up_assignee_member_id?: string
+          p_starts_at: string
+          p_timezone: string
+          p_title: string
+        }
+        Returns: string
+      }
       create_child_profile: {
         Args: {
           p_avatar_url?: string
@@ -981,6 +1112,18 @@ export type Database = {
       }
       create_custom_category: {
         Args: { p_color_token: string; p_family_id: string; p_name: string }
+        Returns: string
+      }
+      create_family_event: {
+        Args: {
+          p_description?: string
+          p_ends_at: string
+          p_family_id: string
+          p_location?: string
+          p_starts_at: string
+          p_timezone: string
+          p_title: string
+        }
         Returns: string
       }
       create_family_invitation: {
@@ -1001,6 +1144,19 @@ export type Database = {
           family_id: string
           family_member_id: string
         }[]
+      }
+      create_personal_event: {
+        Args: {
+          p_description?: string
+          p_ends_at: string
+          p_family_id?: string
+          p_location?: string
+          p_starts_at: string
+          p_timezone: string
+          p_title: string
+          p_visibility?: string
+        }
+        Returns: string
       }
       create_personal_task: {
         Args: {
@@ -1035,6 +1191,10 @@ export type Database = {
       current_family_ids: { Args: never; Returns: string[] }
       current_member_id: { Args: { p_family_id: string }; Returns: string }
       current_profile_id: { Args: never; Returns: string }
+      decline_event_responsibility: {
+        Args: { p_responsibility_id: string }
+        Returns: undefined
+      }
       decline_family_invitation: {
         Args: { p_token: string }
         Returns: undefined
@@ -1057,6 +1217,15 @@ export type Database = {
           status: string
         }[]
       }
+      has_member_schedule_conflict: {
+        Args: {
+          p_ends_at: string
+          p_exclude_responsibility_id?: string
+          p_member_id: string
+          p_starts_at: string
+        }
+        Returns: boolean
+      }
       is_family_member: {
         Args: { p_family_id: string; p_profile_id?: string }
         Returns: boolean
@@ -1070,6 +1239,10 @@ export type Database = {
         Args: { p_profile_id: string }
         Returns: boolean
       }
+      reassign_event_responsibility: {
+        Args: { p_assignee_member_id: string; p_responsibility_id: string }
+        Returns: undefined
+      }
       reassign_family_task: {
         Args: { p_assignee_member_id: string; p_task_id: string }
         Returns: undefined
@@ -1077,6 +1250,10 @@ export type Database = {
       register_notification_token: {
         Args: { p_device_platform: string; p_expo_push_token: string }
         Returns: string
+      }
+      remove_event_responsibility: {
+        Args: { p_responsibility_id: string }
+        Returns: undefined
       }
       remove_family_member: {
         Args: { p_member_id: string }
@@ -1098,12 +1275,24 @@ export type Database = {
         }
         Returns: undefined
       }
+      set_responsibility_assignment: {
+        Args: {
+          p_action: string
+          p_assignee_member_id: string
+          p_responsibility_id: string
+        }
+        Returns: undefined
+      }
       set_task_assignment: {
         Args: {
           p_action: string
           p_assignee_member_id: string
           p_task_id: string
         }
+        Returns: undefined
+      }
+      take_event_responsibility: {
+        Args: { p_responsibility_id: string }
         Returns: undefined
       }
       take_family_task: { Args: { p_task_id: string }; Returns: undefined }
@@ -1115,6 +1304,21 @@ export type Database = {
           p_date_of_birth?: string
           p_display_name?: string
           p_member_id: string
+        }
+        Returns: undefined
+      }
+      update_event: {
+        Args: {
+          p_clear_description?: boolean
+          p_clear_location?: boolean
+          p_description?: string
+          p_ends_at?: string
+          p_event_id: string
+          p_location?: string
+          p_starts_at?: string
+          p_timezone?: string
+          p_title?: string
+          p_visibility?: string
         }
         Returns: undefined
       }
