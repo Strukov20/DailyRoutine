@@ -1,11 +1,12 @@
 ---
 title: Roadmap (V2/V3)
 status: current
-updated: 2026-09-06
+updated: 2026-09-07
 sources:
   - ../../../docs/ROADMAP.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
+  - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
 tags: [product, roadmap, v2, v3]
 ---
 
@@ -26,19 +27,28 @@ type are still unbuilt. Neither recurrence nor reminders is exposed in the task 
 purpose, so as not to imply either does something it doesn't. See `docs/ROADMAP.md`,
 "MVP-scope items not yet built," for the full proposal.
 
-**Push notification scope not covered by Phase 6**: recurring/completion/restoration
+**Push notification scope not covered by Phase 6/7**: recurring-task/completion/restoration
 notifications, reminder delivery, digests/quiet hours, AI-driven content, email/SMS, an in-app
-notification inbox, event/child-profile notifications, ownership-transfer notifications, and
-direct APNs/FCM — all deliberately deferred, not forgotten. See [Push
-notifications](../engineering/push-notifications.md) and `docs/ROADMAP.md` for the full list.
+notification inbox, general event-content-change or child-profile notifications,
+ownership-transfer notifications, and direct APNs/FCM — all deliberately deferred, not
+forgotten. See [Push notifications](../engineering/push-notifications.md), [Family
+calendar](../engineering/family-calendar.md), and `docs/ROADMAP.md` for the full list.
+
+**Calendar scope not covered by Phase 7**: Week/Month views, recurring events, scheduled
+reminders, Google/Apple Calendar sync, travel-time/maps, *automatic* conflict resolution
+(deterministic detection only — see [Family calendar](../engineering/family-calendar.md)), AI
+planning, drag-and-drop editing, attachments, event ownership transfer, a full offline write
+queue, and all-day/date-only events.
 
 **Also still open**: family ownership transfer / an owner leaving their own family has no RPC
 (`remove_family_member` unconditionally refuses to remove the `role = 'owner'` row) — see
 [Family Spaces](../domain/family-spaces.md).
 
 **V2 (not implemented, architecturally anticipated):** Google/Apple Calendar integration,
-Week/Month calendar views, conflict detection, subtasks, attachments, shared shopping lists,
-widgets, comments, advanced offline sync, statistics. Each has a specific anticipated schema
+Week/Month calendar views, subtasks, attachments, shared shopping lists,
+widgets, comments, advanced offline sync, statistics. **Conflict *detection* is implemented as
+of Phase 7** — see [Family calendar](../engineering/family-calendar.md); conflict
+*resolution* remains V2. Each remaining item has a specific anticipated schema
 seam noted in [`docs/ROADMAP.md`](../../../docs/ROADMAP.md) (e.g. subtasks →
 `tasks.parent_task_id`, not yet added).
 
@@ -76,3 +86,5 @@ shopping-list schema shape is explicitly "decide at design time, not now").
 ## See also
 
 - [MVP definition](mvp-definition.md)
+- [Family calendar](../engineering/family-calendar.md) — what Phase 7 built and what's still
+  deferred

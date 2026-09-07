@@ -61,10 +61,20 @@ Full product/architecture documentation lives in [`docs/`](docs/):
   project is linked to this repository, and no physical device has received a real push —
   both require the operator's own accounts and hardware, which an agent cannot supply. See
   [docs/DECISIONS.md](docs/DECISIONS.md), "Phase 6.1."
+- **Phase 7 (Family Calendar, Child Events, and Responsibilities)**: the MVP Day Calendar —
+  personal/family/child events, drop-off/pick-up responsibilities as records separate from
+  the event they attach to (never a text field on the event), the responsibility assignment
+  state machine (assign/reassign/take/accept/decline/remove), Busy-block privacy for private
+  family-linked events, and deterministic privacy-safe conflict detection (a warning only,
+  never a blocked save). Push notifications extended (not duplicated) to event-responsibility
+  events. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), "Family calendar," and
+  [docs/DECISIONS.md](docs/DECISIONS.md), "Phase 7." Week/Month views, recurring events, and
+  Maestro E2E coverage for this feature are explicitly deferred — see
+  [docs/ROADMAP.md](docs/ROADMAP.md).
 
-Still not implemented: event/calendar CRUD UI, Family Today, recurring-task generation,
-reminder scheduling/delivery, Realtime sync, and notifications for anything beyond shared-task
-assignment — see [docs/MVP_SCOPE.md](docs/MVP_SCOPE.md) for the exact boundary,
+Still not implemented: recurring-task generation, reminder scheduling/delivery, Realtime
+sync, notifications for anything beyond shared-task/responsibility assignment, and Week/Month
+calendar views — see [docs/MVP_SCOPE.md](docs/MVP_SCOPE.md) for the exact boundary,
 [docs/ROADMAP.md](docs/ROADMAP.md) for what's deliberately deferred, and
 [docs/DECISIONS.md](docs/DECISIONS.md) for why things were built the way they were.
 
@@ -101,6 +111,7 @@ placeholder), but sign-up/sign-in will fail — see `src/lib/supabase/client.ts`
 | `npm run e2e:ios`                          | Run the Maestro E2E flows in `.maestro/` against the iOS Simulator |
 | `npm run e2e:backend`                      | Real multi-user backend integration — shared tasks (`scripts/e2e-backend.sh`) |
 | `npm run e2e:notifications`                | Real multi-user backend integration — notification outbox/dispatcher (`scripts/e2e-notifications.sh`) |
+| `npm run e2e:calendar`                     | Real multi-user backend integration — events/responsibilities/conflict detection (`scripts/e2e-calendar.sh`) |
 
 ## Git workflow
 

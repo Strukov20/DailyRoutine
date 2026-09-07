@@ -1351,3 +1351,114 @@ and a fresh secret scan of both compiled bundles plus the public Expo config spe
 `NOTIFICATION_WORKER_SECRET` (the brief's own named secret for this phase, not previously
 scanned for by name) — clean throughout, confirming it is referenced only via `Deno.env.get`
 inside the Edge Function, never client-side.
+
+## Phase 7 (Family Calendar, Child Events, and Responsibilities)
+
+### Evolved the existing Phase 2 schema rather than replacing it
+
+Before writing any new RPC, audited `events`/`event_participants`/`responsibilities`
+(Phase 2) and confirmed the brief's own instruction — "do not create parallel replacement
+tables before proving the existing model cannot safely support the requirements" — did not
+apply: the three-table event/responsibility split, the composite-FK same-family checks, and
+`responsibilities.status`'s vocabulary (`unassigned | pending_acceptance | accepted |
+declined | done`, already matching `tasks.assignment_status`) were all sound and reused
+as-is. Only additions: `events.deleted_at` (soft cancel), a `responsibility_assignments`
+audit table, and the RPC-only conversion below. No renaming for its own sake — the brief's
+own prose used a shorter word ("pending") for the pending state, but the existing
+`pending_acceptance` vocabulary was kept for consistency with `tasks.assignment_status`
+rather than treated as a rename instruction.
+
+### Audit finding: `events`/`event_participants`/`responsibilities` had the same direct-grant gap Phase 4 found for `tasks`
+
+Found before any new RPC was written, same discipline as every prior phase's audit-then-fix
+workflow: these three tables (Phase 2) granted raw `INSERT`/`UPDATE`/`DELETE` to
+`authenticated`. `responsibilities_owner_manages` in particular let the event owner `UPDATE`
+a responsibility's `status`/`assignee_member_id` directly via a plain PATCH — bypassing the
+accept/decline/take state machine and its audit trail entirely, the exact shape of gap
+Phase 4 found and closed for `tasks`' own direct-`UPDATE` policy. Closed identically: the
+three grants revoked, the now-dead policies dropped, every mutation replaced by a narrowly
+scoped `SECURITY DEFINER` RPC. `SELECT` stays direct/RLS-governed throughout, matching the
+established convention.
+
+### `responsibility_assignments`: a second audit table, not a shared one
+
+Considered reusing `task_assignments` for responsibility history too (same shape: append-only,
+`assigned_to_member_id`/`assigned_by_member_id`/`action`). Rejected — the brief itself flagged
+this as a live question ("do not reuse task_assignments if that would mix task and event
+semantics"), and mixing them would make "every assignment this family member has ever had"
+ambiguous between two unrelated domain concepts (a task vs. an event responsibility) sharing
+one table, complicating every future query that needs to distinguish them. Built
+`responsibility_assignments` as a structural mirror instead — same trigger shape
+(`set_responsibility_assignment_family_id`, `apply_responsibility_assignment_action`), same
+self-assign-is-immediate-acceptance shortcut in `set_responsibility_assignment`, same
+`FOR UPDATE`-row-locking concurrency discipline in `take_event_responsibility`. Unlike
+`task_assignments`, `responsibility_id` cascades on delete — see the next entry for why that's
+safe here specifically.
+
+### `remove_event_responsibility`: hard delete, not a status, and why that's safe
+
+The brief lists "remove an optional responsibility" as a distinct operation from unassign —
+read as "the drop-off/pick-up requirement is no longer needed at all," not "no assignee."
+Implemented as an owner-only hard `DELETE` of the `responsibilities` row, permitted only when
+`status` is `unassigned` or `declined` (an active pending/accepted commitment can't be
+silently erased out from under its assignee — unassign first, the same "can't skip a state"
+shape `reassign_family_task` already uses for a completed task). `responsibility_assignments`
+rows cascade-delete with it — acceptable here (unlike `task_assignments`, which must survive a
+member's removal indefinitely) because once the responsibility itself is gone, there is
+nothing left for that history to be *about*; the requirement's prior existence isn't a fact
+the product needs to remember once the requirement is deliberately withdrawn.
+
+### `has_member_schedule_conflict`: one function, three sources, a boolean only
+
+Considered exposing conflict data as a view (row-per-conflict) instead of a boolean function.
+Rejected: a view would need to either leak *something* identifying the conflicting item (an id
+a client could then query further, defeating the privacy goal) or be so sanitized it couldn't
+even distinguish "conflict" from "no conflict" reliably from the client side without an
+additional round-trip. A single `SECURITY DEFINER` function checking all three conflict
+sources (the member's own events, a timed task assignment, another accepted responsibility)
+in one `EXISTS`/`UNION ALL` query and returning a bare `boolean` gives the client exactly the
+one bit it's allowed to have, with no shape to accidentally over-expose. Half-open interval
+semantics (`[starts_at, ends_at)`) throughout, matching the brief's own explicit requirement
+that a boundary touch (one item ending exactly when another begins) is not a conflict —
+verified both directions in `120_family_calendar_test.sql`.
+
+### Family Today is the Calendar screen, not a second screen
+
+The brief describes "Family Today" (a combined per-member daily schedule with warnings) and
+a "Calendar Day view" (date navigation, Personal/Family mode, member filters) with
+overlapping worked examples — both are, in the end, "a day's events and responsibilities,
+optionally filtered by member." Built as one screen (`app/(app)/calendar.tsx`) with a
+Personal/Family mode toggle; Family mode defaulted to today *is* Family Today, not a
+near-duplicate view maintained in parallel. Revisit this if a later phase's UX research shows
+they actually need to diverge (e.g., Family Today needing a fundamentally different layout),
+but nothing in this phase's brief demanded that split.
+
+### The MVP Day Calendar has no all-day/date-only event concept this phase
+
+`events.starts_at`/`ends_at` are `timestamptz`, both required — every event has a real start
+and end instant. The brief's Section 4 explicitly permits deferring all-day events "rather
+than implementing a partial ambiguous model," which this phase does: no all-day toggle, no
+date-only event path, in either the schema or `eventEditorSchema`. Revisit as its own design
+pass (a `starts_date`/`ends_date` pair, or a `is_all_day` flag with UTC-midnight-anchored
+instants) rather than bolting a partial version onto the current form.
+
+### A real, previously-undiscovered bug found while building `scripts/e2e-calendar.sh`: the backend-integration scripts' user cleanup never actually ran
+
+`admin_create_user` appended to `CREATED_USER_IDS` *inside* the function, but every call site
+across `scripts/e2e-backend.sh`, `scripts/e2e-notifications.sh`, and (initially)
+`scripts/e2e-calendar.sh` itself invoked it via command substitution
+(`OWNER_ID=$(admin_create_user ...)`), which runs the function body in a **subshell** — an
+array mutation there is discarded the instant the subshell exits, never reaching the parent
+shell's `CREATED_USER_IDS`, and therefore never reaching `cleanup()`'s own iteration over it.
+`scripts/e2e-backend.sh` turned out to be unaffected (it calls `admin_create_user` without
+capturing output at all, so the subshell issue never arises there — it resolves user ids a
+different way later). `scripts/e2e-notifications.sh` **was** affected — every run since
+Phase 6 silently leaked its three `auth.users` test accounts (confirmed: 12 accumulated
+`e2e-*` accounts found in the local database while investigating this). The earlier Phase 6
+"no residue" verification was correct about what it actually checked (family/outbox rows,
+which use a separate `FAMILY_ID` variable outside this array) but incomplete — it never
+checked whether the *users themselves* were cleaned up. Fixed in both scripts by appending at
+each call site instead of inside the function; manually purged the 12 leaked accounts; both
+scripts re-verified to leave zero matching `auth.users` rows after two consecutive runs.
+Recorded here rather than silently fixed, since it revises a specific claim
+["`scripts/e2e-notifications.sh`... zero residue"] made in Phase 6's own final report.

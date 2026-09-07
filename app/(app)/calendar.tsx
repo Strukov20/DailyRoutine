@@ -166,7 +166,7 @@ export default function CalendarScreen() {
                 title={event.title}
                 startsAt={event.startsAt}
                 endsAt={event.endsAt}
-                onPress={() => router.push(`/event/${event.id}`)}
+                onPress={() => router.push(`/event/${event.id}` as Href)}
               />
             ))
           : null}
@@ -179,7 +179,7 @@ export default function CalendarScreen() {
                 startsAt={item.startsAt}
                 endsAt={item.endsAt}
                 busy={item.title === null}
-                onPress={item.title === null ? undefined : () => router.push(`/event/${item.id}`)}
+                onPress={item.title === null ? undefined : () => router.push(`/event/${item.id}` as Href)}
               />
             ))
           : null}

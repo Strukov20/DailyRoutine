@@ -1,7 +1,7 @@
 ---
 title: Data model
 status: current
-updated: 2026-09-06
+updated: 2026-09-07
 sources:
   - ../../../docs/DATA_MODEL.md
   - ../../../docs/DECISIONS.md
@@ -10,12 +10,13 @@ sources:
   - ../../raw/sessions/2026-09-03-phase3-family-space.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
+  - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
 tags: [engineering, data-model, supabase]
 ---
 
 ## Status: implemented
 
-`supabase/migrations/` (13 files) implements this schema against a local Supabase project
+`supabase/migrations/` (14 files) implements this schema against a local Supabase project
 only — no hosted/production project connected. See [`docs/DATA_MODEL.md`](../../../docs/DATA_MODEL.md)
 for the normative description; the migrations are the source of truth for exact syntax.
 
@@ -24,7 +25,8 @@ for the normative description; the migrations are the source of truth for exact 
 `profiles`, `families`, `family_members` (unified adult+child — see
 [family-spaces](../domain/family-spaces.md)), `family_invitations`, `categories`, `tasks`,
 `task_assignments` (audit trail — see [tasks-and-assignments](../domain/tasks-and-assignments.md)),
-`reminders`, `recurrence_rules`, `events`, `event_participants`, `responsibilities` (see
+`reminders`, `recurrence_rules`, `events`, `event_participants`, `responsibilities`,
+`responsibility_assignments` (audit trail, Phase 7 — see
 [events-and-responsibilities](../domain/events-and-responsibilities.md)),
 `notification_tokens`, `notification_preferences` (Phase 6), plus a private `notifications`
 schema (`outbox`, `deliveries`) not reachable via the client API at all — see
@@ -35,8 +37,8 @@ views over `events`/`tasks`; see [security model](security-model.md) and
 [privacy-and-availability](../domain/privacy-and-availability.md).
 
 **Audit columns** (`created_at`, `updated_at` via trigger, `created_by`) apply to every table
-except `task_assignments`, which is append-only by design (its `created_at` is its audit
-story).
+except `task_assignments`/`responsibility_assignments`, which are append-only by design
+(their `created_at` is their audit story).
 
 ## Refinements made during implementation (beyond the original doc)
 
@@ -60,6 +62,16 @@ real gaps (`tasks_time_requires_date`: a start time can no longer exist without 
 `tasks`' `INSERT`/`UPDATE`/`DELETE` grants for `authenticated` were revoked entirely — see
 [security model](security-model.md). Full reasoning:
 [DECISIONS.md, "Phase 4"](../../../docs/DECISIONS.md).
+
+**Phase 7 additions**: `events.deleted_at` (soft cancel, same convention as `tasks.deleted_at`);
+`events`/`event_participants`/`responsibilities`' own `INSERT`/`UPDATE`/`DELETE` grants
+revoked (the same audit-then-fix workflow as the Phase 4 entry above); a trigger rejecting a
+responsibility on a private event; `has_member_schedule_conflict()`; two new sanitized views
+(`family_responsibilities`, and `family_schedule` evolved to exclude soft-deleted rows and
+expose `participant_member_id`); `notifications.outbox` gained nullable `event_id`/
+`responsibility_id` columns (see [Push notifications](push-notifications.md)). Full
+reasoning: [DECISIONS.md, "Phase 7"](../../../docs/DECISIONS.md) and
+[Family calendar](family-calendar.md).
 
 ## Ownership summary (who owns what, who can read it)
 
@@ -105,3 +117,4 @@ table. Key points not to get wrong:
 - [Security model](security-model.md) — the RLS design this schema is written against
 - [Testing strategy](testing-strategy.md) — why RLS needs its own test layer
 - [Authentication](authentication.md) — how `profiles` connects to `auth.users`
+- [Family calendar](family-calendar.md) — the Phase 7 schema additions in full

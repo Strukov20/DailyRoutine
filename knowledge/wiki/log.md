@@ -416,6 +416,74 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
 
 ---
 
+## 2026-09-07T12:00:00Z — Phase 7: Family Calendar, Child Events, and Responsibilities
+
+- **Operation type:** implementation + wiki update
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-07-phase7-family-calendar.md`](../raw/sessions/2026-09-07-phase7-family-calendar.md).
+- **Wiki pages created:** `engineering/family-calendar.md` (new — schema evolution, the
+  audit finding, the responsibility state machine, conflict detection, the two-view read
+  model, timezone handling, the Family-Today-is-the-Calendar-screen decision, and the
+  notification outbox extension).
+- **Wiki pages updated:** `wiki/index.md` (linked the new page), `domain/events-and-
+  responsibilities.md` (UI/RPC layer now implemented, was previously marked not built),
+  `domain/privacy-and-availability.md` (Mechanism 4 status corrected — implemented, not
+  pending; Phase 4's `tasks` gap entry paired with the new Phase 7 `events` one),
+  `engineering/security-model.md` (five real gaps now, not four; new Mechanism 4b; a new
+  "Calendar mutations are RPC-only too" section mirroring the Phase 5 shared-task one;
+  assertion count 293 → 381), `engineering/data-model.md` (migration count 13 → 14; new
+  entities; Phase 7 refinements section), `engineering/testing-strategy.md` (pgTAP count and
+  file list; a new bash-subshell-array convention; Maestro's Phase 6/7 non-coverage made
+  explicit), `engineering/system-architecture.md` (a fifth layering reference
+  implementation), `product/roadmap.md` (calendar scope not covered by Phase 7; conflict
+  *detection* moved from "V2 not implemented" to "implemented, resolution remains V2"),
+  `product/glossary.md` ("Family Today"/"Event"/"Responsibility" entries corrected from
+  not-built to implemented; two new terms — conflict detection, and "Take" extended to cover
+  responsibilities too).
+- **Canonical docs updated:** `docs/DATA_MODEL.md` (events.deleted_at,
+  responsibility_assignments, the two new sanitized views, has_member_schedule_conflict,
+  timezone handling), `docs/SECURITY_AND_PRIVACY.md` (Mechanism 4 extended to event-
+  responsibility events; new Mechanism 4b; the Phase 7 audit-finding bullet), `docs/
+  ARCHITECTURE.md` (new "Family calendar" section), `docs/DECISIONS.md` (new "Phase 7"
+  section: schema-evolution rationale, the audit finding, the second-audit-table decision,
+  the hard-delete-on-remove decision, the conflict-function design, the Family-Today
+  decision, the all-day-event deferral, and the cross-script subshell-array bug), `docs/
+  ROADMAP.md` (calendar non-goals; conflict detection moved to "implemented"), `docs/
+  TEST_STRATEGY.md` (new pgTAP/backend-script/Jest rows; Maestro non-coverage stated
+  explicitly, not left implicit), `docs/PRODUCT.md` (Calendar tab description corrected from
+  placeholder to implemented), `README.md` (Phase 7 added to "Current state"; new
+  `e2e:calendar` script).
+- **Decisions/contradictions recorded:**
+  - `docs/PRODUCT.md`'s MVP-navigation section and `knowledge/wiki`'s own "Family Today"/
+    "Event"/"Responsibility" glossary entries all described the Calendar tab and these
+    concepts as not-yet-built — all corrected to describe what's actually implemented rather
+    than deferred a second time, the same pattern as Phase 6's PRODUCT.md correction.
+  - A genuine, previously-undiscovered bug affecting two prior phases' own backend
+    integration scripts (`e2e-notifications.sh` since Phase 6; `e2e-backend.sh` checked but
+    found unaffected) — `admin_create_user`'s array append ran inside a subshell created by
+    command substitution at every call site, so `CREATED_USER_IDS` was always empty and
+    `cleanup()`'s user-deletion loop never actually iterated. `e2e-notifications.sh` had been
+    silently leaking its test `auth.users` accounts on every run since Phase 6; Phase 6's own
+    "no residue" verification was correct about what it checked (family/outbox rows) but
+    incomplete (never checked the users themselves). Found while building this phase's own
+    `e2e-calendar.sh`, fixed in both scripts, 12 leaked accounts purged, both re-verified
+    clean. Recorded as a correction to a specific claim in Phase 6's final report, not
+    silently patched.
+  - The same class of direct-grant security gap Phase 4 found for `tasks` recurred for
+    `events`/`event_participants`/`responsibilities` (Phase 2 schema, never revisited until
+    now) — the fourth recurrence of this general finding pattern across phases (Phase 3
+    anon-EXECUTE, Phase 5 anon-EXECUTE, Phase 6 anon-EXECUTE, now Phase 7 direct-grant),
+    reinforcing that every phase's own audit-before-building step is genuinely load-bearing.
+  - `responsibility_assignments` was initially designed with zero SELECT grant for
+    `authenticated` at all — caught as a real bug via the pgTAP test file's own audit-history
+    assertions failing with a permission error, not by design review. Corrected to grant
+    `select` (RLS-scoped), which is actually a tighter design than the precedent
+    (`task_assignments` still carries a Phase-2-era direct-INSERT policy this phase did not
+    touch or revisit, since it was out of this phase's scope).
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
 ## 2026-09-08T00:00:00Z — Phase 6.1: Deployment & Real Device Push Validation
 
 - **Operation type:** scoping decision + implementation (local-only) + documentation +
@@ -459,4 +527,9 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     prior phase's bundle audit (Phase 6's own scan checked for `SERVICE_ROLE`/OAuth secret
     patterns, not this one) — closed as a real, if narrow, gap in previously-claimed
     verification coverage.
+  - This log's own entry ordering for Phase 6.1 (dated 2026-09-08) follows the Phase 7 entry
+    (dated 2026-09-07) even though Phase 6.1 was the branch actually merged into `develop`
+    first — `feature/family-calendar` was rebased onto the post-Phase-6.1 `develop` tip after
+    the fact, and this entry order matches the entries' own dates rather than the order the
+    branches happened to land in.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).

@@ -137,36 +137,44 @@ Reminders (`reminders` table) are owner-only by construction (`profile_id`) — 
 a private task never has another recipient, so there is no cross-user leak path to design
 against.
 
-**Implemented in Phase 6, scoped to shared family task assignment events only** (never
-personal tasks, never events — see [ROADMAP.md](ROADMAP.md) for what's deferred). Shared
-family tasks are the only task shape that can reach `task_assignments` at all (see the
-constraint in Mechanism 1 — a private task can't have a non-owner assignee), so a recipient
-of an assignment notification already has read access to the full task via `family_task_board`
-by the time the notification arrives — the notification itself never needs to (and does not)
-carry task content.
+**Implemented in Phase 6** for shared family task assignment events, **extended in Phase 7**
+to event-responsibility assignment events (drop-off/pick-up/etc.) — never personal tasks,
+never generic event content notifications (see [ROADMAP.md](ROADMAP.md) for what's still
+deferred). Both surfaces share the same constraint that makes this safe: shared family tasks
+are the only task shape that reaches `task_assignments` at all, and a responsibility can only
+exist on a `visibility = 'family'` event (Phase 7's trigger — see
+[DATA_MODEL.md](DATA_MODEL.md)); either way, a recipient already has read access to the full
+task/event via `family_task_board`/`family_schedule` by the time the notification arrives —
+the notification itself never needs to (and does not) carry task/event content.
 
-**The push payload never contains task/user content — only ids.** See
-`src/domain/notifications/payload.ts`: `schemaVersion`, `eventType`, `familyId`, `taskId`.
-No title, no assignee name, no free text of any kind — the same "log ids, not content" rule
-as Mechanism 5, applied to a channel that leaves the database entirely (Apple/Google's push
-infrastructure, not FamilyFlow's own). The on-device notification's visible title/body are
-static, privacy-safe strings the dispatcher itself chooses from `event_type`
-(`supabase/functions/dispatch-notifications/index.ts`'s `NOTIFICATION_BODY_BY_EVENT`, e.g.
-"New family task assigned") — never interpolated from row content. Tapping the notification
-navigates to the real task editor route, which re-fetches through the authenticated Supabase
-client + RLS — the push payload is never trusted as task content or as authorization, only as
-a hint of where to navigate.
+**The push payload never contains task/event/user content — only ids.** See
+`src/domain/notifications/payload.ts`: a discriminated union of
+`{schemaVersion, eventType, familyId, taskId}` (task-assignment events) and
+`{schemaVersion, eventType, familyId, eventId}` (event-responsibility events, Phase 7) — never
+both, never neither. No title, no assignee name, no free text of any kind — the same "log ids,
+not content" rule as Mechanism 5, applied to a channel that leaves the database entirely
+(Apple/Google's push infrastructure, not FamilyFlow's own). The on-device notification's
+visible title/body are static, privacy-safe strings the dispatcher itself chooses from
+`event_type` (`supabase/functions/dispatch-notifications/index.ts`'s
+`NOTIFICATION_BODY_BY_EVENT`, e.g. "New family task assigned" / "New event responsibility
+assigned") — never interpolated from row content. Tapping the notification navigates to the
+real task editor route or event detail route (`src/lib/notifications/notificationResponseRouter.ts`
+picks the route from which field the parsed payload actually carries), which re-fetches
+through the authenticated Supabase client + RLS — the push payload is never trusted as
+content or as authorization, only as a hint of where to navigate.
 
 **The recipient list is derived entirely server-side, from database state, inside the same
-transaction as the mutation** (`notifications.enqueue_task_assignment_notification()`, an
-`AFTER INSERT` trigger on `task_assignments`) — never from a client-supplied recipient. This
-closes the same class of gap Mechanism 4 originally worried about in the abstract: a
-compromised or buggy client cannot get an arbitrary push sent to an arbitrary user, because
-the client never supplies a recipient at all, only the action it performed
-(assign/accept/decline/take), and the trigger computes who (if anyone) should be told from
-`family_members`/`task_assignments` state at insert time. The actor is never notified about
-their own action (no self-notification), and a member who has since left the family is never
-enqueued as a recipient (checked at enqueue time against current `family_members` state).
+transaction as the mutation** (`notifications.enqueue_task_assignment_notification()` on
+`task_assignments`; `notifications.enqueue_event_responsibility_notification()` on
+`responsibility_assignments`, Phase 7 — the same trigger shape, a second table) — never from
+a client-supplied recipient. This closes the same class of gap Mechanism 4 originally worried
+about in the abstract: a compromised or buggy client cannot get an arbitrary push sent to an
+arbitrary user, because the client never supplies a recipient at all, only the action it
+performed (assign/accept/decline/take), and the trigger computes who (if anyone) should be
+told from `family_members`/`task_assignments`/`responsibility_assignments` state at insert
+time. The actor is never notified about their own action (no self-notification), and a member
+who has since left the family is never enqueued as a recipient (checked at enqueue time
+against current `family_members` state).
 
 ### Mechanism 4a — the `notifications` schema is unreachable from the client API surface
 
@@ -193,6 +201,19 @@ separately confirms the schema is unreachable **at the API layer** by hitting
 recognize the path at all, since the schema was never registered) — a check the pgTAP suite
 cannot perform, since pgTAP runs inside Postgres, not through PostgREST.
 
+### Mechanism 4b — conflict detection returns a boolean, never what it conflicted with
+
+`has_member_schedule_conflict(p_member_id, p_starts_at, p_ends_at, p_exclude_responsibility_id)`
+(Phase 7) checks whether a member is busy against three private-content-bearing sources
+(their own events, a timed task assignment, another accepted responsibility) but returns
+**only `true`/`false`** — never the conflicting item's id, title, or any other field. The
+client renders a fixed, generic string ("{name} is busy at this time") regardless of which
+source triggered it. Verified both ways: `supabase/tests/120_family_calendar_test.sql`
+asserts the function's SQL return type is a bare boolean; `scripts/e2e-calendar.sh` asserts
+the raw HTTP response body from a real RPC call contains no secret-marker text and no
+recognizable field name (`title`/`description`) at all — the strongest test this mechanism
+allows, short of exhaustively enumerating every possible leak shape.
+
 ## Mechanism 5 — logs
 
 Application logs go through `src/lib/logger/logger.ts`, whose contract (documented in that
@@ -218,11 +239,13 @@ database logs) must follow the same rule once they exist: log row ids, not row c
 - ⬜ **Not yet implemented**: Realtime (Mechanism 3) — see that section above. Confirm the
   broadcast-trigger design is actually in place, as a PR checklist item, before enabling
   Realtime on `events`/`tasks` for the first time.
-- ✅ **Implemented in Phase 6**: shared family task assignment notifications (Mechanism 4) —
-  content-free push payloads (ids only), server-derived recipients inside the same
-  transaction as the mutation, and the `notifications` schema's own API-layer isolation
-  (Mechanism 4a). **Not yet implemented**: notifications for anything else (personal tasks,
-  events, completion/restoration) — see [ROADMAP.md](ROADMAP.md).
+- ✅ **Implemented in Phase 6, extended in Phase 7**: shared family task and event-
+  responsibility assignment notifications (Mechanism 4) — content-free push payloads (ids
+  only), server-derived recipients inside the same transaction as the mutation, the
+  `notifications` schema's own API-layer isolation (Mechanism 4a), and (Phase 7) a
+  privacy-safe deterministic conflict-detection function returning a boolean only
+  (Mechanism 4b). **Not yet implemented**: notifications for anything else (personal tasks,
+  completion/restoration) — see [ROADMAP.md](ROADMAP.md).
 - ⚠️ **Function EXECUTE grants are a separate mechanism from table grants — audited in Phase
   3, fixed where it mattered.** The "REVOKE ALL ... FROM anon, authenticated" bullet above is
   about _tables_ and remains accurate. _Functions_ are different: Supabase's own role bootstrap
@@ -246,6 +269,13 @@ database logs) must follow the same rule once they exist: log row ids, not row c
   [DECISIONS.md, "Phase 4"](DECISIONS.md) for the full writeup — the same audit-then-fix
   workflow as the entry above, applied to a different mechanism (grants, not RLS policies or
   function ACLs).
+- ⚠️ **`events`/`event_participants`/`responsibilities` had the same direct-grant gap as
+  `tasks`, closed in Phase 7.** These three tables (Phase 2) granted raw INSERT/UPDATE/DELETE
+  to `authenticated` from the start — in particular, `responsibilities`' owner-manages policy
+  let the event owner `UPDATE` a responsibility's `status`/`assignee_member_id` directly via a
+  plain PATCH, bypassing the accept/decline/take state machine and its audit trail entirely.
+  Closed the same way as the `tasks` finding: the three grants revoked, every mutation
+  replaced by a narrowly scoped RPC. See [DECISIONS.md, "Phase 7"](DECISIONS.md).
 
 ## Non-goals for MVP
 

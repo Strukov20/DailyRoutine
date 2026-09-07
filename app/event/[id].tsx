@@ -1,4 +1,4 @@
-import { Stack, router, useLocalSearchParams } from 'expo-router';
+import { Stack, router, useLocalSearchParams, type Href } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, View } from 'react-native';
 import { Button, Text } from 'react-native-paper';
@@ -112,7 +112,7 @@ export default function EventDetailScreen() {
       ) : null}
 
       {isOwner ? (
-        <Button mode="outlined" style={styles.editButton} onPress={() => router.push(`/event/${event.id}/edit`)}>
+        <Button mode="outlined" style={styles.editButton} onPress={() => router.push(`/event/${event.id}/edit` as Href)}>
           {t('common:actions.edit')}
         </Button>
       ) : null}
