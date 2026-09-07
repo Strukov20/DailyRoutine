@@ -10,19 +10,22 @@ const logger = createLogger('notification-response-router');
 
 /**
  * Resolves a tapped notification's data payload to an in-app route.
- * Reuses the existing task editor route (app/task/[id]/edit.tsx), which
- * already handles "no longer authorized/deleted task" as a friendly
- * ErrorState (useTask()'s query naturally returns no row once RLS or a
- * soft-delete excludes it — see that screen) — no new route was needed.
- * The push payload is never trusted as task content or as authorization;
- * this only ever produces a route to *navigate to*, which then refetches
- * for real through the authenticated Supabase client + RLS. A malformed
- * or unrecognized-version payload resolves to null, never throws.
+ * Reuses the existing task editor route (app/task/[id]/edit.tsx) for a
+ * task-assignment payload and the event detail route (app/event/[id].tsx,
+ * Phase 7) for an event-responsibility payload — both already handle "no
+ * longer authorized/deleted" as a friendly ErrorState (the underlying
+ * query naturally returns no row once RLS or a soft-delete excludes it),
+ * so no dedicated "notification landed on something gone" route was
+ * needed for either. The push payload is never trusted as content or as
+ * authorization; this only ever produces a route to *navigate to*, which
+ * then refetches for real through the authenticated Supabase client + RLS.
+ * A malformed or unrecognized-version payload resolves to null, never
+ * throws.
  */
 export function resolveNotificationRoute(data: unknown): string | null {
   const payload = parseNotificationPayload(data);
   if (!payload) return null;
-  return `/task/${payload.taskId}/edit`;
+  return 'taskId' in payload ? `/task/${payload.taskId}/edit` : `/event/${payload.eventId}`;
 }
 
 /**

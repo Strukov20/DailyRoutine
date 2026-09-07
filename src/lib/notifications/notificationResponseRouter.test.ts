@@ -35,9 +35,20 @@ const validData = {
   taskId: '22222222-2222-4222-8222-222222222222',
 };
 
+const validEventData = {
+  schemaVersion: 1,
+  eventType: 'event_responsibility.assignment_requested.v1',
+  familyId: '11111111-1111-4111-8111-111111111111',
+  eventId: '44444444-4444-4444-8444-444444444444',
+};
+
 describe('resolveNotificationRoute', () => {
-  it('resolves a valid payload to the task edit route', () => {
+  it('resolves a valid task-assignment payload to the task edit route', () => {
     expect(resolveNotificationRoute(validData)).toBe('/task/22222222-2222-4222-8222-222222222222/edit');
+  });
+
+  it('resolves a valid event-responsibility payload to the event detail route (Phase 7)', () => {
+    expect(resolveNotificationRoute(validEventData)).toBe('/event/44444444-4444-4444-8444-444444444444');
   });
 
   it('returns null for a malformed/unsupported payload', () => {
