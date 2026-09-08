@@ -669,3 +669,74 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     triggered). A real Android native build/run was not attempted this session — reported
     honestly as unverified rather than assumed equivalent to the iOS result.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-08T00:00:00Z — Phase 8 final validation pass: real notification evidence, UX audit, a real bug fix
+
+- **Operation type:** verification (native, on-device) + audit + implementation (bug fix,
+  dead-code removal) + regression tests + documentation + wiki update
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-08-phase8-final-validation.md`](../raw/sessions/2026-09-08-phase8-final-validation.md).
+- **Wiki pages updated:** `engineering/recurring-tasks-and-reminders.md` (status line changed
+  from "not yet verified" to "verified on-device"; the `<Menu>` section rewritten to describe
+  the `__DEV__`-diagnostic-screen workaround and the full real-device evidence obtained through
+  it; two new sections — the Tonight/Tomorrow ordering bug, and the occurrence-vs-series UX
+  audit outcome; test counts updated); `engineering/testing-strategy.md` (two new convention
+  bullets — dev-diagnostic screens as an accepted workaround for a UI-automation limitation, and
+  fixing system time for any test whose assertions depend on real wall-clock "now"; Jest counts
+  331/42 → 342/43).
+- **Canonical docs updated:** `docs/DECISIONS.md` (Phase 8's native-verification section
+  rewritten — the `<Menu>` blocker kept as diagnosed, but followed by the `dev-diagnostics.tsx`
+  workaround and seven concretely itemized, real, on-device-observed results — permission grant,
+  push-token independence, scheduled-key/fire-time proof, delivery observed twice, reschedule
+  cancel-and-reschedule, delete cancellation, past-reminder skip — with tap-to-navigate/Snooze/
+  Done reframed as a distinct, structural cross-process-UI limitation rather than grouped under
+  the `<Menu>` finding; new "Final validation pass" subsection covering the UX audit and the
+  Tonight/Tomorrow bug; "Verified, not just asserted" counts updated); `docs/ARCHITECTURE.md`
+  (the `<Menu>` note extended to mention the diagnostic-screen workaround);
+  `docs/TEST_STRATEGY.md` (two new convention bullets, mirroring the wiki);
+  `docs/MVP_SCOPE.md` (conflict detection corrected from "V2, out of scope" to "implemented in
+  Phase 7; resolution remains V2" — a real, pre-existing docs/code contradiction unrelated to
+  Phase 8, found while auditing scope boundaries).
+- **Decisions/contradictions recorded:**
+  - Rather than accept the already-documented `<Menu>` limitation as a hard stop on Section 19's
+    on-device verification requirement, added a `__DEV__`-only diagnostic screen
+    (`app/dev-diagnostics.tsx`) that calls the exact production functions the broken Menu items
+    would have, skipping only the broken UI trigger. This is recorded explicitly as a workaround
+    with a clear bar (real production code only, never a bypassed business rule, never reachable
+    in production or normal navigation) rather than a shortcut, per the task's own explicit
+    allowance for "a development-only diagnostic log or existing production scheduler
+    inspection."
+  - This let real on-device evidence be obtained for permission-grant, push-token independence,
+    scheduled-key/fire-time correctness, actual delivery (observed twice, via a lock-screen
+    screenshot and via the scheduled-count transition at fire time), reschedule
+    (cancel-and-reschedule under the same key), delete (cancellation), and past-reminder
+    skip-and-never-reschedule behavior — all against real database rows and the real production
+    reconciliation function, not simulated.
+  - Tap-to-navigate and the Snooze/Done notification actions remained unverified, diagnosed as a
+    distinct, structural limitation from the `<Menu>` one: Maestro's `appId`-scoped iOS
+    automation can reliably drive exactly one piece of cross-process system UI (the OS
+    permission alert, confirmed working) but not ordinary lock-screen/Notification-Center
+    content, tried three ways (text selector, point tap, a Notification Center swipe from two
+    different screens). Recorded as not observed, not worked around further, consistent with
+    the standing instruction never to claim an observation that didn't happen.
+  - A real product-level bug was found specifically because this session's own test run
+    happened to execute near midnight: `SNOOZE_TONIGHT` could resolve to a later timestamp than
+    `SNOOZE_TOMORROW` when tapped after the fixed 20:00 anchor had already passed for the day —
+    inverting the two options exactly when a user would reach for "Tonight" in the evening.
+    Fixed in production (a bounded `now + 1 hour` fallback instead of the same anchor 24h later)
+    and in the test (fixed system time via `jest.useFakeTimers().setSystemTime(...)`, split into
+    a normal-hours case and a dedicated late-night case covering the exact scenario that broke).
+  - Audited the "This occurrence / Entire series" UX brief section against the actual
+    implementation and found it already correct by construction — every occurrence action
+    (complete/restore/reschedule/skip) already targets the occurrence directly, every content
+    edit already routes to the series, and the existing `seriesNotice` HelperText already states
+    this — there was never an interactive scope-choice dialog to begin with, and therefore
+    nothing misleading being shown. The one real finding was two dead, zero-reference i18n keys
+    (`seriesActionThisOccurrence`/`seriesActionEntireSeries`) left over as unwired scaffolding,
+    removed from both locale files. Added `TaskEditorForm.test.tsx` (the component had no test
+    file at all before this) to lock in the correct behavior going forward, which incidentally
+    confirmed `react-native-paper`'s `<Dialog>` — unlike `<Menu>` — mounts and interacts
+    correctly under Jest, narrowing the existing Menu limitation to that component specifically.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

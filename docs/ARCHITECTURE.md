@@ -417,7 +417,14 @@ expo-router's `presentation: 'modal'`, though the same component is already docu
 unreliable under Jest/react-test-renderer since Phase 5. See
 [DECISIONS.md, "Phase 8"](DECISIONS.md) for the full diagnostic evidence (hierarchy dump,
 frame-by-frame video) and [TEST_STRATEGY.md](TEST_STRATEGY.md) for the resulting test-writing
-convention.
+convention. Worked around, not left blocking real device verification: `app/dev-diagnostics.tsx`
+(`__DEV__`-only, absent from any production build) calls the same production
+`requestNotificationPermission`/`reconcileReminders`/`expoLocalScheduler.listScheduled`
+functions the broken Menu items would have, letting permission-grant, scheduling, delivery,
+reschedule, and cancellation all be directly observed on a real device — see
+[DECISIONS.md, "Phase 8"](DECISIONS.md) for the full evidence. Tap-to-navigate and the Snooze/
+Done notification *actions* remain unverified on-device for a separate, structural reason
+(cross-process iOS system UI is outside Maestro's automation scope for an `appId`-scoped flow).
 
 ## Offline & caching (current state, not the V2 design)
 

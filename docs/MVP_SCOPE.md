@@ -31,9 +31,12 @@ description doesn't fit under one of these bullets, it belongs in [ROADMAP.md](R
 These are documented (architecturally supported where noted) but not built. See
 [ROADMAP.md](ROADMAP.md) for the full V2/V3 breakdown:
 
-- **V2**: Google/Apple Calendar integration, Week/Month calendar views, conflict detection,
-  subtasks, attachments, shared shopping lists, widgets, comments, advanced offline sync,
-  statistics.
+- **V2**: Google/Apple Calendar integration, Week/Month calendar views, subtasks, attachments,
+  shared shopping lists, widgets, comments, advanced offline sync, statistics. (Deterministic
+  schedule-conflict *detection* was implemented in Phase 7 — see
+  [ARCHITECTURE.md, "Family calendar"](ARCHITECTURE.md) and
+  [DECISIONS.md, "Phase 7"](DECISIONS.md); conflict *resolution* — automatically proposing or
+  applying a fix — remains V2.)
 - **V3**: natural-language task creation, "Plan My Day," AI scheduling, automatic
   rescheduling with confirmation, family conflict resolution, AI family planning.
 

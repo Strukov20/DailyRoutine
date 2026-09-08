@@ -9,10 +9,11 @@ sources:
   - ../../../docs/DECISIONS.md
   - ../../../docs/TEST_STRATEGY.md
   - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
+  - ../../raw/sessions/2026-09-08-phase8-final-validation.md
 tags: [engineering, recurrence, reminders, notifications, phase8]
 ---
 
-## Status: implemented (Phase 8), personal tasks only. Real on-device notification delivery not yet verified
+## Status: implemented (Phase 8) and verified on-device, personal tasks only
 
 Recurring personal tasks (Daily/Weekly/Monthly/Yearly/Custom) and local reminder scheduling —
 the two items `docs/ROADMAP.md` had long listed as MVP-scope but not yet built. Shared/family
@@ -106,7 +107,7 @@ any payload carrying `notificationType` — a real cross-router collision found 
 wiring the second router in, which would otherwise have double- or mis-handled every reminder
 tap.
 
-## A genuine `<Menu>` testability limitation, confirmed live this phase — not an app defect
+## A genuine `<Menu>` testability limitation — worked around with a `__DEV__`-only diagnostic screen
 
 Phase 5 already documented `react-native-paper`'s `<Menu>` as unreliable under
 `react-test-renderer`. Phase 8's live Maestro-driven simulator testing reproduced the identical
@@ -117,26 +118,69 @@ screen recording showed the button's pressed-state highlight firing correctly (t
 registered) with no menu content in any frame. A second, independent `<Menu>` on the same screen
 (the Category picker) showed the identical failure, narrowing the cause to "any `<Menu>` whose
 anchor lives on a screen presented via `presentation: 'modal'`" — a `Portal`/native-modal
-interaction, not a component-specific bug. Full evidence:
-[DECISIONS.md, "Phase 8"](../../../docs/DECISIONS.md).
+interaction, not a component-specific bug.
 
-**Consequence**: real on-device verification of local-notification delivery, tap-routing,
-Snooze, and Done could not be completed this session — build/launch/sign-in/data-flow *were*
-directly verified on a real iOS 26.5 Simulator (see the raw session file), but permission could
-not be granted through the app's own UI, so nothing was ever actually scheduled to observe. Not
-reported as observed, per this phase's own explicit instruction. See
-[testing-strategy](testing-strategy.md) for the resulting test-writing convention (test the pure
-logic behind a `<Menu>`, never the Menu interaction itself).
+**Worked around, not left blocked**: `app/dev-diagnostics.tsx` — a `__DEV__`-only screen
+(absent from any production build, reachable only via a direct deep link) that calls the exact
+production functions `ReminderEditorSection`'s Menu items would have called
+(`requestNotificationPermission`, `reconcileReminders`, `expoLocalScheduler.listScheduled`),
+skipping only the broken tap-to-open-Menu step. This let permission actually be granted (a real
+OS dialog, tapped via Maestro — the one cross-process interaction XCUITest specially supports)
+and real production scheduling/delivery/reschedule/cancellation to be directly observed on
+device. See [DECISIONS.md, "Phase 8"](../../../docs/DECISIONS.md) for the full evidence list
+(scheduled-key/fire-time proof, a lock-screen delivery screenshot, reschedule
+cancel-and-reschedule, delete cancellation, past-reminder skip behavior).
+
+**Still not verified, for a different, structural reason**: tap-to-navigate and the Snooze/Done
+notification *actions* specifically. These need interaction with iOS system UI rendered in a
+separate process (SpringBoard — lock screen, notification banner, Notification Center), which
+is outside Maestro's addressable automation scope for an `appId`-scoped iOS flow except for the
+one specially-supported permission-alert case (which did work — see above). Not reported as
+observed. Covered instead by `useReminderNotificationActions.test.tsx`'s fake-response suite
+(exercising the real handler function) and DB-level idempotency assertions.
+
+See [testing-strategy](testing-strategy.md) for the resulting test-writing conventions (test the
+pure logic behind a `<Menu>` directly, never the Menu interaction itself in Jest; a `__DEV__`
+diagnostic screen calling real production functions is an accepted verification method when a
+UI-automation limitation blocks the normal path).
+
+## A real bug this native verification found: Tonight could resolve later than Tomorrow
+
+`useReminderNotificationActions.ts`'s `SNOOZE_TONIGHT` handler rolled a fixed 20:00 anchor
+forward by 24h once it had passed for the day — so tapped after 20:00 local, "Tonight" resolved
+to *tomorrow* 20:00, later than "Tomorrow" (a fixed tomorrow-09:00 anchor), inverting the two
+options exactly when a user would reach for "Tonight" in the evening. Found because this
+session's own test run happened to execute near midnight, and the existing test read real
+wall-clock time with no fixed system clock. Fixed: the fallback is now `now + 1 hour` (always
+earlier than tomorrow 09:00) instead of the same hour 24h later; the test now fixes system time
+via `jest.useFakeTimers().setSystemTime(...)`, split into a midday case and a dedicated
+late-night case covering the exact scenario that broke.
+
+## The occurrence-vs-series UX: already correct, minus two dead i18n keys
+
+A follow-up audit confirmed the "This occurrence / Entire series" UX is correct by construction
+— there was never an interactive scope-choice dialog to begin with, because every action already
+implies its own scope: complete/restore/reschedule/skip always target the occurrence directly,
+editing content always routes to the series' own row (with the existing `seriesNotice`
+HelperText making that explicit), and the "Stop repeating" confirm dialog has exactly two
+actions (Cancel, Stop repeating). The one real finding: `seriesActionThisOccurrence`/
+`seriesActionEntireSeries` i18n keys existed in both locale files with zero references anywhere
+— dead scaffolding, removed. `TaskEditorForm.test.tsx` (new; the component had no test file
+before this) locks in the series-notice/no-misleading-option/two-action-dialog behavior, and
+incidentally confirms `<Dialog>` (unlike `<Menu>`) mounts and interacts correctly under Jest.
 
 ## Testing
 
 `supabase/tests/140_recurring_tasks_reminders_test.sql` (70 assertions, new) plus zero
 regressions in the 13 pre-existing pgTAP files (461/461 total). Jest: `reminderReconciliation.test.ts`
 (15 tests, the fake-scheduler suite against production reconciliation code),
-`useReminderNotificationActions.test.tsx` (14 tests), `RecurrencePicker.test.tsx` (8),
-`ReminderEditorSection.test.tsx` (7, Menu-free after the flaky-test fix above),
-`domain/recurrence/schemas.test.ts` (20). `scripts/e2e-recurrence.sh` (`npm run e2e:recurrence`,
-23 checks) confirmed repeatable twice consecutively with no DB reset and zero residue.
+`useReminderNotificationActions.test.tsx` (15 tests after the Tonight/Tomorrow fix),
+`RecurrencePicker.test.tsx` (8), `ReminderEditorSection.test.tsx` (7, Menu-free after the
+flaky-test fix), `TaskEditorForm.test.tsx` (6, new), `domain/recurrence/schemas.test.ts` (20),
+plus 4 new tests in `notificationService.test.ts` proving local-reminder permission is
+independent of push-token/EAS/`Device.isDevice`. `scripts/e2e-recurrence.sh`
+(`npm run e2e:recurrence`, 23 checks) confirmed repeatable twice consecutively with no DB reset
+and zero residue.
 
 ## See also
 

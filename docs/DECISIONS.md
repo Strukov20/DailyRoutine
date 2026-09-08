@@ -1723,11 +1723,9 @@ both the Notifications settings screen and a specific task's edit screen; the ex
 gate, Phase 6), with the expected on-screen message — confirming that gate still behaves
 correctly and is a genuinely different code path from local-reminder permission.
 
-**Not achieved, and not claimed as observed**: granting real local-notification permission
-through the app's own UI, and therefore scheduling/observing/tapping a real delivered local
-notification. The blocker is `ReminderEditorSection`'s and the Category picker's shared
-`react-native-paper` `<Menu>` component, which never visibly opens when driven by Maestro on
-this exact setup — confirmed, not assumed:
+**The `<Menu>` blocker (confirmed, not assumed) and how it was worked around.**
+`ReminderEditorSection`'s and the task editor's Category picker's shared `react-native-paper`
+`<Menu>` never visibly opens when driven by Maestro on this exact setup:
 
 - Six distinct tap strategies against the reminder Menu's anchor (`testID`, text-with-retry,
   exact point coordinates, after dismissing an unrelated overlay, after a full app relaunch,
@@ -1751,11 +1749,83 @@ react-test-renderer" to "unreliable under Maestro-driven live interaction when t
 on a natively-presented modal screen." It reads as a genuine interaction between
 `react-native-paper`'s `Portal`-based rendering and `react-native-screens`' native modal
 presentation, not an application defect — the anchor `Button`'s own `onPress` and pressed state
-work correctly; only the portaled menu content fails to mount. Per this phase's own instruction
-("do not describe the notification as observed unless it actually appeared"), Snooze/Done
-action verification, tap-routing verification, and cancellation-after-update verification are
-therefore **not reported as observed** — they remain covered only by the fake-scheduler Jest
-suite, not by a real on-device notification.
+work correctly; only the portaled menu content fails to mount.
+
+Rather than block the rest of Section 19's requirements on a UI-automation limitation, a small
+`__DEV__`-gated diagnostic screen (`app/dev-diagnostics.tsx`, registered in `app/_layout.tsx`
+only when `__DEV__` — absent from any production build) was added to call the *production*
+functions directly: `requestNotificationPermission()`/`getNotificationPermissionStatus()`
+(the exact functions `ReminderEditorSection.addPreset` calls — not reimplemented),
+`reconcileReminders()` (the exact production reconciliation algorithm, fed real data from
+`listAllPendingReminders`/`listAllScheduledOccurrences`, the same service functions the real
+app hooks call), and `expoLocalScheduler.listScheduled()` (the real scheduler's own read-back).
+The screen displays only ids/keys/fire-times — never a reminder's task title — reachable only
+via a direct deep link (`familyflow://dev-diagnostics`), with no entry point reachable through
+normal in-app navigation. This is explicitly a **diagnostic**, not a reimplementation or a
+production shortcut: every button on it calls the same production code path a real user
+action would, just without requiring the broken `<Menu>` tap first.
+
+**What this newly, genuinely verified on-device, this validation pass** (real device, real OS,
+real `expo-notifications` calls throughout):
+
+1. **Permission**: tapping "Request notification permission" triggered the real iOS system
+   dialog ("FamilyFlow Would Like to Send You Notifications"); tapping "Allow" (a real Maestro
+   tap on a genuine system alert — XCUITest's one specially-supported cross-process interaction,
+   unlike the Menu/lock-screen cases below) flipped `getNotificationPermissionStatus()` from
+   `undetermined` to `granted`, confirmed by reading the status back before and after.
+2. **Local scheduling requires no push token, no EAS project, no `Device.isDevice` gate** —
+   directly confirmed: the existing "Enable push notifications" button (Phase 6,
+   `registerForPushNotifications()`) correctly threw `unsupported` on this same simulator in the
+   same session, while `requestNotificationPermission()` and the reconciliation-driven schedule
+   below succeeded on the identical device with no code path in common.
+3. **The production `reconcileReminders()` scheduled a real native request** with the exact
+   expected deterministic key and fire time: for a task with `start_time` 23:02 local
+   (Europe/Kyiv) and an offset-0 reminder, `expoLocalScheduler.listScheduled()` returned exactly
+   one request with key `<profileId>:<taskId>:series:<reminderId>` and
+   `fireDate: 2026-09-08T20:02:00.000Z` (23:02 local) — computed independently by the real
+   reconciliation code from real database rows, matching by construction, not by assertion.
+4. **The notification was actually observed delivered** — a lock-screen screenshot, taken after
+   the fire time, shows a real system notification: `FamilyFlow — Task reminder — 1m ago`. The
+   generic body ("Task reminder," not the real task title "Native verification reminder 2")
+   directly confirms the `reminder_titles_enabled` default-off privacy behavior is correctly
+   enforced in a real delivered notification, not just in a Jest assertion. A second,
+   independent scheduling round for a different reminder showed the identical result, and in
+   both cases the request disappeared from `listScheduled()` immediately after its fire time —
+   the real OS clearing a fired one-shot trigger, additional independent confirmation of genuine
+   delivery.
+5. **Reschedule correctly cancels and re-schedules the same logical reminder.** Updating a
+   task's `start_time` via `schedule_personal_task` (the real RPC the app's own reschedule flow
+   calls) and re-running reconciliation produced `cancelled=1 scheduled=1`: the stale native
+   request was cancelled, a new one was scheduled under the **same** key with the **new** fire
+   time — proving the update path is wired correctly end-to-end, on a real device, not just in
+   the fake-scheduler suite.
+6. **Delete correctly cancels.** Calling `delete_task_reminder` (the real RPC) and re-running
+   reconciliation reduced `listScheduled()` to zero native requests for that key.
+7. **Past reminders are correctly, permanently skipped, never re-scheduled** — reconciling with
+   two already-fired reminder definitions still in the input set produced
+   `skipped: [...] (past)` for both, `scheduled` only for the one genuinely-future reminder —
+   the exact deterministic, idempotent behavior the architecture promises, observed against real
+   data on a real device, not asserted against fake data in Jest.
+
+**What remains unverified, and is not reported as observed: tap-to-navigate, and the Snooze/Done
+notification actions.** These require interacting with UI that iOS renders in a separate
+process (SpringBoard — the lock screen, a notification banner, Notification Center), not the
+target app's own view hierarchy. Distinctly from the `<Menu>` finding above (an in-app,
+same-process rendering failure), this is a structural limitation of Maestro's iOS automation:
+a flow scoped to `appId: com.familyflow.app` can drive genuine cross-process system UI in
+exactly one specially-supported case — the OS permission alert, which worked (see point 1
+above) — but plain taps against lock-screen/Notification-Center content, tried multiple ways
+(exact-text selector, point-coordinate tap, a swipe to open Notification Center from both the
+lock screen and the Home Screen), never registered as a real interaction with that content: text
+selectors reported "element not found" against system-rendered notification text, and
+point-coordinate taps completed with no observable effect. This is consistent with Maestro/
+XCUITest's iOS automation being scoped to the target app's own process for ordinary interaction,
+with the permission-alert case being a deliberate, narrow exception Apple/XCUITest supports —
+not a defect in this app's own notification-action wiring, which is covered instead by the real
+production code exercised at the reconciliation layer above, by
+`useReminderNotificationActions.test.tsx`'s fake-response-driven suite (Done/Snooze/tap
+handling against the real handler function), and by the DB-level idempotency assertions in
+`140_recurring_tasks_reminders_test.sql`.
 
 **Android**: `npx expo export --platform android` succeeds and `expo-doctor` passes with the
 Phase 8 changes in place; no Android exact-alarm permission was requested or added (Section 24
@@ -1763,18 +1833,67 @@ stop-condition, correctly never triggered — `expo-notifications`' default trig
 `SCHEDULE_EXACT_ALARM`). A real Android native build/run was not attempted this session — no
 emulator/device verification beyond the export/doctor checks above.
 
+### Final validation pass: occurrence-vs-series UX audit, and a real Tonight/Tomorrow ordering bug
+
+A follow-up validation pass audited the "This occurrence / Entire series" UX Section 7 requires
+and found the current implementation already correct in substance, but with one piece of dead,
+misleading scaffolding: `tasks:recurrence.seriesActionThisOccurrence`/`seriesActionEntireSeries`
+i18n keys existed in both locale files with zero references anywhere in the codebase — no
+component ever rendered them. There is, and was, no interactive "pick a scope" dialog at all:
+complete/restore/reschedule/skip always target the occurrence directly (`task.occurrenceId`),
+and editing content always routes to the series' own row (`task.seriesTaskId ?? task.id`,
+`today.tsx`/`tomorrow.tsx`) with the existing `seriesNotice` HelperText making that explicit —
+there is no ambiguity for a dialog to resolve, by construction, since each action already
+implies its own scope. The two dead keys were removed (both locale files) rather than left as
+scaffolding that could mislead a future reader into thinking such a dialog exists or should be
+built with per-occurrence content semantics. `TaskEditorForm.test.tsx` (new — the component had
+no test file at all before this) locks in: the series notice renders and "This occurrence"/
+"Entire series" never render anywhere in the editor; the Repeat picker never appears in edit
+mode; the Stop-repeating confirm dialog has exactly two actions (Cancel, Stop repeating — never
+a third "this occurrence" option) and calls `stop_recurring_series`, never
+`update_recurring_series`. Confirms, incidentally, that `react-native-paper`'s `<Dialog>` (used
+for this confirm) mounts and interacts correctly under Jest — the documented `<Menu>`
+limitation above is specific to `<Menu>`'s own Portal-rendering path, not `Portal`-based
+components in general.
+
+**A real bug found via the dev-diagnostics native verification above, not by inspection**:
+`useReminderNotificationActions.ts`'s `SNOOZE_TONIGHT` handler rolled a fixed 20:00 anchor
+forward by exactly 24h once it had passed for the day — meaning tapped after 20:00 local,
+"Tonight" resolved to *tomorrow* 20:00, which is *later* than "Tomorrow" (a fixed tomorrow
+09:00 anchor), inverting the two options' relative ordering exactly when a user would actually
+reach for "Tonight" (in the evening). Found because this session's own Jest run happened to
+execute near midnight local time, and the existing `SNOOZE_TONIGHT`/`SNOOZE_TOMORROW` test read
+real wall-clock time with no fixed system clock — a second, related gap (a genuinely
+non-deterministic test that had simply never been exercised late enough in the day to fail
+before). Fixed both: production code now falls back to `now + 1 hour` (always earlier than
+tomorrow's fixed 09:00 anchor) instead of the same hour 24h later when tonight's anchor has
+already passed; the test now fixes system time via `jest.useFakeTimers().setSystemTime(...)`
+for determinism, split into a midday case (the anchor hasn't passed) and a dedicated late-night
+case (the exact scenario that broke) so the fix has a permanent regression guard.
+
+Also corrected: `docs/MVP_SCOPE.md` listed conflict *detection* under "V2 — explicitly out of
+scope," despite Phase 7 having implemented `has_member_schedule_conflict()` two phases earlier
+— a real, pre-existing docs/code contradiction, unrelated to Phase 8's own work but noticed
+while auditing scope boundaries during this pass. Corrected to note detection is implemented,
+resolution remains V2.
+
 ### Verified, not just asserted
 
 Fresh `supabase db reset && supabase test db`: `Files=14, Tests=461`, all passing (the new
 `140_recurring_tasks_reminders_test.sql` plus zero regressions in the 13 pre-existing files).
-`npm run verify`: lint, typecheck, `331/331` Jest across 42 suites, `wiki:lint` clean.
-`deno test`: `11/11` steps, zero regressions. `e2e:backend` 32/32, `e2e:notifications` 24/24,
-`e2e:calendar` 28/28 — all still green, confirming the Phase 8 schema/RPC additions introduced
-no regression in earlier phases' backends. `e2e:recurrence` (new, 23 checks) run **twice
-consecutively without a DB reset in between**: 23/23 both times. Both `expo export` platforms
-succeed. `expo-doctor`: 21/21. A secret scan of both compiled bundles for
-`SERVICE_ROLE_KEY`/`NOTIFICATION_WORKER_SECRET`/`CLIENT_SECRET` found nothing. Real native
-build/launch/sign-in/data-flow verified on a physical-simulator iOS 26.5 device, as detailed
-above; real on-device local-notification delivery/tap/action verification could not be
-completed this session due to the `<Menu>` limitation above, and is not claimed.
+`npm run verify`: lint, typecheck, `342/342` Jest across 43 suites (up from 331/42 — the new
+`TaskEditorForm.test.tsx`, the local-permission-independence tests in
+`notificationService.test.ts`, and the Tonight/Tomorrow-ordering regression tests), `wiki:lint`
+clean, confirmed stable across 3 consecutive full runs. `deno test`: `11/11` steps, zero
+regressions. `e2e:backend` 32/32, `e2e:notifications` 24/24, `e2e:calendar` 28/28 — all still
+green, confirming the Phase 8 schema/RPC additions introduced no regression in earlier phases'
+backends. `e2e:recurrence` (23 checks) run **twice consecutively without a DB reset in
+between**: 23/23 both times. Both `expo export` platforms succeed, including with the new
+`__DEV__`-gated diagnostic screen present. `expo-doctor`: 21/21. A secret scan of both compiled
+bundles for `SERVICE_ROLE_KEY`/`NOTIFICATION_WORKER_SECRET`/`CLIENT_SECRET` found nothing. Real
+native build/launch/sign-in/data-flow/permission-grant/scheduling/delivery/reschedule/
+cancellation all directly verified on a physical-simulator iOS 26.5 device, as detailed above;
+tap-to-navigate and the Snooze/Done notification actions specifically could not be verified due
+to a structural, cross-process iOS UI-automation limitation (not an app defect) also detailed
+above, and are not claimed as observed.
 

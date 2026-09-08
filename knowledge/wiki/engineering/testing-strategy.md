@@ -14,6 +14,7 @@ sources:
   - ../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md
   - ../../raw/sessions/2026-09-08-phase7-followup-audit.md
   - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
+  - ../../raw/sessions/2026-09-08-phase8-final-validation.md
 tags: [engineering, testing, phase8]
 ---
 
@@ -51,10 +52,13 @@ tags: [engineering, testing, phase8]
     submission payloads tested, opened-menu content not). 264 Jest tests total across 37
     suites, up from 233.
   - **Phase 8** adds `RecurrencePicker.test.tsx` (8), `ReminderEditorSection.test.tsx` (7),
-    `useReminderNotificationActions.test.tsx` (14), `reminderReconciliation.test.ts` (15, a
-    fake-scheduler suite exercising the *production* `reconcileReminders()` function, never a
-    reimplementation), and `domain/recurrence/schemas.test.ts` (20). 331 Jest tests total
-    across 42 suites, up from 264. **The `<Menu>` limitation above is not Jest-only** — Phase 8
+    `useReminderNotificationActions.test.tsx` (15, after a final-validation-pass fix — see
+    below), `reminderReconciliation.test.ts` (15, a fake-scheduler suite exercising the
+    *production* `reconcileReminders()` function, never a reimplementation),
+    `domain/recurrence/schemas.test.ts` (20), and (final validation pass)
+    `TaskEditorForm.test.tsx` (6, new — the component had no test file before) plus 4 new tests
+    in `notificationService.test.ts`. 342 Jest tests total across 43 suites, up from 264, stable
+    across 3 consecutive full runs. **The `<Menu>` limitation above is not Jest-only** — Phase 8
     reproduced it live via Maestro on a real simulator too; see "Live-Maestro confirmation"
     below. `ReminderEditorSection.test.tsx`'s two original Menu-driven tests were also found
     genuinely flaky at full-suite scale (passed alone, intermittently failed among 42 suites) —
@@ -210,6 +214,26 @@ e2e:seed` then `npm run e2e:ios`. Tab bar items get a real testID via
     (the Category picker) failed identically, narrowing the cause to "any `<Menu>` whose anchor
     lives on a screen presented via `presentation: 'modal'`," not a component-specific bug.
     Full evidence: [DECISIONS.md, "Phase 8"](../../../docs/DECISIONS.md).
+  - **Worked around with a `__DEV__`-only diagnostic screen, not left blocked (Phase 8 final
+    validation pass)**: `app/dev-diagnostics.tsx` calls the exact production functions the
+    broken Menu items would have (`requestNotificationPermission`, `reconcileReminders`,
+    `expoLocalScheduler.listScheduled`), letting real permission-grant/scheduling/delivery/
+    reschedule/cancellation be directly observed on device despite the Menu never opening. Tap-
+    to-navigate and the Snooze/Done notification *actions* remained unverified for a distinct,
+    structural reason: they need cross-process iOS system UI (lock screen/Notification Center)
+    that Maestro can't drive for an `appId`-scoped flow, except the one specially-supported
+    permission-alert case (which did work). See [DECISIONS.md, "Phase
+    8"](../../../docs/DECISIONS.md) for the full evidence and
+    [recurring-tasks-and-reminders](recurring-tasks-and-reminders.md).
+  - **A real Tonight/Tomorrow snooze-ordering bug, found only because a test happened to run
+    near midnight (Phase 8 final validation pass)**: a test asserting `SNOOZE_TONIGHT` always
+    resolves sooner than `SNOOZE_TOMORROW` had never actually been exercised late enough in the
+    day to hit the bug — rolling a passed 20:00 anchor forward 24h landed *after* tomorrow's
+    fixed 09:00 anchor. Fixed in both the production fallback (`now + 1 hour` instead of the
+    same hour next day) and the test (`jest.useFakeTimers().setSystemTime(...)`, with a
+    dedicated late-night case). General lesson recorded in
+    [`docs/TEST_STRATEGY.md`](../../../docs/TEST_STRATEGY.md): a test reading real wall-clock
+    time with no fixed system clock is a real flakiness source, not just a theoretical one.
 
 ## Conventions to follow in new tests
 

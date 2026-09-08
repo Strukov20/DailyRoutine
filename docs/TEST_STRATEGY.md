@@ -161,6 +161,31 @@ AsyncStorage is null` even though every call is mocked. Listing the exports expl
   Menu-free unit for exactly this reason, after the Menu-driven version of that same test proved
   flaky under a full-suite run — passing in isolation, intermittently failing at suite scale).
 
+- **When a UI-automation limitation blocks a required on-device check, a `__DEV__`-only
+  diagnostic screen calling the real production functions is an accepted workaround — not a
+  shortcut (Phase 8's final validation pass).** The `<Menu>` limitation above blocked granting
+  notification permission and triggering reconciliation through the normal UI. Rather than
+  report that verification as impossible, `app/dev-diagnostics.tsx` (gated by `if (!__DEV__)
+  return null`, registered in `app/_layout.tsx` only when `__DEV__`, reachable only via a direct
+  deep link — absent from any production build and from normal in-app navigation) calls the
+  exact production functions a real user action would (`requestNotificationPermission`,
+  `reconcileReminders`, `expoLocalScheduler.listScheduled`) and displays only ids/keys/times,
+  never a task title. This let real on-device scheduling/delivery/reschedule/cancellation be
+  directly observed — see [DECISIONS.md, "Phase 8"](DECISIONS.md). The bar this has to clear:
+  every button must call real production code (never a reimplementation or a mock), never
+  bypass an actual business rule (only the broken *UI trigger* for an already-correct code
+  path), and never render anything a production build would ship or a real user could reach.
+- **A test reading real wall-clock time (`new Date()`/`Date.now()`) with no fixed system clock
+  is a real, if usually-invisible, source of flakiness — fix it with `jest.useFakeTimers().
+  setSystemTime(...)`, don't just re-run it (Phase 8's final validation pass).** A
+  `SNOOZE_TONIGHT`/`SNOOZE_TOMORROW` test that had passed throughout Phase 8 failed the first
+  time this suite happened to run near midnight — not test flakiness but a real production bug
+  the untested time-of-day exposed (see `useReminderNotificationActions.ts`'s Tonight/Tomorrow
+  fix, [DECISIONS.md, "Phase 8"](DECISIONS.md)). Any test whose assertions depend on the
+  relationship between "now" and a fixed clock time (a snooze anchor, a daily cutoff, etc.)
+  should fix system time explicitly and add a case for the specific edge the fix addresses, not
+  rely on incidentally passing at whatever time it happens to run.
+
 ## What "at least one test of each kind" means going forward
 
 Every new domain module should ship with a unit test in the same PR (not after). Every new
