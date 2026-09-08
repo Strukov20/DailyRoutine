@@ -1,12 +1,13 @@
 ---
 title: Events and responsibilities
 status: current
-updated: 2026-09-02
+updated: 2026-09-07
 sources:
   - ../../../docs/PRODUCT.md
   - ../../../docs/DATA_MODEL.md
   - ../../../docs/DECISIONS.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
+  - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
 tags: [domain, events, responsibilities, critical-rule]
 ---
 
@@ -53,12 +54,20 @@ responsibility rows completely untouched.** Full column list:
 [`docs/DATA_MODEL.md`, "events" / "event_participants" /
 "responsibilities"](../../../docs/DATA_MODEL.md#events).
 
-## Current implementation
+## Current implementation (Phase 7 — complete)
 
 **Schema, RLS, and integrity constraints exist** (cross-family responsibility assignment is
-blocked at the database level; a `custom`-type responsibility requires a label). **UI still
-doesn't** — no event/responsibility creation screens exist yet; this remains Phase 3+ work
-(see [roadmap](../product/roadmap.md)).
+blocked at the database level; a `custom`-type responsibility requires a label; a
+responsibility can only attach to a `visibility = 'family'` event — a private event cannot
+carry one, since its assignee needs read access to know about their duty). **The full
+create/edit/assignment UI and RPC layer is implemented (Phase 7)** — `create_personal_event`/
+`create_family_event`/`create_child_event`/`update_event`/`cancel_event`, and the
+responsibility assignment state machine (`assign`/`reassign`/`take`/`accept`/`decline`/
+`remove_event_responsibility`), all RPC-only (an audit finding closed the same class of gap
+Phase 4 found for `tasks` — see [DECISIONS.md, "Phase 7"](../../../docs/DECISIONS.md)).
+Assignment history is a dedicated `responsibility_assignments` append-only table, mirroring
+`task_assignments` rather than reusing it. Full write-up: [Family
+calendar](../engineering/family-calendar.md).
 
 ## See also
 
@@ -68,3 +77,5 @@ doesn't** — no event/responsibility creation screens exist yet; this remains P
   a Busy block via this same `events` table
 - [Data model](../engineering/data-model.md) — the denormalized `family_id` refinement that
   enables the composite-FK same-family checks on `event_participants`/`responsibilities`
+- [Family calendar](../engineering/family-calendar.md) — the full Phase 7 implementation:
+  RPCs, the responsibility state machine, conflict detection, and the Calendar UI

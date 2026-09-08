@@ -236,26 +236,33 @@ implementation detail for the MVP build phase, not fixed here.
 ## events
 
 **Owned by a user** (personal) **or a family** (shared) — same personal/family split as
-`tasks`. An event is never a responsibility carrier — see "Responsibilities" below.
+`tasks`. An event is never a responsibility carrier — see "Responsibilities" below. Writes
+are **RPC-only** (Phase 7 — see "Implemented in Phase 7" below); `SELECT` remains direct/
+RLS-governed.
 
-| column               | type                                   | notes                   |
-| -------------------- | -------------------------------------- | ----------------------- |
-| `id`                 | uuid                                   |                         |
-| `owner_profile_id`   | uuid → `profiles.id`                   |                         |
-| `family_id`          | uuid → `families.id`, nullable         | null = personal event   |
-| `title`              | text                                   | required                |
-| `description`        | text                                   | nullable                |
-| `location`           | text                                   | nullable                |
-| `starts_at`          | timestamptz                            | required                |
-| `ends_at`            | timestamptz                            | required                |
-| `visibility`         | text                                   | `'private' \| 'family'` |
-| `recurrence_rule_id` | uuid → `recurrence_rules.id`, nullable |                         |
+| column               | type                                   | notes                                                                                                                      |
+| --------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `id`                  | uuid                                    |                                                                                                                             |
+| `owner_profile_id`    | uuid → `profiles.id`                    |                                                                                                                             |
+| `family_id`           | uuid → `families.id`, nullable          | null = personal event                                                                                                       |
+| `title`               | text                                    | required                                                                                                                     |
+| `description`         | text                                    | nullable                                                                                                                     |
+| `location`            | text                                    | nullable                                                                                                                     |
+| `starts_at`           | timestamptz                             | required — an unambiguous instant (UTC internally); see "Timezone handling" below                                            |
+| `ends_at`             | timestamptz                             | required; `ends_at > starts_at` enforced at both the RPC and `CHECK`-constraint level                                        |
+| `timezone`            | text                                    | required — IANA zone captured at creation/edit time, for correct local rendering and day-boundary queries                    |
+| `visibility`          | text                                    | `'private' \| 'family'` — an event with any `responsibilities` row cannot be `'private'` (Phase 7 trigger; see below)         |
+| `recurrence_rule_id`  | uuid → `recurrence_rules.id`, nullable  |                                                                                                                             |
+| `deleted_at`          | timestamptz                             | nullable (Phase 7) — soft cancel via `cancel_event()`, idempotent, no restore this phase (same convention as `tasks.deleted_at`) |
 
 ## event_participants
 
 Who/what the event is _about_ — e.g., "this swimming event is for Son." This is distinct
 from responsibility (who has to act). **Owned by the family** the event belongs to (or
-implicitly personal if the event has no `family_id`).
+implicitly personal if the event has no `family_id`). Writes are RPC-only (Phase 7) — the
+MVP `create_child_event` RPC creates exactly one participant row per event (one primary
+subject), but the table itself is a proper many-to-many join and does not prevent a future
+phase from attaching more.
 
 | column             | type                       | notes                                           |
 | ------------------ | -------------------------- | ----------------------------------------------- |
@@ -267,7 +274,10 @@ implicitly personal if the event has no `family_id`).
 
 **This is the table that encodes the "event ≠ responsibility" rule from
 [PRODUCT.md](PRODUCT.md).** A responsibility is a discrete, assignable duty tied to an event,
-never a text field on the event itself.
+never a text field on the event itself. Writes are RPC-only (Phase 7); a responsibility can
+only be attached to a `visibility = 'family'` event (trigger-enforced — its assignee needs
+read access to the event to know about their own duty, the same reasoning as `tasks`'
+private+non-owner-assignee constraint).
 
 | column               | type                                 | notes                                                                                     |
 | -------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------- |
@@ -276,11 +286,74 @@ never a text field on the event itself.
 | `type`               | text                                 | e.g. `'drop_off' \| 'pick_up' \| 'supervise' \| 'custom'` — `custom` pairs with a `label` |
 | `label`              | text                                 | nullable; required when `type = 'custom'` (e.g., "Bring snacks")                          |
 | `assignee_member_id` | uuid → `family_members.id`, nullable | who is on the hook; nullable = unassigned, mirroring `tasks.assignee_member_id`           |
-| `status`             | text                                 | `'unassigned' \| 'pending_acceptance' \| 'accepted' \| 'declined' \| 'done'`              |
+| `status`             | text                                 | `'unassigned' \| 'pending_acceptance' \| 'accepted' \| 'declined' \| 'done'` — the audit history this snapshot derives from is `responsibility_assignments` (below), mirroring `task_assignments` |
 
 Worked example matching PRODUCT.md's swimming scenario: one `events` row ("Swimming",
 17:00–18:00) + one `event_participants` row (Son) + two `responsibilities` rows
-(`drop_off` → Mom, `pick_up` → Dad). Editing who does pickup never touches the event row.
+(`drop_off` → Mom, `pick_up` → Dad). Editing who does pickup never touches the event row —
+proven directly: renaming the event or moving its time leaves both responsibility rows'
+`assignee_member_id`/`status` completely untouched (`due_at`, exposed via
+`family_responsibilities` below, is *derived* from the event's own `starts_at`/`ends_at` at
+read time, so it moves automatically with the event without any separate update).
+
+## responsibility_assignments
+
+**Implemented in Phase 7.** Append-only audit trail for responsibility assignment actions —
+mirrors `task_assignments` exactly, kept as a separate table (not reused from
+`task_assignments`) since a responsibility and a task are different domain concepts with
+different owning tables. `responsibilities.assignee_member_id`/`status` are a snapshot
+maintained by a trigger reacting to inserts here, the same relationship
+`apply_task_assignment_action` has to `task_assignments`.
+
+| column                  | type                                 | notes                                                                                       |
+| ------------------------ | ------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `id`                     | uuid                                  |                                                                                                |
+| `responsibility_id`      | uuid → `responsibilities.id`          | `on delete cascade` — see `remove_event_responsibility` below for when that applies             |
+| `assigned_to_member_id`  | uuid → `family_members.id`            |                                                                                                |
+| `assigned_by_member_id`  | uuid → `family_members.id`, nullable  | null when the action was "Take" (self-claim)                                                    |
+| `action`                 | text                                  | `'assigned' \| 'took' \| 'accepted' \| 'declined' \| 'unassigned' \| 'reassigned'`              |
+| `created_at`             | timestamptz                           | append-only, no `updated_at`                                                                    |
+
+`SELECT` is granted to `authenticated` (same-family, RLS-scoped) — unlike `notifications.outbox`
+(Section "notifications schema" above), this is client-relevant audit history, not internal
+dispatcher state, so it follows `task_assignments`' own read-access pattern rather than being
+fully closed.
+
+## Sanitized calendar read views (Phase 7)
+
+Alongside `family_schedule` (now excluding soft-deleted events and exposing a
+`participant_member_id` column — see "Availability" below), a second view provides the
+drop-off/pick-up read model:
+
+**`family_responsibilities`** — joins `responsibilities` with their parent `events` row,
+scoped to the caller's current family membership. Never needs `family_schedule`'s
+title/description sanitization, because a responsibility can only exist on a
+`visibility = 'family'` event in the first place (the trigger above) — by the time a
+responsibility exists for an event, that event's content is already fully visible to every
+family member. Exposes a derived `due_at` (`starts_at` for `drop_off`, `ends_at` for
+`pick_up`/others) computed at read time, never stored.
+
+## Deterministic conflict detection (Phase 7)
+
+`has_member_schedule_conflict(p_member_id, p_starts_at, p_ends_at, p_exclude_responsibility_id)`
+— a read-only `SECURITY DEFINER` function, not a table. Returns **a bare boolean only**,
+never which event/task it conflicted with or any of its content — the privacy-safe design
+this function exists specifically to guarantee (see
+[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md)). Checks three sources for the given
+member and half-open interval `[starts_at, ends_at)`: their own events (private or family),
+a timed family task assigned to them, or another `accepted` responsibility. The caller must
+be a member of the same family as `p_member_id`.
+
+## Timezone handling (Phase 7)
+
+`events.starts_at`/`ends_at` are `timestamptz` — an unambiguous UTC instant by construction,
+not an ambiguous local timestamp. `timezone` (IANA) is stored alongside purely for correct
+*rendering* and for computing local-day query boundaries client-side (`starts_at >=
+dayStart AND starts_at < dayNext`) — see `src/domain/calendar/dateUtils.ts`'s
+`localDayBoundsUtc`, which goes through the local `Date` constructor (DST-correct) rather
+than a fixed UTC-offset calculation. The MVP Day Calendar has no all-day/date-only event
+concept — date + start + end are always required this phase; deferred rather than modeled
+ambiguously (see [ROADMAP.md](ROADMAP.md)).
 
 ## notification_tokens
 
@@ -359,16 +432,18 @@ row (`notifications.deactivate_notification_token`), not just this one delivery.
 
 ## Availability / "Busy" representation
 
-**Not a table.** Deliberately implemented as a **Postgres view (or `security definer` RPC)**
-over `events`, never as a client-side filter of full event rows. See
-[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md) for the exact mechanism — this is the
+**Not a table.** Implemented as the `family_schedule` **Postgres view** over `events`, never
+as a client-side filter of full event rows — see
+[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md) for the exact mechanism, this is the
 piece that prevents private event details from ever leaving the database for a non-owner in
-the first place.
+the first place. **Implemented in Phase 7**: excludes soft-deleted (`deleted_at`) events and
+adds a `participant_member_id` column (the event's primary participant, e.g. which child —
+sanitized to `null` for a private item the same way `title`/`description` are).
 
 ## Audit-relevant timestamps and actors
 
-Every table above except `task_assignments` (append-only by design, so `created_at` alone is
-its "audit" story) gets:
+Every table above except `task_assignments`/`responsibility_assignments` (append-only by
+design, so `created_at` alone is their "audit" story) gets:
 
 | column       | type                 | notes                                                                                    |
 | ------------ | -------------------- | ---------------------------------------------------------------------------------------- |
@@ -385,15 +460,16 @@ its "audit" story) gets:
 | `family_invitations`                                         | the family                         | direct table access: owner only. Anyone else: only the sanitized `get_family_invitation_preview(token)` RPC — never a table read             |
 | `categories`                                                 | family, or system                  | family members; system categories are public                                                                                                 |
 | `tasks`, `events`                                            | user (personal) or family (shared) | owner always; family members only if `visibility = 'family'`, and only sanitized fields if the item is private (see SECURITY_AND_PRIVACY.md) |
-| `task_assignments`, `event_participants`, `responsibilities` | the family                         | family adults                                                                                                                                |
+| `task_assignments`, `responsibility_assignments`, `event_participants`, `responsibilities` | the family | family adults                                                                                                                                |
 | `reminders`                                                  | the user                           | owner only — never visible to other family members, even for a shared task                                                                   |
 | `notification_tokens`, `notification_preferences`            | the user                           | owner only; never exposed to any other user, including family members                                                                        |
 | `notifications.outbox`, `notifications.deliveries`           | n/a — not a client-facing table    | nobody, via the client API — the schema itself is absent from PostgREST's routing config; reachable only via a direct `SUPABASE_DB_URL` connection (server-side/scripts only) |
 
 This table describes **reads**, governed by RLS `SELECT` policies on both tables alike. Writes
-diverge: `tasks` is RPC-only (Phase 4, see above); `events` still has no CRUD UI or RPCs at
-all this phase (see [MVP_SCOPE.md](MVP_SCOPE.md)) — its own write-path decision is therefore
-still open, not settled by this table.
+diverge: `tasks` is RPC-only (Phase 4, see above); `events`/`event_participants`/
+`responsibilities` are RPC-only as of Phase 7 (an audit finding — see
+[DECISIONS.md, "Phase 7"](DECISIONS.md) — closed the same class of gap Phase 4 found for
+`tasks`).
 
 This table is the plain-language summary; the enforceable version is Postgres RLS policies,
 designed in [SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md) and written before any

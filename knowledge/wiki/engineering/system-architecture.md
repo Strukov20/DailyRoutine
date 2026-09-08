@@ -1,13 +1,14 @@
 ---
 title: System architecture
 status: current
-updated: 2026-09-06
+updated: 2026-09-07
 sources:
   - ../../../docs/ARCHITECTURE.md
   - ../../../docs/DECISIONS.md
   - ../../raw/sessions/2026-09-03-phase3-family-space.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
+  - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
 tags: [engineering, architecture]
 ---
 
@@ -93,4 +94,6 @@ a later Supabase call. Also validates the OAuth config-gate flags — see
 - [Push notifications](push-notifications.md) — a fourth reference implementation of the
   screens → hooks → service layering, plus a second runtime (Deno Edge Functions) this app's
   main tooling deliberately excludes
+- [Family calendar](family-calendar.md) — a fifth reference implementation of the same
+  layering, plus the family-schedule/family-responsibilities dual-view read model
 - [Development workflow](development-workflow.md)

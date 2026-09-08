@@ -54,4 +54,53 @@ describe('parseNotificationPayload', () => {
   it('rejects an empty object', () => {
     expect(parseNotificationPayload({})).toBeNull();
   });
+
+  it('rejects a taskId payload carrying an event_responsibility eventType (and vice versa)', () => {
+    expect(
+      parseNotificationPayload({ ...validPayload, eventType: 'event_responsibility.assignment_requested.v1' }),
+    ).toBeNull();
+    expect(
+      parseNotificationPayload({
+        schemaVersion: 1,
+        eventType: 'family_task.assignment_requested.v1',
+        familyId: '11111111-1111-4111-8111-111111111111',
+        eventId: '33333333-3333-4333-8333-333333333333',
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('parseNotificationPayload — event_responsibility payloads (Phase 7)', () => {
+  const validEventPayload = {
+    schemaVersion: 1,
+    eventType: 'event_responsibility.assignment_requested.v1',
+    familyId: '11111111-1111-4111-8111-111111111111',
+    eventId: '33333333-3333-4333-8333-333333333333',
+  };
+
+  it('parses a valid v1 event_responsibility payload', () => {
+    expect(parseNotificationPayload(validEventPayload)).toEqual(validEventPayload);
+  });
+
+  it('accepts every documented event_responsibility event type', () => {
+    const eventTypes = [
+      'event_responsibility.assignment_requested.v1',
+      'event_responsibility.assignment_accepted.v1',
+      'event_responsibility.assignment_declined.v1',
+      'event_responsibility.assignment_taken.v1',
+    ];
+    for (const eventType of eventTypes) {
+      expect(parseNotificationPayload({ ...validEventPayload, eventType })).not.toBeNull();
+    }
+  });
+
+  it('rejects a non-uuid eventId', () => {
+    expect(parseNotificationPayload({ ...validEventPayload, eventId: 'not-a-uuid' })).toBeNull();
+  });
+
+  it('rejects a payload missing eventId', () => {
+    const { eventId: _eventId, ...withoutEventId } = validEventPayload;
+    void _eventId;
+    expect(parseNotificationPayload(withoutEventId)).toBeNull();
+  });
 });

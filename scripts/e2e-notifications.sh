@@ -149,7 +149,12 @@ admin_create_user() {
     -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "Content-Type: application/json" \
     -d "{\"email\":\"$email\",\"password\":\"$password\",\"email_confirm\":true}")
   uid=$(echo "$resp" | jq -r '.id // empty')
-  [ -n "$uid" ] && CREATED_USER_IDS+=("$uid")
+  # Deliberately does NOT append to CREATED_USER_IDS here: every call site
+  # below invokes this via command substitution ($(...)), which runs the
+  # function in a subshell - an array mutation here would be discarded the
+  # instant that subshell exits, silently never reaching cleanup() (found
+  # while building scripts/e2e-calendar.sh, Phase 7 - see docs/DECISIONS.md).
+  # Every call site appends the returned id itself instead.
   echo "$uid"
 }
 
@@ -204,8 +209,11 @@ ADULTB_TOKEN_EXPO="ExponentPushToken[e2e-adultb-$STAMP]"
 
 echo "== Creating real auth.users accounts (admin API, pre-confirmed) =="
 OWNER_ID=$(admin_create_user "$OWNER_EMAIL" "$PASSWORD")
+CREATED_USER_IDS+=("$OWNER_ID")
 ADULTB_ID=$(admin_create_user "$ADULTB_EMAIL" "$PASSWORD")
+CREATED_USER_IDS+=("$ADULTB_ID")
 OUTSIDER_ID=$(admin_create_user "$OUTSIDER_EMAIL" "$PASSWORD")
+CREATED_USER_IDS+=("$OUTSIDER_ID")
 
 OWNER_JWT=$(sign_in "$OWNER_EMAIL" "$PASSWORD")
 ADULTB_JWT=$(sign_in "$ADULTB_EMAIL" "$PASSWORD")

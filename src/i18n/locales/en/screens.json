@@ -10,11 +10,6 @@
     "emptyTitle": "Nothing scheduled for tomorrow",
     "emptyDescription": "Tasks you schedule for tomorrow will show up here."
   },
-  "calendar": {
-    "title": "Calendar",
-    "emptyTitle": "No events yet",
-    "emptyDescription": "Your personal and family events will appear on the calendar."
-  },
   "inbox": {
     "title": "Inbox",
     "emptyTitle": "Inbox zero",

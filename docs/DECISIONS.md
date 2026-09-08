@@ -1351,3 +1351,203 @@ and a fresh secret scan of both compiled bundles plus the public Expo config spe
 `NOTIFICATION_WORKER_SECRET` (the brief's own named secret for this phase, not previously
 scanned for by name) — clean throughout, confirming it is referenced only via `Deno.env.get`
 inside the Edge Function, never client-side.
+
+## Phase 7 (Family Calendar, Child Events, and Responsibilities)
+
+### Evolved the existing Phase 2 schema rather than replacing it
+
+Before writing any new RPC, audited `events`/`event_participants`/`responsibilities`
+(Phase 2) and confirmed the brief's own instruction — "do not create parallel replacement
+tables before proving the existing model cannot safely support the requirements" — did not
+apply: the three-table event/responsibility split, the composite-FK same-family checks, and
+`responsibilities.status`'s vocabulary (`unassigned | pending_acceptance | accepted |
+declined | done`, already matching `tasks.assignment_status`) were all sound and reused
+as-is. Only additions: `events.deleted_at` (soft cancel), a `responsibility_assignments`
+audit table, and the RPC-only conversion below. No renaming for its own sake — the brief's
+own prose used a shorter word ("pending") for the pending state, but the existing
+`pending_acceptance` vocabulary was kept for consistency with `tasks.assignment_status`
+rather than treated as a rename instruction.
+
+### Audit finding: `events`/`event_participants`/`responsibilities` had the same direct-grant gap Phase 4 found for `tasks`
+
+Found before any new RPC was written, same discipline as every prior phase's audit-then-fix
+workflow: these three tables (Phase 2) granted raw `INSERT`/`UPDATE`/`DELETE` to
+`authenticated`. `responsibilities_owner_manages` in particular let the event owner `UPDATE`
+a responsibility's `status`/`assignee_member_id` directly via a plain PATCH — bypassing the
+accept/decline/take state machine and its audit trail entirely, the exact shape of gap
+Phase 4 found and closed for `tasks`' own direct-`UPDATE` policy. Closed identically: the
+three grants revoked, the now-dead policies dropped, every mutation replaced by a narrowly
+scoped `SECURITY DEFINER` RPC. `SELECT` stays direct/RLS-governed throughout, matching the
+established convention.
+
+### `responsibility_assignments`: a second audit table, not a shared one
+
+Considered reusing `task_assignments` for responsibility history too (same shape: append-only,
+`assigned_to_member_id`/`assigned_by_member_id`/`action`). Rejected — the brief itself flagged
+this as a live question ("do not reuse task_assignments if that would mix task and event
+semantics"), and mixing them would make "every assignment this family member has ever had"
+ambiguous between two unrelated domain concepts (a task vs. an event responsibility) sharing
+one table, complicating every future query that needs to distinguish them. Built
+`responsibility_assignments` as a structural mirror instead — same trigger shape
+(`set_responsibility_assignment_family_id`, `apply_responsibility_assignment_action`), same
+self-assign-is-immediate-acceptance shortcut in `set_responsibility_assignment`, same
+`FOR UPDATE`-row-locking concurrency discipline in `take_event_responsibility`. Unlike
+`task_assignments`, `responsibility_id` cascades on delete — see the next entry for why that's
+safe here specifically.
+
+### `remove_event_responsibility`: hard delete, not a status, and why that's safe
+
+The brief lists "remove an optional responsibility" as a distinct operation from unassign —
+read as "the drop-off/pick-up requirement is no longer needed at all," not "no assignee."
+Implemented as an owner-only hard `DELETE` of the `responsibilities` row, permitted only when
+`status` is `unassigned` or `declined` (an active pending/accepted commitment can't be
+silently erased out from under its assignee — unassign first, the same "can't skip a state"
+shape `reassign_family_task` already uses for a completed task). `responsibility_assignments`
+rows cascade-delete with it — acceptable here (unlike `task_assignments`, which must survive a
+member's removal indefinitely) because once the responsibility itself is gone, there is
+nothing left for that history to be *about*; the requirement's prior existence isn't a fact
+the product needs to remember once the requirement is deliberately withdrawn.
+
+### `has_member_schedule_conflict`: one function, three sources, a boolean only
+
+Considered exposing conflict data as a view (row-per-conflict) instead of a boolean function.
+Rejected: a view would need to either leak *something* identifying the conflicting item (an id
+a client could then query further, defeating the privacy goal) or be so sanitized it couldn't
+even distinguish "conflict" from "no conflict" reliably from the client side without an
+additional round-trip. A single `SECURITY DEFINER` function checking all three conflict
+sources (the member's own events, a timed task assignment, another accepted responsibility)
+in one `EXISTS`/`UNION ALL` query and returning a bare `boolean` gives the client exactly the
+one bit it's allowed to have, with no shape to accidentally over-expose. Half-open interval
+semantics (`[starts_at, ends_at)`) throughout, matching the brief's own explicit requirement
+that a boundary touch (one item ending exactly when another begins) is not a conflict —
+verified both directions in `120_family_calendar_test.sql`.
+
+### Family Today is the Calendar screen, not a second screen
+
+The brief describes "Family Today" (a combined per-member daily schedule with warnings) and
+a "Calendar Day view" (date navigation, Personal/Family mode, member filters) with
+overlapping worked examples — both are, in the end, "a day's events and responsibilities,
+optionally filtered by member." Built as one screen (`app/(app)/calendar.tsx`) with a
+Personal/Family mode toggle; Family mode defaulted to today *is* Family Today, not a
+near-duplicate view maintained in parallel. Revisit this if a later phase's UX research shows
+they actually need to diverge (e.g., Family Today needing a fundamentally different layout),
+but nothing in this phase's brief demanded that split.
+
+### The MVP Day Calendar has no all-day/date-only event concept this phase
+
+`events.starts_at`/`ends_at` are `timestamptz`, both required — every event has a real start
+and end instant. The brief's Section 4 explicitly permits deferring all-day events "rather
+than implementing a partial ambiguous model," which this phase does: no all-day toggle, no
+date-only event path, in either the schema or `eventEditorSchema`. Revisit as its own design
+pass (a `starts_date`/`ends_date` pair, or a `is_all_day` flag with UTC-midnight-anchored
+instants) rather than bolting a partial version onto the current form.
+
+### A real, previously-undiscovered bug found while building `scripts/e2e-calendar.sh`: the backend-integration scripts' user cleanup never actually ran
+
+`admin_create_user` appended to `CREATED_USER_IDS` *inside* the function, but every call site
+across `scripts/e2e-backend.sh`, `scripts/e2e-notifications.sh`, and (initially)
+`scripts/e2e-calendar.sh` itself invoked it via command substitution
+(`OWNER_ID=$(admin_create_user ...)`), which runs the function body in a **subshell** — an
+array mutation there is discarded the instant the subshell exits, never reaching the parent
+shell's `CREATED_USER_IDS`, and therefore never reaching `cleanup()`'s own iteration over it.
+`scripts/e2e-backend.sh` turned out to be unaffected (it calls `admin_create_user` without
+capturing output at all, so the subshell issue never arises there — it resolves user ids a
+different way later). `scripts/e2e-notifications.sh` **was** affected — every run since
+Phase 6 silently leaked its three `auth.users` test accounts (confirmed: 12 accumulated
+`e2e-*` accounts found in the local database while investigating this). The earlier Phase 6
+"no residue" verification was correct about what it actually checked (family/outbox rows,
+which use a separate `FAMILY_ID` variable outside this array) but incomplete — it never
+checked whether the *users themselves* were cleaned up. Fixed in both scripts by appending at
+each call site instead of inside the function; manually purged the 12 leaked accounts; both
+scripts re-verified to leave zero matching `auth.users` rows after two consecutive runs.
+Recorded here rather than silently fixed, since it revises a specific claim
+["`scripts/e2e-notifications.sh`... zero residue"] made in Phase 6's own final report.
+
+## Phase 7 follow-up: audit against a more detailed brief, four real gaps closed
+
+A later, much more detailed Phase 7 brief arrived after the branch above was already built and
+rebased onto `develop` (which by then included Phase 6.1). Rather than re-implementing from
+scratch, the brief's own working instruction was followed: audit the existing implementation
+first, and only change what a concrete gap actually requires. Four real, if mostly small, gaps
+were found and closed — none of them a design flaw, all of them things the original Phase 7
+pass's own scope or established RNTL limitations had left short.
+
+### Trigger functions: explicit revokes added for consistency, not because they were exploitable
+
+`assert_responsibility_event_is_family_visible()`, `set_responsibility_assignment_family_id()`,
+and `apply_responsibility_assignment_action()` — three of the four new trigger functions in
+`supabase/migrations/20260907120000_family_calendar.sql` — had no explicit
+`revoke ... from public, anon, authenticated`, unlike the file's own fourth trigger function
+(`notifications.enqueue_event_responsibility_notification`, which does) and unlike Phase 6's own
+established precedent for exactly this situation
+(`enqueue_task_assignment_notification`, `supabase/migrations/20260906120000_notification_outbox.sql`,
+whose own comment states the revoke is added "unconditionally... every SECURITY DEFINER function
+gets an explicit revoke... unless explicitly revoked" even though a `returns trigger` function is
+already uninvokable directly regardless of grant). **Not a live vulnerability**: the Phase 6.1
+`130_security_regression_test.sql` guard already exempts every trigger function from its
+anon-EXECUTE check for exactly this Postgres-level reason, and it passed both before and after
+this fix. Added anyway, for the same defense-in-depth reasoning Phase 6 gave — a future reader
+should not have to reason about `pg_get_function_result` to know a function is safe from this
+file alone.
+
+### Notification-outbox test coverage: `declined` and `taken` were never directly asserted
+
+The brief lists all four `event_responsibility.*` event types as required test coverage.
+`120_family_calendar_test.sql` only ever asserted `requested` and `accepted` directly (declined/
+taken existed in the migration's trigger logic and were exercised indirectly by the state-machine
+tests, but no assertion checked the resulting outbox row). Closed with four new pgTAP assertions
+(plan bumped 88 → 92) proving both the event type and the correct recipient
+(`recipient_member_id`) for a decline and a take, reusing `piano_pickup_id`'s existing
+decline-then-take history from the state-machine section rather than new fixtures.
+`scripts/e2e-calendar.sh` had the same gap for `taken` specifically (it called
+`take_event_responsibility` but never asserted the resulting outbox row) — closed the same way,
+with one change to the flow itself: the original script had the *event owner* take back a
+responsibility they themselves had created the event for, which is exactly the self-actor/
+self-recipient case Mechanism 4's self-notification suppression exists to catch — so no `taken`
+row would ever have been enqueued to assert on. Changed the taker to the spouse (a family member
+distinct from the event's creator) so the notification is expected to fire, and left a comment
+explaining why, rather than silently picking a different actor with no explanation.
+
+### The Day Calendar was missing the two other screens' own offline/refresh conventions
+
+`app/(app)/calendar.tsx` had neither `<OfflineBanner />` (present on `today.tsx`) nor pull-to-
+refresh (present on `FamilyTaskBoard.tsx`, the closest existing precedent for a family-wide list
+screen) nor a retry action wired to its `<ErrorState />`. All three were the brief's own
+explicit ask for the Day Calendar (Section 12) and already-established conventions elsewhere in
+this codebase, not new design — added by mirroring `FamilyTaskBoard.tsx`'s
+`RefreshControl`/`onRetry` pattern exactly, refetching whichever query pair is active for the
+current mode.
+
+### Mandatory Jest UI coverage, previously deferred, now built — and a real Metro/Expo Router gotcha found while building it
+
+The original Phase 7 pass explicitly deferred Jest coverage for `EventEditorForm`,
+`ResponsibilityRow`, and `app/(app)/calendar.tsx`, citing the phase's already-large scope and the
+Phase 5-documented `react-native-paper` `<Menu>` limitation. This brief's own Section 16/18
+explicitly overrides that: "deterministic Jest UI tests are mandatory and may not be deferred."
+Built all three — `ResponsibilityRow.test.tsx` and a scoped `EventEditorForm.test.tsx` (trigger
+buttons, disabled state, validation, and submission payloads are tested; content inside an opened
+`<Menu>` still is not, per the same unchanged RNTL constraint) fully cover their brief-mandated
+cases.
+
+**A genuinely new environment gotcha, not previously documented**: the Calendar Day view's own
+test was first written as `app/(app)/calendar.test.tsx`, co-located with the screen the same way
+every other test in this codebase sits next to its source file. It passed under Jest — but broke
+`npx expo export --platform ios` outright, because Expo Router's Metro bundler treats every file
+under `app/` as a route candidate by filename-independent convention, and tried to bundle
+`@testing-library/react-native` straight into the production app, failing on an unresolvable
+`console` import inside the testing library itself. This is the real reason no other screen in
+this codebase has ever had a co-located test file — not an oversight this phase corrected, but a
+hard constraint now confirmed and documented. Fixed by moving the test to
+`src/components/calendar/CalendarScreen.test.tsx`, importing the screen via a relative path
+(Jest doesn't go through Metro, so this is invisible to the production bundle) — see
+`docs/TEST_STRATEGY.md` for the convention this establishes for any future screen-level test.
+
+### Verified, not just asserted
+
+Fresh `supabase db reset && supabase test db`: `Files=13, Tests=391`, all passing. `npm run
+verify` (lint, typecheck, 264/264 Jest across 37 suites, wiki:lint). `deno test`: 11/11.
+`e2e:backend` 32/32, `e2e:notifications` 24/24, `e2e:calendar` run **twice consecutively without
+a DB reset in between**: 28/28 both times, zero `e2e-*` residue in `auth.users` confirmed by
+direct query afterward. Both `expo export` platforms succeed (the `app/` test-file bug above was
+caught by this exact check, not assumed away). `expo-doctor` 21/21. A secret scan of the compiled
+iOS bundle for `SERVICE_ROLE_KEY`/`NOTIFICATION_WORKER_SECRET`/`CLIENT_SECRET` found nothing.

@@ -3,6 +3,7 @@ import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 
 import enAuth from './locales/en/auth.json';
+import enCalendar from './locales/en/calendar.json';
 import enCommon from './locales/en/common.json';
 import enErrors from './locales/en/errors.json';
 import enFamily from './locales/en/family.json';
@@ -11,6 +12,7 @@ import enNotifications from './locales/en/notifications.json';
 import enScreens from './locales/en/screens.json';
 import enTasks from './locales/en/tasks.json';
 import ukAuth from './locales/uk/auth.json';
+import ukCalendar from './locales/uk/calendar.json';
 import ukCommon from './locales/uk/common.json';
 import ukErrors from './locales/uk/errors.json';
 import ukFamily from './locales/uk/family.json';
@@ -35,6 +37,7 @@ export const resources = {
     errors: enErrors,
     family: enFamily,
     notifications: enNotifications,
+    calendar: enCalendar,
   },
   uk: {
     common: ukCommon,
@@ -45,6 +48,7 @@ export const resources = {
     errors: ukErrors,
     family: ukFamily,
     notifications: ukNotifications,
+    calendar: ukCalendar,
   },
 } as const;
 

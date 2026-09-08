@@ -11,21 +11,23 @@ sources:
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
   - ../../raw/sessions/2026-09-05-phase5-shared-family-tasks.md
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
+  - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
   - ../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md
+  - ../../raw/sessions/2026-09-08-phase7-followup-audit.md
 tags: [engineering, security, rls, privacy]
 ---
 
 ## Status: implemented and verified (Mechanisms 1, 2, 4, 5) / not yet implemented (3)
 
-`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 299 assertions
-across 12 files passing against a real local Postgres instance) proves it, particularly
+`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 391 assertions
+across 13 files passing against a real local Postgres instance) proves it, particularly
 `060_privacy_regression_test.sql`, `080_family_management_test.sql`,
-`090_personal_task_management_test.sql`, `110_notification_outbox_test.sql`, and (Phase 6.1)
-`130_security_regression_test.sql`. See
+`090_personal_task_management_test.sql`, `110_notification_outbox_test.sql`,
+`120_family_calendar_test.sql`, and `130_security_regression_test.sql`. See
 [privacy-and-availability](../domain/privacy-and-availability.md) for the domain-facing
 version of this same content; this page is the engineering-facing index.
 
-**Four real gaps have been found and fixed while implementing this, not bugs shipped and
+**Six real gaps have been found and fixed while implementing this, not bugs shipped and
 later caught** — design corrections made during the same phase that built the feature:
 
 - Mechanism 2 (sanitized views, Phase 2):
@@ -56,6 +58,13 @@ CHECK` protected only `owner_profile_id`; a client could rewrite `family_id`,
   `has_function_privilege` query against a real local instance, not code review. This is
   evidence the checklist item is genuinely load-bearing, not a one-time Phase 3 cleanup. Full
   writeup: [DECISIONS.md, "Phase 6"](../../../docs/DECISIONS.md).
+- **`events`/`event_participants`/`responsibilities` had the same direct-grant gap as `tasks`
+  (Phase 7)** — these three tables (Phase 2) granted raw INSERT/UPDATE/DELETE to
+  `authenticated` from the start; `responsibilities_owner_manages` let the event owner
+  `UPDATE` a responsibility's `status`/`assignee_member_id` directly, bypassing the accept/
+  decline/take state machine and its audit trail entirely. Closed identically to the `tasks`
+  fix: grants revoked, every mutation moved to an RPC. Full writeup:
+  [DECISIONS.md, "Phase 7"](../../../docs/DECISIONS.md).
 - **Closed for good (Phase 6.1): a durable, automated regression guard**, not another manual
   catch. Three recurrences of the same finding (Phase 3, 5, 6) with no general-purpose test
   ever existing for it was the actual signal — `supabase/tests/130_security_regression_test.sql`
@@ -65,6 +74,15 @@ CHECK` protected only `owner_profile_id`; a client could rewrite `family_id`,
   trigger function (provably inert regardless of grant — Postgres refuses to invoke one
   outside trigger context) or is in a short reviewed whitelist. Verified the guard actually
   fails when the bug is reintroduced, not just when read.
+
+**Not a seventh gap, but worth recording (Phase 7 follow-up):** three of the family calendar
+migration's four new trigger functions were missing the explicit
+`revoke ... from public, anon, authenticated` that Phase 6 established as the convention for
+this exact situation — not exploitable (the 130 guard above already exempts every trigger
+function, and Postgres itself refuses to invoke one outside trigger context regardless of
+grant), but inconsistent with that convention. Added for defense-in-depth, matching Phase 6's
+own stated reasoning. Full writeup:
+[DECISIONS.md, "Phase 7 follow-up"](../../../docs/DECISIONS.md).
 
 ## The five mechanisms
 
@@ -85,18 +103,23 @@ CHECK` protected only `owner_profile_id`; a client could rewrite `family_id`,
    used by both the view and a future broadcast trigger) still stands as the requirement for
    whoever adds it.
 4. **Notifications** built server-side from the same authorized query path; never trust a
-   client-supplied payload for what goes to another user. **Implemented (Phase 6), scoped to
-   shared family task assignment events only.** The push payload carries ids only
-   (`schemaVersion`/`eventType`/`familyId`/`taskId` — see
-   [`src/domain/notifications/payload.ts`](../../../src/domain/notifications/payload.ts)),
-   never task/user content; the on-device title/body are static strings chosen by
+   client-supplied payload for what goes to another user. **Implemented (Phase 6) for shared
+   family task assignment events, extended (Phase 7) to event-responsibility assignment
+   events.** The push payload carries ids only — a discriminated union of `taskId` and
+   `eventId` shapes, never both, never neither (see
+   [`src/domain/notifications/payload.ts`](../../../src/domain/notifications/payload.ts)) —
+   never task/event/user content; the on-device title/body are static strings chosen by
    `event_type`, not interpolated from row data. The recipient is derived entirely
    server-side, inside the same transaction as the mutation, from `family_members`/
-   `task_assignments` state — never from anything the client supplies. See
-   [Push notifications](push-notifications.md) for the full design.
+   `task_assignments`/`responsibility_assignments` state — never from anything the client
+   supplies. See [Push notifications](push-notifications.md) and
+   [Family calendar](family-calendar.md) for the full design.
    - **4a. The `notifications` outbox schema is excluded from PostgREST routing entirely** —
      a schema-level control, not just RLS/grants, and the only mechanism in this document
      that holds even against `service_role`. See [Push notifications](push-notifications.md).
+   - **4b. Conflict detection (Phase 7) returns a boolean only** —
+     `has_member_schedule_conflict()` checks three private-content-bearing sources but never
+     reveals which one, or any of its content. See [Family calendar](family-calendar.md).
 5. **Logs** — `src/lib/logger/logger.ts` / `ErrorBoundary.tsx` log ids and error text only,
    never content fields. **Implemented**, unchanged since Phase 1 (it's app code, not a
    migration).
@@ -150,7 +173,19 @@ migration was applied, not after. Full writeup:
 `remove_family_member`'s soft-delete (`removed_at`) means immediate access loss for a removed
 member is enforced the same way as everywhere else in this design: `is_family_member()` and
 the sanitized views' inline subqueries all filter `removed_at is null`, so there is no window
-where a removed member's row still counts as active membership.
+where a removed member's row still counts as active membership. Phase 7 extended this same
+function to also resolve active *responsibility* assignments, not just task assignments.
+
+## Calendar mutations are RPC-only too (Phase 7)
+
+`events`/`event_participants`/`responsibilities` (Phase 2 schema) moved to the same RPC-only
+pattern this phase — an audit finding, the identical class of gap Phase 4 found for `tasks`
+(see "Four... five real gaps" above). The responsibility assignment RPCs
+(`assign_event_responsibility` through `remove_event_responsibility`) mirror Phase 5's shape
+exactly, including an internal `set_responsibility_assignment` helper with **no grant to any
+role at all** — same pattern as `set_task_assignment`. `has_member_schedule_conflict` is
+granted directly to `authenticated` (unlike the internal assignment helper) since it's
+read-only and returns nothing sensitive — see Mechanism 4b above.
 
 ## Personal-task mutations are RPC-only too (Phase 4)
 
@@ -178,3 +213,4 @@ first time Realtime is turned on for `events`/`tasks`.
 - [Testing strategy](testing-strategy.md) — RLS tests need a real Postgres instance; mocking
   Supabase for this class of test would test the mock, not the guarantee
 - [Authentication](authentication.md) — how sessions/profiles connect to this RLS model
+- [Family calendar](family-calendar.md) — the Phase 7 RPC-only conversion and Mechanism 4b

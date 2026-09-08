@@ -37,11 +37,12 @@ decision recorded before Phase 4 could safely leave them out of the task editor 
   outbox event type/payload. The task editor still deliberately has no reminder control until
   this exists, rather than saving a reminder that silently never fires.
 
-### Push notification scope not covered by Phase 6
+### Push notification scope not covered by Phase 6/7
 
-Phase 6 built assignment-event push notifications only (see
-[ARCHITECTURE.md](ARCHITECTURE.md), "Push notifications"). Deliberately out of scope, not
-forgotten:
+Phase 6 built shared-task assignment push notifications; Phase 7 extended the same outbox to
+event-responsibility (drop-off/pick-up/etc.) assignment events (see
+[ARCHITECTURE.md](ARCHITECTURE.md), "Push notifications" and "Family calendar"). Deliberately
+still out of scope, not forgotten:
 
 - Notifications for recurring tasks, task completion, or task restoration.
 - Reminder delivery (see the "Reminder scheduling" item above — related infrastructure now
@@ -50,12 +51,23 @@ forgotten:
   delivery.
 - AI-driven notification content or timing.
 - Email/SMS delivery — Expo push only.
-- A full in-app notification inbox/history screen — a tap navigates straight to the task; there
-  is no list of past notifications to revisit.
-- Notifications for calendar/event or child-profile activity.
+- A full in-app notification inbox/history screen — a tap navigates straight to the task/event;
+  there is no list of past notifications to revisit.
+- Notifications for general event content changes (a title/time edit) or child-profile
+  activity unrelated to a responsibility assignment.
 - Notifications around family ownership transfer (not built at all yet — see the "Family
   ownership transfer" row in the V2 table below).
 - Direct APNs/FCM integration — Expo Push Service only, deliberately not bypassed.
+
+### Calendar scope not covered by Phase 7
+
+Per the brief's own explicit non-goals: Week/Month calendar views, recurring events,
+scheduled reminder delivery, snooze, Google/Apple Calendar integration, travel-time
+calculation, maps/locations, *automatic* conflict resolution (detection only — see
+[ARCHITECTURE.md](ARCHITECTURE.md)), AI planning, automatic rescheduling, drag-and-drop
+calendar editing, attachments, event ownership transfer, a full offline write queue, and
+all-day/date-only events (see [DECISIONS.md](DECISIONS.md), "Phase 7," for why the last one
+was deferred rather than modeled ambiguously).
 
 Also not deployed (built, not wired up — see [DECISIONS.md](DECISIONS.md) for the exact
 manual step): the Database Webhook / `pg_cron` invocation of `dispatch-notifications`, and any
@@ -67,8 +79,8 @@ push has been sent or received in this phase — every test uses a fake `PushTra
 | Feature                                      | Where the architecture leaves room                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Google Calendar / Apple Calendar integration | `events` will gain an `external_source` + `external_id` pair (nullable) so a synced event is distinguishable from a native one without a new table. Sync itself would be a Supabase Edge Function, not client code, to keep provider tokens off the device.                                                                                                                                                                                                                                                                     |
-| Week and Month calendar views                | The Calendar screen already renders from a date range, not a single hardcoded day; adding view modes is a UI-layer change over the same query shape.                                                                                                                                                                                                                                                                                                                                                                            |
-| Conflict detection                           | Needs events + responsibilities to already be queryable per member per time range — the separate `events`/`event_participants`/`responsibilities` tables (DATA_MODEL.md) are exactly the shape this requires. Actual detection is a Postgres function or Edge Function, run on write.                                                                                                                                                                                                                                           |
+| Week and Month calendar views                | The Calendar screen already renders from a date range, not a single hardcoded day (Phase 7); adding view modes is a UI-layer change over the same query shape.                                                                                                                                                                                                                                                                                                                                                                            |
+| Conflict *resolution* (AI-assisted or otherwise) | Deterministic *detection* (a boolean, privacy-safe, per-member overlap check) is implemented as of Phase 7 — see `has_member_schedule_conflict` in [DATA_MODEL.md](DATA_MODEL.md). What's still V2: anything that acts on a detected conflict beyond showing a generic warning — suggesting an alternative, auto-resolving it, or blocking a save (this phase deliberately never blocks a save on a conflict, only warns).                                                                                                                                                                                                                                           |
 | Subtasks                                     | `tasks.parent_task_id` (nullable, self-referencing) is the anticipated column; not added now to avoid an unused foreign key in the MVP schema.                                                                                                                                                                                                                                                                                                                                                                                  |
 | Attachments                                  | A `task_attachments` / `event_attachments` table referencing Supabase Storage objects, with RLS mirroring the parent record's visibility.                                                                                                                                                                                                                                                                                                                                                                                       |
 | Shared shopping lists                        | Likely its own `lists` + `list_items` pair rather than overloading `tasks` — a shopping item isn't a task (no assignee-accept workflow, no priority). Decide at design time, not now.                                                                                                                                                                                                                                                                                                                                           |

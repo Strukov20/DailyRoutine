@@ -42,6 +42,12 @@ const NOTIFICATION_BODY_BY_EVENT: Record<string, string> = {
   "family_task.assignment_accepted.v1": "Your task assignment was accepted",
   "family_task.assignment_declined.v1": "Your task assignment was declined",
   "family_task.assignment_taken.v1": "Someone took a family task",
+  // Phase 7 — event responsibilities (drop-off/pick-up/etc.). Same static,
+  // content-free body discipline as the task events above.
+  "event_responsibility.assignment_requested.v1": "New event responsibility assigned",
+  "event_responsibility.assignment_accepted.v1": "Your responsibility was accepted",
+  "event_responsibility.assignment_declined.v1": "Your responsibility was declined",
+  "event_responsibility.assignment_taken.v1": "Someone took an event responsibility",
 };
 
 export interface DispatchResult {

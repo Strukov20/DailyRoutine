@@ -328,6 +328,45 @@ Neither is wired up yet — see [DECISIONS.md](DECISIONS.md) for the exact manua
 step required, which was deliberately not performed automatically (see this repository's
 standing rule against creating/modifying external resources without explicit authorization).
 
+## Family calendar (Phase 7)
+
+Full design in [DATA_MODEL.md](DATA_MODEL.md) and
+[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md). Architecturally notable:
+
+- **`events`/`event_participants`/`responsibilities` (Phase 2 schema) moved to RPC-only
+  writes this phase** — an audit finding, same class of gap Phase 4 found for `tasks` (see
+  [DECISIONS.md](DECISIONS.md)). `SELECT` stays direct/RLS-governed.
+- **A second append-only audit table**, `responsibility_assignments`, mirrors
+  `task_assignments` exactly rather than being reused from it — a responsibility and a task
+  are different domain concepts with different owning tables, and mixing them would make
+  "every assignment this member ever had" ambiguous between the two.
+- **Two sanitized read views** feed the Calendar screen's Family-mode agenda:
+  `family_schedule` (events, evolved this phase to exclude soft-deleted rows and expose a
+  `participant_member_id`) and `family_responsibilities` (drop-off/pick-up, new this phase) —
+  the client combines both into one chronological list rather than either view trying to be
+  everything.
+- **Conflict detection is a read-only RPC, not a table or a client-side computation** —
+  `has_member_schedule_conflict()` returns a boolean only, checked against the *current*
+  member's own events/tasks/other-accepted-responsibilities server-side, so the privacy
+  guarantee (never reveal what it conflicted with) holds regardless of what the client is
+  allowed to query directly.
+- **Timezone handling**: `events.starts_at`/`ends_at` are `timestamptz` (an unambiguous UTC
+  instant by construction) with `timezone` (IANA) stored alongside for rendering and local-day
+  query-boundary computation — `src/domain/calendar/dateUtils.ts`'s `localDayBoundsUtc` goes
+  through the local `Date` constructor (DST-correct) rather than a fixed offset, the same
+  "local-constructor-only" discipline `src/domain/tasks/dateUtils.ts` established in Phase 4,
+  applied to a genuinely different problem (a real instant vs. a deliberately ambiguous local
+  date string).
+- **Calendar screen doubles as Family Today** — no separate screen was built for "the combined
+  daily schedule"; the Calendar screen's own Family mode, defaulted to today, is that view.
+  Avoids two near-duplicate agenda screens for what the brief's own worked examples show as
+  the same underlying data (a day's events + responsibilities, filterable by member).
+- **Push notifications extend, not duplicate, the Phase 6 outbox** — see "Push notifications"
+  above; `notifications.outbox` gained nullable `event_id`/`responsibility_id` columns
+  alongside the existing `task_id`/`task_assignment_id` ones, with a `CHECK` enforcing exactly
+  one source per row, and a second trigger (`enqueue_event_responsibility_notification`) on
+  `responsibility_assignments` mirroring the task one.
+
 ## Offline & caching (current state, not the V2 design)
 
 TanStack Query's in-memory cache gives cached reads of the last successfully loaded data for

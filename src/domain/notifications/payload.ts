@@ -6,8 +6,14 @@ import { z } from 'zod';
  * identifiers only, never a title/description/name. Parsed defensively —
  * a malformed or future/unknown-version payload is never trusted, it is
  * ignored safely (see notificationResponseRouter.ts).
+ *
+ * Two shapes (Phase 7 added the second, never merged into one with both
+ * fields optional — a task-assignment payload always carries taskId, an
+ * event-responsibility payload always carries eventId, and a schema that
+ * allowed either-or-neither would let a malformed payload silently parse
+ * as "valid but pointing nowhere").
  */
-export const notificationPayloadSchemaV1 = z.object({
+const taskAssignmentPayloadSchema = z.object({
   schemaVersion: z.literal(1),
   eventType: z.enum([
     'family_task.assignment_requested.v1',
@@ -18,6 +24,23 @@ export const notificationPayloadSchemaV1 = z.object({
   familyId: z.string().uuid(),
   taskId: z.string().uuid(),
 });
+
+const eventResponsibilityPayloadSchema = z.object({
+  schemaVersion: z.literal(1),
+  eventType: z.enum([
+    'event_responsibility.assignment_requested.v1',
+    'event_responsibility.assignment_accepted.v1',
+    'event_responsibility.assignment_declined.v1',
+    'event_responsibility.assignment_taken.v1',
+  ]),
+  familyId: z.string().uuid(),
+  eventId: z.string().uuid(),
+});
+
+export const notificationPayloadSchemaV1 = z.union([
+  taskAssignmentPayloadSchema,
+  eventResponsibilityPayloadSchema,
+]);
 
 export type NotificationPayloadV1 = z.infer<typeof notificationPayloadSchemaV1>;
 

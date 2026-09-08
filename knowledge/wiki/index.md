@@ -1,7 +1,7 @@
 ---
 title: LLM Wiki index
 status: current
-updated: 2026-09-06
+updated: 2026-09-07
 sources: []
 tags: [index]
 ---
@@ -34,6 +34,8 @@ For a one-off lookup, prefer `rg <term> knowledge/wiki` over reading this whole 
 - [Authentication](engineering/authentication.md) — Supabase Auth, session state, deep links
 - [Push notifications](engineering/push-notifications.md) — the notification outbox, Edge
   Function dispatcher, and client-side token/routing layer (Phase 6)
+- [Family calendar](engineering/family-calendar.md) — events, responsibilities, the
+  assignment state machine, conflict detection, and the Calendar UI (Phase 7)
 - [Testing strategy](engineering/testing-strategy.md) — what's tested, what isn't yet
 - [Development workflow](engineering/development-workflow.md) — git rules, CI, **the
   mandatory wiki read/update workflow** — read this once, it governs how every other page
