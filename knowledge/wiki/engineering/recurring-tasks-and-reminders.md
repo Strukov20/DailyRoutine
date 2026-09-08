@@ -10,6 +10,7 @@ sources:
   - ../../../docs/TEST_STRATEGY.md
   - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
   - ../../raw/sessions/2026-09-08-phase8-final-validation.md
+  - ../../raw/sessions/2026-09-08-phase8-production-cleanup.md
 tags: [engineering, recurrence, reminders, notifications, phase8]
 ---
 
@@ -107,7 +108,7 @@ any payload carrying `notificationType` — a real cross-router collision found 
 wiring the second router in, which would otherwise have double- or mis-handled every reminder
 tap.
 
-## A genuine `<Menu>` testability limitation — worked around with a `__DEV__`-only diagnostic screen
+## A genuine `<Menu>` testability limitation — worked around with a temporary `__DEV__`-only diagnostic screen
 
 Phase 5 already documented `react-native-paper`'s `<Menu>` as unreliable under
 `react-test-renderer`. Phase 8's live Maestro-driven simulator testing reproduced the identical
@@ -121,7 +122,7 @@ anchor lives on a screen presented via `presentation: 'modal'`" — a `Portal`/n
 interaction, not a component-specific bug.
 
 **Worked around, not left blocked**: `app/dev-diagnostics.tsx` — a `__DEV__`-only screen
-(absent from any production build, reachable only via a direct deep link) that calls the exact
+(absent from any production build, reachable only via a direct deep link) that called the exact
 production functions `ReminderEditorSection`'s Menu items would have called
 (`requestNotificationPermission`, `reconcileReminders`, `expoLocalScheduler.listScheduled`),
 skipping only the broken tap-to-open-Menu step. This let permission actually be granted (a real
@@ -130,6 +131,13 @@ and real production scheduling/delivery/reschedule/cancellation to be directly o
 device. See [DECISIONS.md, "Phase 8"](../../../docs/DECISIONS.md) for the full evidence list
 (scheduled-key/fire-time proof, a lock-screen delivery screenshot, reschedule
 cancel-and-reschedule, delete cancellation, past-reminder skip behavior).
+
+**The diagnostic screen itself was temporary and has since been removed before merge** — the
+file, its route registration, and every reference to it are gone from the codebase; a
+production-surface cleanup pass confirmed zero trace in either `expo export` output or
+`npx expo config`. The evidence above is preserved as a historical record of what was directly
+observed while it existed; the production functions it called are ordinary, permanent code,
+unaffected by the diagnostic's removal.
 
 **Still not verified, for a different, structural reason**: tap-to-navigate and the Snooze/Done
 notification *actions* specifically. These need interaction with iOS system UI rendered in a

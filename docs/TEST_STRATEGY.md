@@ -161,20 +161,31 @@ AsyncStorage is null` even though every call is mocked. Listing the exports expl
   Menu-free unit for exactly this reason, after the Menu-driven version of that same test proved
   flaky under a full-suite run — passing in isolation, intermittently failing at suite scale).
 
-- **When a UI-automation limitation blocks a required on-device check, a `__DEV__`-only
+- **When a UI-automation limitation blocks a required on-device check, a temporary `__DEV__`-only
   diagnostic screen calling the real production functions is an accepted workaround — not a
   shortcut (Phase 8's final validation pass).** The `<Menu>` limitation above blocked granting
   notification permission and triggering reconciliation through the normal UI. Rather than
   report that verification as impossible, `app/dev-diagnostics.tsx` (gated by `if (!__DEV__)
   return null`, registered in `app/_layout.tsx` only when `__DEV__`, reachable only via a direct
-  deep link — absent from any production build and from normal in-app navigation) calls the
+  deep link — absent from any production build and from normal in-app navigation) called the
   exact production functions a real user action would (`requestNotificationPermission`,
-  `reconcileReminders`, `expoLocalScheduler.listScheduled`) and displays only ids/keys/times,
+  `reconcileReminders`, `expoLocalScheduler.listScheduled`) and displayed only ids/keys/times,
   never a task title. This let real on-device scheduling/delivery/reschedule/cancellation be
-  directly observed — see [DECISIONS.md, "Phase 8"](DECISIONS.md). The bar this has to clear:
-  every button must call real production code (never a reimplementation or a mock), never
-  bypass an actual business rule (only the broken *UI trigger* for an already-correct code
-  path), and never render anything a production build would ship or a real user could reach.
+  directly observed — see [DECISIONS.md, "Phase 8"](DECISIONS.md) for the full evidence, which
+  is preserved there as a record even though the diagnostic route no longer exists. The bar it
+  had to clear while it existed: every button must call real production code (never a
+  reimplementation or a mock), never bypass an actual business rule (only the broken *UI
+  trigger* for an already-correct code path), and never render anything a production build
+  would ship or a real user could reach.
+  **`app/dev-diagnostics.tsx` and its route registration were removed before merge** (a
+  dedicated production-surface cleanup pass, same session) — confirmed absent from both
+  `expo export` platforms' route manifests and bundled JS, from `npx expo config`'s public
+  output, and from every source reference reachable from a production build. The production
+  functions it exercised (`requestNotificationPermission`, `reconcileReminders`,
+  `expoLocalScheduler`, `useReminderNotificationActions`) are untouched — the diagnostic only
+  ever called them, nothing in them depended on the diagnostic existing. If a future phase needs
+  the same kind of on-device verification again, re-add a similarly scoped, similarly temporary
+  screen rather than assuming this one still exists.
 - **A test reading real wall-clock time (`new Date()`/`Date.now()`) with no fixed system clock
   is a real, if usually-invisible, source of flakiness — fix it with `jest.useFakeTimers().
   setSystemTime(...)`, don't just re-run it (Phase 8's final validation pass).** A

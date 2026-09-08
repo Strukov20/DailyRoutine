@@ -417,14 +417,19 @@ expo-router's `presentation: 'modal'`, though the same component is already docu
 unreliable under Jest/react-test-renderer since Phase 5. See
 [DECISIONS.md, "Phase 8"](DECISIONS.md) for the full diagnostic evidence (hierarchy dump,
 frame-by-frame video) and [TEST_STRATEGY.md](TEST_STRATEGY.md) for the resulting test-writing
-convention. Worked around, not left blocking real device verification: `app/dev-diagnostics.tsx`
-(`__DEV__`-only, absent from any production build) calls the same production
+convention. Worked around, not left blocking real device verification: a temporary `__DEV__`-only
+diagnostic screen (`app/dev-diagnostics.tsx`, absent from any production build **and since
+removed from the codebase entirely** — see below) called the same production
 `requestNotificationPermission`/`reconcileReminders`/`expoLocalScheduler.listScheduled`
 functions the broken Menu items would have, letting permission-grant, scheduling, delivery,
 reschedule, and cancellation all be directly observed on a real device — see
-[DECISIONS.md, "Phase 8"](DECISIONS.md) for the full evidence. Tap-to-navigate and the Snooze/
-Done notification *actions* remain unverified on-device for a separate, structural reason
-(cross-process iOS system UI is outside Maestro's automation scope for an `appId`-scoped flow).
+[DECISIONS.md, "Phase 8"](DECISIONS.md) for the full evidence, preserved there even though the
+diagnostic route itself no longer exists. Tap-to-navigate and the Snooze/Done notification
+*actions* remain unverified on-device for a separate, structural reason (cross-process iOS
+system UI is outside Maestro's automation scope for an `appId`-scoped flow). The production
+functions the diagnostic exercised (`requestNotificationPermission`, `reconcileReminders`,
+`expoLocalScheduler`, `useReminderNotificationActions`) are unaffected by its removal — none of
+them depended on the diagnostic screen; it only called them.
 
 ## Offline & caching (current state, not the V2 design)
 

@@ -740,3 +740,41 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     confirmed `react-native-paper`'s `<Dialog>` — unlike `<Menu>` — mounts and interacts
     correctly under Jest, narrowing the existing Menu limitation to that component specifically.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-08T00:00:00Z — Phase 8 production-surface cleanup: remove the temporary dev-diagnostics route
+
+- **Operation type:** cleanup (code removal) + verification + documentation + wiki update
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-08-phase8-production-cleanup.md`](../raw/sessions/2026-09-08-phase8-production-cleanup.md).
+- **Wiki pages updated:** `engineering/recurring-tasks-and-reminders.md` and
+  `engineering/testing-strategy.md` — both edited to state plainly that
+  `app/dev-diagnostics.tsx` was temporary and has since been removed before merge, while keeping
+  the evidence list it produced intact (past tense, framed as a historical record, not a claim
+  the screen still exists).
+- **Canonical docs updated:** `docs/DECISIONS.md`, `docs/ARCHITECTURE.md`,
+  `docs/TEST_STRATEGY.md` — same correction (screen removed, evidence preserved).
+- **Decisions/contradictions recorded:**
+  - The prior pass's `app/dev-diagnostics.tsx` (a `__DEV__`-only screen used to obtain real
+    on-device notification evidence around the `<Menu>` limitation) was always intended as
+    temporary, not a permanent addition to the codebase — removed in this pass along with its
+    route registration in `app/_layout.tsx`. Confirmed, not assumed, that removal is complete:
+    zero source references remain in `app/`/`src/`; zero trace in either `expo export`
+    platform's route manifest or bundled JS; zero trace in `npx expo config`'s public output.
+  - The production functions the diagnostic screen called
+    (`requestNotificationPermission`/`getNotificationPermissionStatus`, `reconcileReminders`,
+    `expoLocalScheduler`, `useReminderNotificationActions`) live in their own files and were
+    never modified by either adding or removing the diagnostic screen — it only ever called
+    them, so the real on-device evidence obtained through it remains valid documentation of how
+    those functions actually behave, even though the screen used to observe them no longer
+    exists.
+  - `knowledge/raw/` and `knowledge/wiki/log.md` are immutable/append-only by this repository's
+    own stated convention — the prior raw session file and log entry describing the diagnostic
+    screen's creation were left unedited (they accurately describe what was true at the time);
+    this cleanup gets its own new raw file and log entry rather than rewriting history.
+  - `expo-doctor` still reports the same `expo`/`expo-router` patch-version drift first noticed
+    in the prior pass (`20/21`) — new versions published upstream, unrelated to this session's
+    changes. Deliberately not bumped, consistent with this repository's stated tooling-version-
+    pinning discipline; recorded as deferred rather than silently ignored or reflexively fixed.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

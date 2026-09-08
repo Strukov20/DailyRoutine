@@ -15,6 +15,7 @@ sources:
   - ../../raw/sessions/2026-09-08-phase7-followup-audit.md
   - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
   - ../../raw/sessions/2026-09-08-phase8-final-validation.md
+  - ../../raw/sessions/2026-09-08-phase8-production-cleanup.md
 tags: [engineering, testing, phase8]
 ---
 
@@ -214,15 +215,18 @@ e2e:seed` then `npm run e2e:ios`. Tab bar items get a real testID via
     (the Category picker) failed identically, narrowing the cause to "any `<Menu>` whose anchor
     lives on a screen presented via `presentation: 'modal'`," not a component-specific bug.
     Full evidence: [DECISIONS.md, "Phase 8"](../../../docs/DECISIONS.md).
-  - **Worked around with a `__DEV__`-only diagnostic screen, not left blocked (Phase 8 final
-    validation pass)**: `app/dev-diagnostics.tsx` calls the exact production functions the
-    broken Menu items would have (`requestNotificationPermission`, `reconcileReminders`,
+  - **Worked around with a temporary `__DEV__`-only diagnostic screen, not left blocked (Phase 8
+    final validation pass)**: `app/dev-diagnostics.tsx` called the exact production functions
+    the broken Menu items would have (`requestNotificationPermission`, `reconcileReminders`,
     `expoLocalScheduler.listScheduled`), letting real permission-grant/scheduling/delivery/
     reschedule/cancellation be directly observed on device despite the Menu never opening. Tap-
     to-navigate and the Snooze/Done notification *actions* remained unverified for a distinct,
     structural reason: they need cross-process iOS system UI (lock screen/Notification Center)
     that Maestro can't drive for an `appId`-scoped flow, except the one specially-supported
-    permission-alert case (which did work). See [DECISIONS.md, "Phase
+    permission-alert case (which did work). **The diagnostic screen was removed before merge**
+    (a dedicated production-surface cleanup pass, same session) — confirmed absent from both
+    `expo export` outputs and `npx expo config`; the evidence it produced is preserved as a
+    historical record, not as a claim that the screen still exists. See [DECISIONS.md, "Phase
     8"](../../../docs/DECISIONS.md) for the full evidence and
     [recurring-tasks-and-reminders](recurring-tasks-and-reminders.md).
   - **A real Tonight/Tomorrow snooze-ordering bug, found only because a test happened to run

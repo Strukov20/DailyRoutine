@@ -125,7 +125,6 @@ function RootNavigator() {
           />
           <Stack.Screen name="family/member/[id]" options={{ headerShown: true }} />
           <Stack.Screen name="notification-settings" options={{ headerShown: true }} />
-          {__DEV__ ? <Stack.Screen name="dev-diagnostics" options={{ headerShown: true }} /> : null}
           <Stack.Screen name="event/new" options={{ presentation: 'modal', headerShown: true }} />
           <Stack.Screen name="event/[id]" options={{ headerShown: true }} />
           <Stack.Screen name="event/[id]/edit" options={{ presentation: 'modal', headerShown: true }} />

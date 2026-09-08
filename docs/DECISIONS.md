@@ -1753,20 +1753,29 @@ work correctly; only the portaled menu content fails to mount.
 
 Rather than block the rest of Section 19's requirements on a UI-automation limitation, a small
 `__DEV__`-gated diagnostic screen (`app/dev-diagnostics.tsx`, registered in `app/_layout.tsx`
-only when `__DEV__` — absent from any production build) was added to call the *production*
-functions directly: `requestNotificationPermission()`/`getNotificationPermissionStatus()`
-(the exact functions `ReminderEditorSection.addPreset` calls — not reimplemented),
-`reconcileReminders()` (the exact production reconciliation algorithm, fed real data from
-`listAllPendingReminders`/`listAllScheduledOccurrences`, the same service functions the real
-app hooks call), and `expoLocalScheduler.listScheduled()` (the real scheduler's own read-back).
-The screen displays only ids/keys/fire-times — never a reminder's task title — reachable only
-via a direct deep link (`familyflow://dev-diagnostics`), with no entry point reachable through
-normal in-app navigation. This is explicitly a **diagnostic**, not a reimplementation or a
-production shortcut: every button on it calls the same production code path a real user
-action would, just without requiring the broken `<Menu>` tap first.
+only when `__DEV__` — absent from any production build) was added **temporarily** to call the
+*production* functions directly: `requestNotificationPermission()`/
+`getNotificationPermissionStatus()` (the exact functions `ReminderEditorSection.addPreset`
+calls — not reimplemented), `reconcileReminders()` (the exact production reconciliation
+algorithm, fed real data from `listAllPendingReminders`/`listAllScheduledOccurrences`, the same
+service functions the real app hooks call), and `expoLocalScheduler.listScheduled()` (the real
+scheduler's own read-back). The screen displayed only ids/keys/fire-times — never a reminder's
+task title — reachable only via a direct deep link (`familyflow://dev-diagnostics`), with no
+entry point reachable through normal in-app navigation. This was explicitly a **diagnostic**,
+not a reimplementation or a production shortcut: every button on it called the same production
+code path a real user action would, just without requiring the broken `<Menu>` tap first.
 
-**What this newly, genuinely verified on-device, this validation pass** (real device, real OS,
-real `expo-notifications` calls throughout):
+**The diagnostic screen and its route registration have since been removed** (a
+production-surface cleanup pass, same session) — `app/dev-diagnostics.tsx` no longer exists,
+`app/_layout.tsx`'s conditional `Stack.Screen` for it is gone, and both `expo export` outputs
+and `npx expo config` were re-checked to confirm zero trace of it in a production build (route
+manifest, bundled JS, and public config). The findings below remain true and are preserved as
+the evidence obtained while it existed — the functions it called (`requestNotificationPermission`,
+`reconcileReminders`, `expoLocalScheduler`, `useReminderNotificationActions`) are ordinary
+production code, untouched by the diagnostic's removal.
+
+**What this newly, genuinely verified on-device while the diagnostic screen existed** (real
+device, real OS, real `expo-notifications` calls throughout):
 
 1. **Permission**: tapping "Request notification permission" triggered the real iOS system
    dialog ("FamilyFlow Would Like to Send You Notifications"); tapping "Allow" (a real Maestro
