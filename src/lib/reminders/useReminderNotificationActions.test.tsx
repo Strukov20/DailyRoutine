@@ -146,24 +146,63 @@ describe('useReminderNotificationActions', () => {
     );
   });
 
-  it('SNOOZE_TONIGHT and SNOOZE_TOMORROW snooze with a computed future `until`, never `minutes`', async () => {
-    await renderHook(() => useReminderNotificationActions(true), { wrapper });
-    await waitFor(() => expect(Notifications.addNotificationResponseReceivedListener).toHaveBeenCalled());
-
-    await act(async () => {
-      latestListener()(makeResponse('resp-tonight', 'SNOOZE_TONIGHT', REMINDER_DATA));
+  // "Tonight"/"Tomorrow" resolve real wall-clock time (see
+  // useReminderNotificationActions.ts) - a test that never fixes `now`
+  // is at the mercy of whatever time it happens to run, which is exactly
+  // how a real ordering bug (below) went unnoticed until this suite ran
+  // late at night. Every test in this block fixes system time explicitly.
+  describe('SNOOZE_TONIGHT and SNOOZE_TOMORROW', () => {
+    afterEach(() => {
+      jest.useRealTimers();
     });
-    await waitFor(() => expect(mockSnoozeOccurrence).toHaveBeenCalledTimes(1));
-    const tonightCall = mockSnoozeOccurrence.mock.calls[0]?.[0];
-    expect(tonightCall.minutes).toBeUndefined();
-    expect(new Date(tonightCall.until).getTime()).toBeGreaterThan(Date.now());
 
-    await act(async () => {
-      latestListener()(makeResponse('resp-tomorrow', 'SNOOZE_TOMORROW', REMINDER_DATA));
+    it('snooze with a computed future `until`, never `minutes`, and Tonight is always sooner than Tomorrow (called at midday)', async () => {
+      jest.useFakeTimers().setSystemTime(new Date(2026, 0, 15, 13, 0, 0)); // 13:00, well before the 20:00 "tonight" anchor
+
+      await renderHook(() => useReminderNotificationActions(true), { wrapper });
+      await waitFor(() => expect(Notifications.addNotificationResponseReceivedListener).toHaveBeenCalled());
+
+      await act(async () => {
+        latestListener()(makeResponse('resp-tonight', 'SNOOZE_TONIGHT', REMINDER_DATA));
+      });
+      await waitFor(() => expect(mockSnoozeOccurrence).toHaveBeenCalledTimes(1));
+      const tonightCall = mockSnoozeOccurrence.mock.calls[0]?.[0];
+      expect(tonightCall.minutes).toBeUndefined();
+      expect(new Date(tonightCall.until).getTime()).toBeGreaterThan(Date.now());
+      expect(new Date(tonightCall.until).getHours()).toBe(20); // the documented fixed hour, reached normally
+
+      await act(async () => {
+        latestListener()(makeResponse('resp-tomorrow', 'SNOOZE_TOMORROW', REMINDER_DATA));
+      });
+      await waitFor(() => expect(mockSnoozeOccurrence).toHaveBeenCalledTimes(2));
+      const tomorrowCall = mockSnoozeOccurrence.mock.calls[1]?.[0];
+      expect(new Date(tomorrowCall.until).getTime()).toBeGreaterThan(new Date(tonightCall.until).getTime());
     });
-    await waitFor(() => expect(mockSnoozeOccurrence).toHaveBeenCalledTimes(2));
-    const tomorrowCall = mockSnoozeOccurrence.mock.calls[1]?.[0];
-    expect(new Date(tomorrowCall.until).getTime()).toBeGreaterThan(new Date(tonightCall.until).getTime());
+
+    it('Tonight still resolves sooner than Tomorrow when tapped after the 20:00 anchor has already passed (real bug, found and fixed this session)', async () => {
+      // 23:00 - past tonight's fixed 20:00 anchor. Naively rolling the same
+      // fixed hour forward by 24h would land "Tonight" at tomorrow 20:00 -
+      // *after* "Tomorrow" (tomorrow 09:00), inverting the two options.
+      jest.useFakeTimers().setSystemTime(new Date(2026, 0, 15, 23, 0, 0));
+
+      await renderHook(() => useReminderNotificationActions(true), { wrapper });
+      await waitFor(() => expect(Notifications.addNotificationResponseReceivedListener).toHaveBeenCalled());
+
+      await act(async () => {
+        latestListener()(makeResponse('resp-tonight-late', 'SNOOZE_TONIGHT', REMINDER_DATA));
+      });
+      await waitFor(() => expect(mockSnoozeOccurrence).toHaveBeenCalledTimes(1));
+      const tonightCall = mockSnoozeOccurrence.mock.calls[0]?.[0];
+      expect(new Date(tonightCall.until).getTime()).toBeGreaterThan(Date.now());
+
+      await act(async () => {
+        latestListener()(makeResponse('resp-tomorrow-late', 'SNOOZE_TOMORROW', REMINDER_DATA));
+      });
+      await waitFor(() => expect(mockSnoozeOccurrence).toHaveBeenCalledTimes(2));
+      const tomorrowCall = mockSnoozeOccurrence.mock.calls[1]?.[0];
+
+      expect(new Date(tomorrowCall.until).getTime()).toBeGreaterThan(new Date(tonightCall.until).getTime());
+    });
   });
 
   it('CUSTOM opens the app to the task editor rather than attempting inline input', async () => {

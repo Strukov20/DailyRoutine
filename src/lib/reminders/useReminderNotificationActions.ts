@@ -29,9 +29,19 @@ const logger = createLogger('reminder-notification-actions');
 const SNOOZE_TONIGHT_HOUR = 20;
 const SNOOZE_TOMORROW_HOUR = 9;
 
+/**
+ * "Tonight" must always resolve sooner than "Tomorrow" (`tomorrowAt`,
+ * below) — otherwise the two options invert whenever this is called after
+ * `hour` has already passed today. Naively rolling the same fixed hour
+ * forward by 24h broke that (e.g. tapped at 23:00: "Tonight" -> tomorrow
+ * 20:00, "Tomorrow" -> tomorrow 09:00 — "Tonight" landing *after*
+ * "Tomorrow"), a real bug this file's own tests caught. Falling back to a
+ * short, genuinely-tonight offset from `now` instead keeps it always
+ * earlier than `tomorrowAt`'s fixed tomorrow-morning anchor.
+ */
 function nextLocalTimeToday(hour: number, now: Date): Date {
   const candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, 0, 0, 0);
-  return candidate > now ? candidate : new Date(candidate.getTime() + 24 * 60 * 60 * 1000);
+  return candidate > now ? candidate : new Date(now.getTime() + 60 * 60 * 1000);
 }
 
 function tomorrowAt(hour: number, now: Date): Date {
