@@ -5,6 +5,7 @@ import { Button, HelperText, IconButton, Menu, Text } from 'react-native-paper';
 
 import { useCreateTaskReminder, useDeleteTaskReminder, useTaskReminders } from '@/domain/recurrence/hooks';
 import { REMINDER_OFFSET_PRESETS } from '@/domain/recurrence/types';
+import { getNotificationPermissionStatus, requestNotificationPermission } from '@/lib/notifications/notificationService';
 import { useAppTheme } from '@/theme';
 
 const PRESET_LABEL_KEYS: Record<(typeof REMINDER_OFFSET_PRESETS)[number], string> = {
@@ -68,10 +69,21 @@ export function ReminderEditorSection({ taskId, hasStartTime }: ReminderEditorSe
   const reminders = remindersQuery.data ?? [];
   const existingOffsets = existingReminderOffsets(reminders);
 
-  const addPreset = (minutes: number) => {
+  const addPreset = async (minutes: number) => {
     setMenuVisible(false);
     if (existingOffsets.has(minutes)) return; // duplicate-time prevention
-    void createReminder.mutateAsync({ taskId, offsetMinutesBefore: minutes });
+
+    // Request permission here — "adding the first reminder" (brief,
+    // Section 9) — never on app startup, and never for an already-
+    // determined status (asking again after a denial just re-shows the
+    // same OS-throttled prompt; requestPermissionsAsync is a safe no-op
+    // for an already-granted status either way).
+    const status = await getNotificationPermissionStatus();
+    if (status === 'undetermined') {
+      await requestNotificationPermission();
+    }
+
+    await createReminder.mutateAsync({ taskId, offsetMinutesBefore: minutes });
   };
 
   return (
@@ -122,7 +134,7 @@ export function ReminderEditorSection({ taskId, hasStartTime }: ReminderEditorSe
               key={minutes}
               title={t(PRESET_LABEL_KEYS[minutes])}
               disabled={existingOffsets.has(minutes)}
-              onPress={() => addPreset(minutes)}
+              onPress={() => void addPreset(minutes)}
             />
           ))}
         </Menu>

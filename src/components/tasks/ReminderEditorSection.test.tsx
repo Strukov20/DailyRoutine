@@ -17,6 +17,14 @@ jest.mock('@/domain/recurrence/hooks', () => ({
   useDeleteTaskReminder: () => ({ mutateAsync: mockDelete }),
 }));
 
+// Explicit factory, not automock: the real module transitively imports
+// @/lib/supabase/client -> AsyncStorage, which has no native module under
+// Jest (see docs/TEST_STRATEGY.md).
+jest.mock('@/lib/notifications/notificationService', () => ({
+  getNotificationPermissionStatus: jest.fn().mockResolvedValue('granted'),
+  requestNotificationPermission: jest.fn().mockResolvedValue('granted'),
+}));
+
 function renderWithTheme(ui: React.ReactElement) {
   return render(<AppThemeProvider>{ui}</AppThemeProvider>);
 }
