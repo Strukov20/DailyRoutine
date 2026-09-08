@@ -5,6 +5,8 @@
     "preferenceSection": "What you're notified about",
     "assignmentPreferenceLabel": "Family task assignments",
     "assignmentPreferenceDescription": "Someone assigns you a task, accepts or declines one you assigned, or takes an unassigned task.",
+    "reminderTitlesLabel": "Show task titles in notifications",
+    "reminderTitlesDescription": "When off, a task reminder shows only \"Task reminder\" on your lock screen — never the task's title or details.",
     "statusRegistered": "Push notifications are on for this device.",
     "statusNotRegistered": "Push notifications are off for this device.",
     "statusDenied": "Notifications are blocked for FamilyFlow in system settings.",

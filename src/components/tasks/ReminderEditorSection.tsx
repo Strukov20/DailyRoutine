@@ -33,6 +33,17 @@ function formatOffset(minutes: number, t: (key: string, opts?: Record<string, nu
   return t('recurrence.reminderHoursBefore', { count: Math.round(minutes / 60) });
 }
 
+/**
+ * Pure — extracted so duplicate-time prevention is directly testable
+ * without driving react-native-paper's `<Menu>` open (unreliable under
+ * react-test-renderer, see docs/TEST_STRATEGY.md).
+ */
+export function existingReminderOffsets(
+  reminders: readonly { offsetMinutesBefore: number | null }[],
+): Set<number> {
+  return new Set(reminders.map((r) => r.offsetMinutesBefore).filter((v): v is number => v !== null));
+}
+
 interface ReminderEditorSectionProps {
   taskId: string;
   /** Only a timed task (start_time set) can have a relative reminder — see docs/DECISIONS.md, "Phase 8." */
@@ -55,7 +66,7 @@ export function ReminderEditorSection({ taskId, hasStartTime }: ReminderEditorSe
   const [menuVisible, setMenuVisible] = useState(false);
 
   const reminders = remindersQuery.data ?? [];
-  const existingOffsets = new Set(reminders.map((r) => r.offsetMinutesBefore).filter((v): v is number => v !== null));
+  const existingOffsets = existingReminderOffsets(reminders);
 
   const addPreset = (minutes: number) => {
     setMenuVisible(false);
