@@ -25,13 +25,13 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <AppThemeProvider>
-          <QueryProvider>
-            <AuthProvider>
+          <AuthProvider>
+            <QueryProvider>
               <ErrorBoundary>
                 <RootNavigator />
               </ErrorBoundary>
-            </AuthProvider>
-          </QueryProvider>
+            </QueryProvider>
+          </AuthProvider>
         </AppThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
