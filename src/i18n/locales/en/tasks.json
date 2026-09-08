@@ -152,8 +152,6 @@
     "showTitlesInNotificationsDescription": "When off, a reminder shows only \"Task reminder\" on your lock screen — never the task's title or details.",
     "notificationsDisabledNotice": "Notifications are turned off for this device.",
     "openSystemSettings": "Open Settings",
-    "seriesActionThisOccurrence": "This occurrence",
-    "seriesActionEntireSeries": "Entire series",
     "snoozeTitle": "Snooze",
     "snooze15": "+15 min",
     "snooze30": "+30 min",

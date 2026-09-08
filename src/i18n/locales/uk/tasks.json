@@ -152,8 +152,6 @@
     "showTitlesInNotificationsDescription": "Якщо вимкнено, нагадування на екрані блокування показує лише «Нагадування про завдання» — ніколи назву чи деталі завдання.",
     "notificationsDisabledNotice": "Сповіщення вимкнено для цього пристрою.",
     "openSystemSettings": "Відкрити налаштування",
-    "seriesActionThisOccurrence": "Це повторення",
-    "seriesActionEntireSeries": "Уся серія",
     "snoozeTitle": "Відкласти",
     "snooze15": "+15 хв",
     "snooze30": "+30 хв",
