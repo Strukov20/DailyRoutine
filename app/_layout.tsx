@@ -11,6 +11,8 @@ import { initI18n } from '@/i18n';
 import { AuthProvider, useAuth } from '@/lib/auth/AuthProvider';
 import { useNotificationResponseRouter } from '@/lib/notifications/notificationResponseRouter';
 import { QueryProvider } from '@/lib/query/QueryProvider';
+import { useReminderNotificationActions } from '@/lib/reminders/useReminderNotificationActions';
+import { useReminderReconciliation } from '@/lib/reminders/useReminderReconciliation';
 import { useUIStore } from '@/store/uiStore';
 import { AppThemeProvider, useAppTheme } from '@/theme';
 
@@ -49,6 +51,14 @@ function RootNavigator() {
   // pending route via the effect below, rather than being missed because
   // no listener was mounted yet.
   useNotificationResponseRouter(status === 'signed-in');
+  // Phase 8 — local reminder scheduling: reconciles what *should* be
+  // scheduled on-device against what actually is (see
+  // src/lib/reminders/useReminderReconciliation.ts for the full lifecycle
+  // this covers), and handles Done/Snooze/tap for a task_reminder
+  // notification response specifically (separate payload shape from the
+  // server-push one useNotificationResponseRouter handles above).
+  useReminderReconciliation();
+  useReminderNotificationActions(status === 'signed-in');
 
   // A signed-out visitor who opened an invitation deep link
   // (app/invite/[token].tsx) was sent to sign in/up with no way to carry

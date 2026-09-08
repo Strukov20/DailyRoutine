@@ -4,8 +4,10 @@ import { useAuth } from '@/lib/auth/AuthProvider';
 import {
   getNotificationPermissionStatus,
   getNotificationPreference,
+  getReminderTitlesPreference,
   registerForPushNotifications,
   setNotificationPreference,
+  setReminderTitlesPreference,
   type NotificationPermissionStatus,
 } from '@/lib/notifications/notificationService';
 
@@ -21,6 +23,7 @@ import {
 export const notificationKeys = {
   permissionStatus: ['notifications', 'permission-status'] as const,
   preference: ['notifications', 'preference'] as const,
+  reminderTitlesPreference: ['notifications', 'reminder-titles-preference'] as const,
 };
 
 export function useNotificationPermissionStatus() {
@@ -60,6 +63,30 @@ export function useSetNotificationPreference() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: notificationKeys.preference });
+    },
+  });
+}
+
+/** "Show task titles in notifications" (Phase 8, Section 10) — defaults to disabled. */
+export function useReminderTitlesPreference() {
+  return useQuery({
+    queryKey: notificationKeys.reminderTitlesPreference,
+    queryFn: getReminderTitlesPreference,
+  });
+}
+
+export function useSetReminderTitlesPreference() {
+  const queryClient = useQueryClient();
+  const { profile } = useAuth();
+  return useMutation({
+    mutationFn: (enabled: boolean) => {
+      if (!profile) {
+        return Promise.reject(new Error('setReminderTitlesPreference called with no signed-in profile'));
+      }
+      return setReminderTitlesPreference(profile.id, enabled);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: notificationKeys.reminderTitlesPreference });
     },
   });
 }

@@ -399,18 +399,21 @@ export type Database = {
           assignment_notifications_enabled: boolean
           created_at: string
           profile_id: string
+          reminder_titles_enabled: boolean
           updated_at: string
         }
         Insert: {
           assignment_notifications_enabled?: boolean
           created_at?: string
           profile_id: string
+          reminder_titles_enabled?: boolean
           updated_at?: string
         }
         Update: {
           assignment_notifications_enabled?: boolean
           created_at?: string
           profile_id?: string
+          reminder_titles_enabled?: boolean
           updated_at?: string
         }
         Relationships: [
