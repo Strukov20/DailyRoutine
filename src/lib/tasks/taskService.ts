@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase/client';
 import { createLogger } from '@/lib/logger/logger';
-import { mapTaskRow } from '@/domain/tasks/mappers';
+import { mapPersonalTaskOccurrenceRow, mapTaskRow } from '@/domain/tasks/mappers';
 import type { Task, TaskVisibility } from '@/domain/tasks/types';
 import type { TaskPriority } from '@/domain/tasks/priority';
 
@@ -94,28 +94,86 @@ function ownerOrAcceptedAssigneeFilter(profileId: string, memberIds: string[]): 
   return `owner_profile_id.eq.${profileId},and(assignee_member_id.in.(${idList}),assignment_status.eq.accepted)`;
 }
 
-export async function listTasksForDate(profileId: string, date: string): Promise<Task[]> {
-  const memberIds = await listMyMemberIds(profileId);
-  const { data, error } = await supabase
-    .from('tasks')
-    .select('*')
-    .eq('date', date)
-    .or(ownerOrAcceptedAssigneeFilter(profileId, memberIds));
+/**
+ * Extends the caller's recurring-task occurrences up to the 45-day rolling
+ * horizon (server-clamped regardless of what's asked for) — call before any
+ * read that needs recurring occurrences populated. Idempotent, cheap on a
+ * cache hit (see docs/DECISIONS.md, "Phase 8"). `p_through_date` is a plain
+ * ISO date string ("YYYY-MM-DD"), not a Date, matching this module's
+ * existing date-only convention.
+ */
+export async function ensureOccurrencesGenerated(throughDate?: string): Promise<void> {
+  const { error } = await supabase.rpc('generate_task_occurrences', {
+    p_through_date: throughDate ?? undefined,
+  });
   if (error) throw toTaskServiceError(error);
-  return data.map(mapTaskRow);
 }
 
-/** Active (not completed) tasks dated strictly before `beforeDate`. */
-export async function listOverdueTasks(profileId: string, beforeDate: string): Promise<Task[]> {
-  const memberIds = await listMyMemberIds(profileId);
+async function listOccurrencesForDate(profileId: string, date: string): Promise<Task[]> {
   const { data, error } = await supabase
-    .from('tasks')
+    .from('personal_task_occurrences')
     .select('*')
-    .lt('date', beforeDate)
-    .is('completed_at', null)
-    .or(ownerOrAcceptedAssigneeFilter(profileId, memberIds));
+    .eq('occurrence_date', date)
+    .eq('owner_profile_id', profileId)
+    .eq('is_recurring', true)
+    .neq('status', 'skipped');
   if (error) throw toTaskServiceError(error);
-  return data.map(mapTaskRow);
+  return data.map(mapPersonalTaskOccurrenceRow);
+}
+
+async function listOverdueOccurrences(profileId: string, beforeDate: string): Promise<Task[]> {
+  const { data, error } = await supabase
+    .from('personal_task_occurrences')
+    .select('*')
+    .lt('occurrence_date', beforeDate)
+    .eq('owner_profile_id', profileId)
+    .eq('is_recurring', true)
+    .eq('status', 'scheduled');
+  if (error) throw toTaskServiceError(error);
+  return data.map(mapPersonalTaskOccurrenceRow);
+}
+
+/**
+ * Today/Tomorrow's own date-scoped read — a one-off task or an accepted
+ * shared-task assignment comes straight from `tasks` exactly as before
+ * Phase 8 (recurring tasks are always personal, never shared, so this
+ * assignee-inclusive query is unaffected by excluding them); a recurring
+ * personal task's occurrence for this date comes from
+ * `personal_task_occurrences` instead — never both, since
+ * `recurrence_rule_id is not null` is excluded from the direct query.
+ */
+export async function listTasksForDate(profileId: string, date: string): Promise<Task[]> {
+  await ensureOccurrencesGenerated(date);
+  const memberIds = await listMyMemberIds(profileId);
+  const [{ data, error }, occurrences] = await Promise.all([
+    supabase
+      .from('tasks')
+      .select('*')
+      .eq('date', date)
+      .is('recurrence_rule_id', null)
+      .or(ownerOrAcceptedAssigneeFilter(profileId, memberIds)),
+    listOccurrencesForDate(profileId, date),
+  ]);
+  if (error) throw toTaskServiceError(error);
+  return [...data.map(mapTaskRow), ...occurrences];
+}
+
+/** Active (not completed) tasks/occurrences dated strictly before `beforeDate`. */
+export async function listOverdueTasks(profileId: string, beforeDate: string): Promise<Task[]> {
+  await ensureOccurrencesGenerated();
+  const memberIds = await listMyMemberIds(profileId);
+  const [{ data, error }, occurrences] = await Promise.all([
+    supabase
+      .from('tasks')
+      .select('*')
+      .lt('date', beforeDate)
+      .is('completed_at', null)
+      .is('recurrence_rule_id', null)
+      .or(ownerOrAcceptedAssigneeFilter(profileId, memberIds)),
+    listOverdueOccurrences(profileId, beforeDate),
+  ]);
+  if (error) throw toTaskServiceError(error);
+  return [...data.map(mapTaskRow), ...occurrences];
 }
 
 /**

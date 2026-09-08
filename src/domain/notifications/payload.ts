@@ -37,9 +37,26 @@ const eventResponsibilityPayloadSchema = z.object({
   eventId: z.string().uuid(),
 });
 
+/**
+ * Phase 8 — a *local*, device-scheduled reminder, never a server push (see
+ * docs/DECISIONS.md, "Phase 8": personal reminders are a separate delivery
+ * mechanism from the Phase 6 Expo Push outbox). `notificationType`, not
+ * `eventType`, distinguishes this from the two server-push shapes above —
+ * a local reminder has no outbox event to name. `occurrenceId` is null for
+ * a one-off task's own reminder (the task id alone already identifies it).
+ */
+const taskReminderPayloadSchema = z.object({
+  schemaVersion: z.literal(1),
+  notificationType: z.literal('task_reminder'),
+  taskId: z.string().uuid(),
+  occurrenceId: z.string().uuid().nullable(),
+  reminderId: z.string().uuid(),
+});
+
 export const notificationPayloadSchemaV1 = z.union([
   taskAssignmentPayloadSchema,
   eventResponsibilityPayloadSchema,
+  taskReminderPayloadSchema,
 ]);
 
 export type NotificationPayloadV1 = z.infer<typeof notificationPayloadSchemaV1>;

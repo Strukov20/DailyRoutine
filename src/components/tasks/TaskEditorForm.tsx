@@ -28,6 +28,11 @@ import { useCategories, useCreateCustomCategory } from '@/domain/categories/hook
 import type { Category } from '@/domain/categories/types';
 import { useFamilyMembers } from '@/domain/family/hooks';
 import {
+  useCreateRecurringTask,
+  useStopRecurringSeries,
+  useUpdateRecurringSeries,
+} from '@/domain/recurrence/hooks';
+import {
   formatDateOnly,
   formatTimeOnly,
   parseDateOnly,
@@ -42,12 +47,15 @@ import {
 import { TASK_PRIORITIES } from '@/domain/tasks/priority';
 import { taskEditorSchema, type TaskEditorInput } from '@/domain/tasks/schemas';
 import { useAuth } from '@/lib/auth/AuthProvider';
+import { RecurrenceServiceError } from '@/lib/recurrence/recurrenceService';
 import { moveTaskToInbox, TaskServiceError } from '@/lib/tasks/taskService';
 import { createLogger } from '@/lib/logger/logger';
 import { useUIStore } from '@/store/uiStore';
 import { categoryColors, useAppTheme } from '@/theme';
 
 import { DateTimeField } from './DateTimeField';
+import { ReminderEditorSection } from './ReminderEditorSection';
+import { RecurrencePicker, type RecurrenceState } from './RecurrencePicker';
 
 const logger = createLogger('task-editor-form');
 
@@ -92,6 +100,17 @@ interface TaskEditorFormProps {
    * existing task here would bypass the state-machine RPCs).
    */
   sharedFamilyId?: string;
+  /**
+   * Set (mode="edit" only) when `taskId` is a recurring series' own
+   * template row (`task.recurrenceRuleId` is non-null). Content edits
+   * route through update_recurring_series instead of update_personal_task/
+   * schedule_personal_task, a "this task repeats" notice replaces the
+   * Repeat picker (recurrence_rules has no direct client SELECT grant at
+   * all, so the rule's own frequency/interval/etc. can never be
+   * re-populated here — see docs/DECISIONS.md, "Phase 8"), and a "Stop
+   * repeating" action becomes available.
+   */
+  isRecurringSeries?: boolean;
 }
 
 /**
@@ -107,6 +126,7 @@ export function TaskEditorForm({
   initialValues,
   onDone,
   sharedFamilyId,
+  isRecurringSeries = false,
 }: TaskEditorFormProps) {
   const { t } = useTranslation(['tasks', 'common']);
   const theme = useAppTheme();
@@ -120,6 +140,9 @@ export function TaskEditorForm({
   const createCategory = useCreateCustomCategory();
   const updateTask = useUpdatePersonalTask();
   const scheduleTask = useSchedulePersonalTask();
+  const createRecurringTask = useCreateRecurringTask();
+  const updateRecurringSeries = useUpdateRecurringSeries();
+  const stopRecurringSeries = useStopRecurringSeries();
   const [formError, setFormError] = useState<string | null>(null);
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
   const [assigneeMenuOpen, setAssigneeMenuOpen] = useState(false);
@@ -128,6 +151,14 @@ export function TaskEditorForm({
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newCategoryToken, setNewCategoryToken] = useState<string>('work');
   const [newCategoryError, setNewCategoryError] = useState<string | null>(null);
+  const [recurrence, setRecurrence] = useState<RecurrenceState>({
+    frequency: 'none',
+    interval: 1,
+    byWeekday: [],
+    endCondition: 'never',
+  });
+  const [recurrenceError, setRecurrenceError] = useState<string | null>(null);
+  const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
 
   const familyMembers = familyMembersQuery.data ?? [];
   const activeFamilyMembers = familyMembers.filter((member) => !member.removedAt);
@@ -220,6 +251,17 @@ export function TaskEditorForm({
   // eslint-disable-next-line react-hooks/refs
   const onSubmit = handleSubmit(async (values) => {
     setFormError(null);
+    setRecurrenceError(null);
+
+    // Recurring personal tasks are never shared, and an Inbox task must not
+    // recur until scheduled with an explicit valid start (brief, Section
+    // 13) — both enforced client-side before ever calling the RPC (which
+    // enforces the same thing server-side either way).
+    if (mode === 'create' && !sharedFamilyId && recurrence.frequency !== 'none' && !values.date) {
+      setRecurrenceError(t('tasks:recurrence.repeatRequiresDate'));
+      return;
+    }
+
     try {
       if (mode === 'create' && sharedFamilyId) {
         await createSharedTask.mutateAsync({
@@ -233,6 +275,22 @@ export function TaskEditorForm({
           categoryId: values.categoryId,
           assigneeMemberId,
         });
+      } else if (mode === 'create' && recurrence.frequency !== 'none' && values.date) {
+        await createRecurringTask.mutateAsync({
+          title: values.title,
+          date: values.date,
+          timezone: DEVICE_TIMEZONE,
+          frequency: recurrence.frequency,
+          startTime: values.startTime,
+          durationMinutes: values.durationMinutes,
+          interval: recurrence.interval,
+          byWeekday: recurrence.frequency === 'weekly' ? recurrence.byWeekday : undefined,
+          until: recurrence.endCondition === 'on_date' ? recurrence.until : undefined,
+          count: recurrence.endCondition === 'after_count' ? recurrence.count : undefined,
+          description: values.description,
+          priority: values.priority,
+          categoryId: values.categoryId,
+        });
       } else if (mode === 'create') {
         await createTask.mutateAsync({
           title: values.title,
@@ -245,6 +303,27 @@ export function TaskEditorForm({
           categoryId: values.categoryId,
           visibility: values.visibility,
           familyId: values.visibility === 'family' ? (activeFamilyId ?? undefined) : undefined,
+        });
+      } else if (taskId && isRecurringSeries) {
+        // A recurring series' own template row: content + timing fields
+        // only, through update_recurring_series — never
+        // update_personal_task/schedule_personal_task, which the server
+        // rejects for a recurring task's own row anyway (see
+        // docs/DECISIONS.md, "Phase 8"). The rule itself (frequency/
+        // interval/weekday/end condition) isn't editable from this form —
+        // recurrence_rules has no client SELECT grant to re-populate it
+        // from.
+        await updateRecurringSeries.mutateAsync({
+          taskId,
+          title: values.title,
+          description: values.description,
+          clearDescription: !values.description,
+          priority: values.priority,
+          categoryId: values.categoryId,
+          clearCategory: !values.categoryId,
+          startTime: values.startTime,
+          clearStartTime: !values.startTime,
+          durationMinutes: values.durationMinutes,
         });
       } else if (taskId) {
         await updateTask.mutateAsync({
@@ -279,11 +358,26 @@ export function TaskEditorForm({
       justSubmittedRef.current = true;
       onDone();
     } catch (error) {
-      const code = error instanceof TaskServiceError ? error.code : 'unknown';
+      const code =
+        error instanceof TaskServiceError || error instanceof RecurrenceServiceError
+          ? error.code
+          : 'unknown';
       logger.warn('task save failed', { code, mode });
       setFormError(t('common:state.somethingWentWrong'));
     }
   });
+
+  const onStopRepeating = async () => {
+    if (!taskId) return;
+    setStopConfirmOpen(false);
+    try {
+      await stopRecurringSeries.mutateAsync(taskId);
+      justSubmittedRef.current = true;
+      onDone();
+    } catch {
+      setFormError(t('common:state.somethingWentWrong'));
+    }
+  };
 
   const fieldErrorMessage = (fieldName: keyof TaskEditorInput): string | undefined => {
     const key = errors[fieldName]?.message;
@@ -399,6 +493,36 @@ export function TaskEditorForm({
               </View>
             )}
           />
+        ) : null}
+
+        {mode === 'create' && !sharedFamilyId ? (
+          <>
+            <RecurrencePicker value={recurrence} onChange={setRecurrence} />
+            <HelperText type="error" visible={Boolean(recurrenceError)}>
+              {recurrenceError}
+            </HelperText>
+          </>
+        ) : null}
+
+        {mode === 'edit' && isRecurringSeries ? (
+          <>
+            <HelperText type="info" visible style={styles.sharedNotice}>
+              {t('tasks:recurrence.seriesNotice')}
+            </HelperText>
+            <Button
+              testID="stop-repeating-button"
+              mode="outlined"
+              icon="calendar-remove-outline"
+              onPress={() => setStopConfirmOpen(true)}
+              style={styles.field}
+            >
+              {t('tasks:recurrence.stopRepeating')}
+            </Button>
+          </>
+        ) : null}
+
+        {mode === 'edit' && taskId ? (
+          <ReminderEditorSection taskId={taskId} hasStartTime={Boolean(startTimeValue)} />
         ) : null}
 
         <Divider style={styles.divider} />
@@ -619,6 +743,23 @@ export function TaskEditorForm({
                 disabled={newCategoryName.trim().length === 0 || createCategory.isPending}
               >
                 {t('common:actions.create')}
+              </Button>
+            </Dialog.Actions>
+          </Dialog>
+        </Portal>
+      ) : null}
+
+      {isRecurringSeries ? (
+        <Portal>
+          <Dialog visible={stopConfirmOpen} onDismiss={() => setStopConfirmOpen(false)}>
+            <Dialog.Title>{t('tasks:recurrence.stopRepeatingConfirmTitle')}</Dialog.Title>
+            <Dialog.Content>
+              <Text variant="bodyMedium">{t('tasks:recurrence.stopRepeatingConfirmMessage')}</Text>
+            </Dialog.Content>
+            <Dialog.Actions>
+              <Button onPress={() => setStopConfirmOpen(false)}>{t('common:actions.cancel')}</Button>
+              <Button onPress={() => void onStopRepeating()} loading={stopRecurringSeries.isPending}>
+                {t('tasks:recurrence.stopRepeating')}
               </Button>
             </Dialog.Actions>
           </Dialog>

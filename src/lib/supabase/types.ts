@@ -399,18 +399,21 @@ export type Database = {
           assignment_notifications_enabled: boolean
           created_at: string
           profile_id: string
+          reminder_titles_enabled: boolean
           updated_at: string
         }
         Insert: {
           assignment_notifications_enabled?: boolean
           created_at?: string
           profile_id: string
+          reminder_titles_enabled?: boolean
           updated_at?: string
         }
         Update: {
           assignment_notifications_enabled?: boolean
           created_at?: string
           profile_id?: string
+          reminder_titles_enabled?: boolean
           updated_at?: string
         }
         Relationships: [
@@ -497,33 +500,39 @@ export type Database = {
       recurrence_rules: {
         Row: {
           by_weekday: number[] | null
+          count: number | null
           created_at: string
           created_by: string | null
           frequency: string
           id: string
           interval: number
+          stopped_at: string | null
           timezone: string
           until: string | null
           updated_at: string
         }
         Insert: {
           by_weekday?: number[] | null
+          count?: number | null
           created_at?: string
           created_by?: string | null
           frequency: string
           id?: string
           interval?: number
+          stopped_at?: string | null
           timezone: string
           until?: string | null
           updated_at?: string
         }
         Update: {
           by_weekday?: number[] | null
+          count?: number | null
           created_at?: string
           created_by?: string | null
           frequency?: string
           id?: string
           interval?: number
+          stopped_at?: string | null
           timezone?: string
           until?: string | null
           updated_at?: string
@@ -543,9 +552,12 @@ export type Database = {
           created_at: string
           delivered_at: string | null
           id: string
+          is_snooze: boolean
+          label: string | null
+          occurrence_id: string | null
           offset_minutes_before: number | null
           profile_id: string
-          remind_at: string
+          remind_at: string | null
           task_id: string
           updated_at: string
         }
@@ -553,9 +565,12 @@ export type Database = {
           created_at?: string
           delivered_at?: string | null
           id?: string
+          is_snooze?: boolean
+          label?: string | null
+          occurrence_id?: string | null
           offset_minutes_before?: number | null
           profile_id: string
-          remind_at: string
+          remind_at?: string | null
           task_id: string
           updated_at?: string
         }
@@ -563,13 +578,23 @@ export type Database = {
           created_at?: string
           delivered_at?: string | null
           id?: string
+          is_snooze?: boolean
+          label?: string | null
+          occurrence_id?: string | null
           offset_minutes_before?: number | null
           profile_id?: string
-          remind_at?: string
+          remind_at?: string | null
           task_id?: string
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "reminders_occurrence_id_fkey"
+            columns: ["occurrence_id"]
+            isOneToOne: false
+            referencedRelation: "task_occurrences"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "reminders_profile_id_fkey"
             columns: ["profile_id"]
@@ -776,6 +801,76 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "family_members"
             referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
+      task_occurrences: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          duration_minutes: number | null
+          id: string
+          occurrence_date: string
+          original_date: string
+          owner_profile_id: string
+          rescheduled: boolean
+          start_time: string | null
+          status: string
+          task_id: string
+          timezone: string | null
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          duration_minutes?: number | null
+          id?: string
+          occurrence_date: string
+          original_date: string
+          owner_profile_id: string
+          rescheduled?: boolean
+          start_time?: string | null
+          status?: string
+          task_id: string
+          timezone?: string | null
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          duration_minutes?: number | null
+          id?: string
+          occurrence_date?: string
+          original_date?: string
+          owner_profile_id?: string
+          rescheduled?: boolean
+          start_time?: string | null
+          status?: string
+          task_id?: string
+          timezone?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_occurrences_owner_profile_id_fkey"
+            columns: ["owner_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_occurrences_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "family_task_board"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_occurrences_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -1051,6 +1146,29 @@ export type Database = {
           },
         ]
       }
+      personal_task_occurrences: {
+        Row: {
+          category_id: string | null
+          completed_at: string | null
+          description: string | null
+          duration_minutes: number | null
+          family_id: string | null
+          is_recurring: boolean | null
+          occurrence_date: string | null
+          occurrence_id: string | null
+          original_date: string | null
+          owner_profile_id: string | null
+          priority: string | null
+          rescheduled: boolean | null
+          start_time: string | null
+          status: string | null
+          task_id: string | null
+          timezone: string | null
+          title: string | null
+          visibility: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       accept_event_responsibility: {
@@ -1082,6 +1200,20 @@ export type Database = {
         Returns: undefined
       }
       complete_shared_task: { Args: { p_task_id: string }; Returns: undefined }
+      complete_task_occurrence: {
+        Args: { p_occurrence_id: string }
+        Returns: undefined
+      }
+      compute_next_occurrence_date: {
+        Args: {
+          p_after: string
+          p_anchor_date: string
+          p_by_weekday: number[]
+          p_frequency: string
+          p_interval: number
+        }
+        Returns: string
+      }
       create_bare_responsibility: {
         Args: { p_event_id: string; p_label: string; p_type: string }
         Returns: string
@@ -1173,6 +1305,24 @@ export type Database = {
         }
         Returns: string
       }
+      create_recurring_personal_task: {
+        Args: {
+          p_by_weekday?: number[]
+          p_category_id?: string
+          p_count?: number
+          p_date: string
+          p_description?: string
+          p_duration_minutes?: number
+          p_frequency: string
+          p_interval?: number
+          p_priority?: string
+          p_start_time?: string
+          p_timezone: string
+          p_title: string
+          p_until?: string
+        }
+        Returns: string
+      }
       create_shared_family_task: {
         Args: {
           p_assignee_member_id?: string
@@ -1185,6 +1335,15 @@ export type Database = {
           p_start_time?: string
           p_timezone?: string
           p_title: string
+        }
+        Returns: string
+      }
+      create_task_reminder: {
+        Args: {
+          p_label?: string
+          p_offset_minutes_before?: number
+          p_remind_at?: string
+          p_task_id: string
         }
         Returns: string
       }
@@ -1205,6 +1364,14 @@ export type Database = {
       }
       delete_or_archive_personal_task: {
         Args: { p_task_id: string }
+        Returns: undefined
+      }
+      delete_task_reminder: {
+        Args: { p_reminder_id: string }
+        Returns: undefined
+      }
+      generate_task_occurrences: {
+        Args: { p_through_date?: string }
         Returns: undefined
       }
       get_family_invitation_preview: {
@@ -1259,8 +1426,22 @@ export type Database = {
         Args: { p_member_id: string }
         Returns: undefined
       }
+      reschedule_task_occurrence: {
+        Args: {
+          p_clear_start_time?: boolean
+          p_date: string
+          p_duration_minutes?: number
+          p_occurrence_id: string
+          p_start_time?: string
+        }
+        Returns: undefined
+      }
       restore_personal_task: { Args: { p_task_id: string }; Returns: undefined }
       restore_shared_task: { Args: { p_task_id: string }; Returns: undefined }
+      restore_task_occurrence: {
+        Args: { p_occurrence_id: string }
+        Returns: undefined
+      }
       revoke_family_invitation: {
         Args: { p_invitation_id: string }
         Returns: undefined
@@ -1291,6 +1472,20 @@ export type Database = {
         }
         Returns: undefined
       }
+      skip_task_occurrence: {
+        Args: { p_occurrence_id: string }
+        Returns: undefined
+      }
+      snooze_task_occurrence: {
+        Args: {
+          p_minutes?: number
+          p_occurrence_id?: string
+          p_task_id: string
+          p_until?: string
+        }
+        Returns: string
+      }
+      stop_recurring_series: { Args: { p_task_id: string }; Returns: undefined }
       take_event_responsibility: {
         Args: { p_responsibility_id: string }
         Returns: undefined
@@ -1333,6 +1528,39 @@ export type Database = {
           p_task_id: string
           p_title?: string
           p_visibility?: string
+        }
+        Returns: undefined
+      }
+      update_recurring_series: {
+        Args: {
+          p_by_weekday?: number[]
+          p_category_id?: string
+          p_clear_category?: boolean
+          p_clear_count?: boolean
+          p_clear_description?: boolean
+          p_clear_start_time?: boolean
+          p_clear_until?: boolean
+          p_count?: number
+          p_description?: string
+          p_duration_minutes?: number
+          p_frequency?: string
+          p_interval?: number
+          p_priority?: string
+          p_start_time?: string
+          p_task_id: string
+          p_title?: string
+          p_until?: string
+        }
+        Returns: undefined
+      }
+      update_task_reminder: {
+        Args: {
+          p_clear_and_set_absolute?: boolean
+          p_clear_and_set_offset?: boolean
+          p_label?: string
+          p_offset_minutes_before?: number
+          p_remind_at?: string
+          p_reminder_id: string
         }
         Returns: undefined
       }

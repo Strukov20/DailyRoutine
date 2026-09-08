@@ -37,6 +37,7 @@ function makeChain(result: QueryResult) {
   chain.select = jest.fn(() => chain);
   chain.eq = jest.fn(() => chain);
   chain.lt = jest.fn(() => chain);
+  chain.neq = jest.fn(() => chain);
   chain.is = jest.fn(() => chain);
   chain.in = jest.fn(() => chain);
   chain.or = jest.fn(() => chain);
@@ -83,6 +84,13 @@ const TASK_ROW = {
 };
 
 describe('taskService', () => {
+  beforeEach(() => {
+    // listTasksForDate/listOverdueTasks call generate_task_occurrences()
+    // (Phase 8) before reading — default it to a no-op success so every
+    // pre-existing test in this file doesn't need its own rpc mock.
+    (supabase.rpc as jest.Mock).mockResolvedValue({ data: null, error: null });
+  });
+
   afterEach(() => {
     jest.clearAllMocks();
   });
@@ -103,6 +111,7 @@ describe('taskService', () => {
       mockFromByTable({
         family_members: { data: [{ id: 'm1' }, { id: 'm2' }], error: null },
         tasks: { data: [TASK_ROW], error: null },
+        personal_task_occurrences: { data: [], error: null },
       });
 
       await listTasksForDate('u1', '2026-09-03');
@@ -122,6 +131,7 @@ describe('taskService', () => {
       mockFromByTable({
         family_members: { data: [], error: null },
         tasks: { data: [], error: null },
+        personal_task_occurrences: { data: [], error: null },
       });
 
       await listTasksForDate('u1', '2026-09-03');
@@ -136,6 +146,7 @@ describe('taskService', () => {
       mockFromByTable({
         family_members: { data: [{ id: 'm1' }], error: null },
         tasks: { data: [], error: null },
+        personal_task_occurrences: { data: [], error: null },
       });
 
       await listOverdueTasks('u1', '2026-09-03');

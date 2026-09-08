@@ -17,10 +17,13 @@ tags: [engineering, notifications, edge-functions, phase6, phase6.1, deployment]
 ## Status: implemented (Phase 6), scoped to shared family task assignment events only. **Not deployed** (Phase 6.1)
 
 Push notifications for the four assignment lifecycle events (assigned/reassigned → requested,
-accepted, declined, took → taken). Everything else — recurring tasks, reminders, digests,
-quiet hours, AI-driven content, email/SMS, an in-app notification inbox, event/child-profile
-notifications, ownership-transfer notifications, direct APNs/FCM — is deliberately out of
-scope. See [roadmap](../product/roadmap.md).
+accepted, declined, took → taken). Everything else — recurring-task change notifications,
+digests, quiet hours, AI-driven content, email/SMS, an in-app notification inbox,
+event/child-profile notifications, ownership-transfer notifications, direct APNs/FCM — is
+deliberately out of scope for *this* outbox. Task reminders are delivered too (Phase 8), but
+deliberately never through this outbox — see
+[Recurring tasks and reminders](recurring-tasks-and-reminders.md) for the separate device-local
+scheduler. See [roadmap](../product/roadmap.md).
 
 **No real push has been sent or received, through two phases now.** Every layer of testing
 (pgTAP, the Deno Edge Function suite, Jest, `scripts/e2e-notifications.sh`) uses a fake
@@ -183,6 +186,8 @@ Expo ticket-vs-receipt two-phase flow in full.
 
 - [Tasks and assignments](../domain/tasks-and-assignments.md) — the assignment state machine
   this feature hooks into
+- [Recurring tasks and reminders](recurring-tasks-and-reminders.md) — the separate,
+  device-local reminder scheduler (Phase 8), and how the two tap-routers stay disambiguated
 - [Security model](security-model.md) — Mechanism 4/4a in full
 - [Data model](data-model.md) — the schema
 - [Testing strategy](testing-strategy.md) — the RNTL/Jest gotchas found this phase

@@ -170,23 +170,32 @@ direct `INSERT`/`UPDATE`/`DELETE` grant. See [DECISIONS.md, "Phase
 | `assignee_member_id` | uuid → `family_members.id`, nullable   | current assignee, family tasks only — not settable via any personal-task RPC this phase                                                                                                                                                |
 | `assignment_status`  | text                                   | `'unassigned' \| 'pending_acceptance' \| 'accepted' \| 'declined'` — see `task_assignments` for the auditable history this field is a snapshot of                                                                                      |
 
-### Recurrence — deliberately not exposed this phase
+### Recurrence (Phase 8)
 
-`recurrence_rules` has zero grants/policies for `authenticated` (see that table's own section
-below) and no personal-task RPC accepts a `recurrence_rule_id` parameter — the read/write
-surface is fully closed, not just unused by the UI. A correct implementation needs to preserve
-completion history per occurrence and prevent duplicate "next occurrence" generation, which the
-current schema (one `tasks` row per recurring series, sharing a `recurrence_rule_id`) cannot do
-without generating a new task row per occurrence — a schema change, not just new UI. See
-[ROADMAP.md](ROADMAP.md) for the concrete proposal.
+A personal task with a non-null `recurrence_rule_id` is a *series*; its own `date`/`start_time`
+are the series template, never a schedulable instance by themselves once occurrences exist. Real
+occurrences live in `task_occurrences` (below), materialized on demand into a 45-day rolling
+horizon by the `SECURITY DEFINER` RPC `generate_task_occurrences` — never by an unbounded
+background job. See [DECISIONS.md, "Phase 8"](DECISIONS.md) for the full rationale (bounded
+materialized occurrences vs. fully virtual, the 45-day horizon, and why content edits are always
+series-wide). Shared/family tasks do not support recurrence this phase (non-goal).
 
-### Reminders — data layer only, no notification scheduling
+### Reminders (Phase 8: RPC-only, occurrence-scoped, local-scheduled)
 
-`reminders` rows can be created (the table's grants are already safe — see
-[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md)), but nothing in this phase schedules an
-actual Expo notification from one. The task editor does not expose reminder controls this
-phase, specifically to avoid implying a reminder does anything once saved — see
-[ROADMAP.md](ROADMAP.md).
+`reminders` writes moved from direct-grant to RPC-only this phase (`create_task_reminder` /
+`update_task_reminder` / `delete_task_reminder`; `SELECT` stays direct/RLS-governed) — the same
+pattern already used for `tasks`/`events`. Two new columns support the recurrence/snooze model:
+`occurrence_id` (nullable FK to `task_occurrences`, null for a standing series-wide reminder
+definition, set only for a one-time snooze scoped to exactly one occurrence) and `is_snooze`
+(true only for that one-time snooze row — a snooze never edits the original reminder
+definition). `remind_at` is now nullable: a *relative* reminder (`offset_minutes_before`, e.g.
+"15 minutes before") on a recurring task has no single fixed instant to store, since each
+occurrence's own instant differs — `reminders_exactly_one_time` enforces exactly one of
+`remind_at` (an *absolute* reminder — valid even for an Anytime/no-time task) or
+`offset_minutes_before` (a *relative* reminder — requires the task/occurrence to have a
+`start_time`) being set. Actual notification scheduling is entirely client-side — see
+[ARCHITECTURE.md, "Local reminder scheduling (Phase 8)"](ARCHITECTURE.md) — `reminders` rows
+are definitions, not a scheduling queue; nothing server-side ever dispatches one.
 
 ## task_assignments
 
@@ -205,33 +214,81 @@ assignment history real instead of inferred from `tasks.assignment_status` alone
 ## reminders
 
 **Owned by the user** who owns the parent task (family membership does not grant reminder
-access to someone else's reminder — a shared task can have per-person reminders).
+access to someone else's reminder — a shared task can have per-person reminders). Writes are
+**RPC-only** since Phase 8 (`create_task_reminder`/`update_task_reminder`/`delete_task_reminder`
+— see `supabase/migrations/20260908120000_recurring_tasks_reminders.sql`); `SELECT` remains
+direct/RLS-governed.
 
-| column                  | type                 | notes                                                                                                       |
-| ----------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `id`                    | uuid                 |                                                                                                             |
-| `task_id`               | uuid → `tasks.id`    |                                                                                                             |
-| `profile_id`            | uuid → `profiles.id` | whose reminder this is                                                                                      |
-| `remind_at`             | timestamptz          | resolved, absolute time (computed client- or server-side from the task's date/time + an offset at creation) |
-| `offset_minutes_before` | integer              | nullable; the authored offset, kept so editing the task's time can recompute `remind_at`                    |
-| `delivered_at`          | timestamptz          | nullable; set once `expo-notifications` confirms delivery                                                   |
+| column                  | type                                                | notes                                                                                                                              |
+| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                    | uuid                                                 |                                                                                                                                     |
+| `task_id`               | uuid → `tasks.id`                                    |                                                                                                                                     |
+| `profile_id`            | uuid → `profiles.id`                                 | whose reminder this is                                                                                                             |
+| `occurrence_id`         | uuid → `task_occurrences.id`, nullable, on delete cascade | null = standing reminder definition (applies to every occurrence). Set only for a one-time snooze — see `snooze_task_occurrence()` |
+| `remind_at`             | timestamptz, nullable                                | an **absolute** reminder — valid even for an Anytime task with no `start_time`                                                     |
+| `offset_minutes_before` | integer, nullable                                    | a **relative** reminder (e.g. "15 minutes before") — requires the task/occurrence to have a `start_time`                          |
+| `is_snooze`             | boolean                                              | true only for a one-time snooze reminder; never true for a standing definition                                                    |
+| `label`                 | text, nullable                                       |                                                                                                                                     |
+| `delivered_at`          | timestamptz                                          | nullable; set once `expo-notifications` confirms delivery                                                                          |
+
+`reminders_exactly_one_time` CHECK: exactly one of `remind_at`/`offset_minutes_before` is set,
+never both, never neither. Notification scheduling from these rows is entirely client-side (a
+local `expo-notifications` schedule, not a server dispatch) — see
+[ARCHITECTURE.md, "Local reminder scheduling (Phase 8)"](ARCHITECTURE.md).
 
 ## recurrence_rules
 
 Shared by tasks and events. **Owned by whatever references it** — no independent ownership
-model; RLS is enforced via the referencing row.
+model; RLS is enforced via the referencing row. Zero grants for `authenticated` — only reachable
+through the recurrence RPCs (`create_recurring_task`, `update_recurring_series`, etc.).
 
-| column       | type    | notes                                                                                                 |
-| ------------ | ------- | ----------------------------------------------------------------------------------------------------- |
-| `id`         | uuid    |                                                                                                       |
-| `frequency`  | text    | `'daily' \| 'weekly' \| 'monthly'` (MVP set — `RRULE`-style expressiveness is a V2 concern if needed) |
-| `interval`   | integer | e.g. every 2 weeks                                                                                    |
-| `by_weekday` | int[]   | nullable, ISO weekday numbers                                                                         |
-| `until`      | date    | nullable — open-ended if null                                                                         |
+| column       | type         | notes                                                                                                          |
+| ------------ | ------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `id`         | uuid         |                                                                                                                  |
+| `frequency`  | text         | `'daily' \| 'weekly' \| 'monthly' \| 'yearly'` (`'yearly'` added Phase 8)                                       |
+| `interval`   | integer      | e.g. every 2 weeks                                                                                              |
+| `by_weekday` | int[]        | nullable, ISO weekday numbers (weekly only)                                                                     |
+| `until`      | date         | nullable — mutually exclusive with `count` (`recurrence_rules_until_count_exclusive` CHECK, Phase 8)            |
+| `count`      | integer      | nullable, Phase 8 — occurrence-count end condition, mutually exclusive with `until`                             |
+| `stopped_at` | timestamptz  | nullable, Phase 8 — set by `stop_recurring_series()`; generation refuses any occurrence past this point         |
 
-Recurrence **generates** task/event instances rather than every instance being a stored row
-forever; the exact materialization strategy (generate N ahead vs. generate on read) is an
-implementation detail for the MVP build phase, not fixed here.
+Monthly/yearly recurrence **skips** a period where the anchor day doesn't exist (e.g. a Jan 31
+monthly series has no February occurrence) rather than clamping to the period's last day — see
+[DECISIONS.md, "Phase 8"](DECISIONS.md).
+
+## task_occurrences (Phase 8)
+
+One row per **generated occurrence** of a recurring personal task — never a duplicate `tasks`
+row per occurrence. **Owned by the user** who owns the parent task (`owner_profile_id`,
+denormalized from `tasks.owner_profile_id` at generation time for simple non-recursive RLS).
+Generated lazily, idempotently, into a rolling 45-day horizon by `generate_task_occurrences`.
+
+| column              | type                        | notes                                                                                                                    |
+| -------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `id`                 | uuid                        |                                                                                                                            |
+| `task_id`            | uuid → `tasks.id`           | the series                                                                                                                |
+| `owner_profile_id`   | uuid → `profiles.id`        | denormalized, not a parameter to any RPC                                                                                  |
+| `original_date`      | date                        | the date this occurrence *would* fall on per the rule alone — **immutable**; the idempotency/concurrency anchor          |
+| `occurrence_date`    | date                        | the *current* scheduled date — mutable via `reschedule_task_occurrence()`                                                |
+| `start_time`         | time, nullable              |                                                                                                                            |
+| `duration_minutes`   | integer, nullable           | `1`–`1440`                                                                                                                |
+| `timezone`           | text, nullable               | required when `start_time` is set                                                                                        |
+| `status`             | text                        | `'scheduled' \| 'completed' \| 'skipped'`                                                                                 |
+| `completed_at`       | timestamptz, nullable       |                                                                                                                            |
+| `rescheduled`        | boolean                     | true once `occurrence_date`/`start_time` diverge from what generation originally produced — the "this occurrence was moved" indicator |
+
+`unique (task_id, original_date)` is the idempotency/concurrency anchor: two concurrent
+"generate through date X" calls (or a client retry) can never produce two rows for the same
+natural slot, with or without an intervening reschedule. See
+[DECISIONS.md, "Phase 8"](DECISIONS.md) for why this shape was chosen over fully-virtual
+occurrences, and why "edit this occurrence" is scoped to reschedule/complete/restore/skip only
+— never content (no title/description/priority/category override columns exist on this table by
+design; every content field lives exclusively on the series' own `tasks` row).
+
+Read model: `personal_task_occurrences`, a `SECURITY DEFINER` RPC (not a bare view — a view
+can't call the generation RPC as a read-time side effect) that unions one-off tasks (unchanged)
+with recurring occurrences (generating through the requested date first). Today/Tomorrow/
+Calendar all read through this, never `tasks` directly for a recurring series.
 
 ## events
 

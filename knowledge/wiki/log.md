@@ -584,3 +584,197 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     as a hard constraint and a new convention (test screens from `src/`, import via relative
     path) rather than silently worked around with no explanation.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-08T00:00:00Z — Phase 8: Recurring Tasks, Scheduled Reminders, and Snooze
+
+- **Operation type:** implementation (new feature) + native verification + documentation +
+  wiki update
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md`](../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md).
+- **Wiki pages updated:** new
+  `engineering/recurring-tasks-and-reminders.md`; `index.md` (new page linked);
+  `domain/personal-planning.md` (recurrence/reminder boundaries rewritten from "deliberately
+  not built" to delivered); `product/mvp-definition.md` (implementation status brought current
+  through Phase 8 — every MVP-list bullet is now implemented); `product/roadmap.md`
+  (recurrence/reminders moved from "MVP-scope items not yet built" to delivered; calendar/push
+  non-goal lists clarified as task-scoped, not calendar-event-scoped); `engineering/data-model.md`
+  (new `task_occurrences` entity, `reminders`/`recurrence_rules`/`notification_preferences`
+  evolution, migration count 14→16, resolved the long-open "recurrence materialization
+  strategy" unresolved item); `engineering/security-model.md` (pgTAP count 391→461, files
+  13→14; new "not a seventh gap" entry for the pre-emptive `reminders` RPC-only conversion;
+  Mechanism 4b extension and new Mechanism 4c; new "Recurrence/reminder mutations are RPC-only
+  too" section); `engineering/testing-strategy.md` (Jest count 264→331, suites 37→42; pgTAP
+  count/file breakdown updated; new Phase 8 Components bullet; the `<Menu>` limitation
+  explicitly extended from "Jest-only" to "confirmed live via Maestro on a real device build,
+  narrowed to native-modal-presented screens"; new flaky-test convention entry);
+  `engineering/push-notifications.md` (clarified reminders are now delivered, deliberately
+  never through this outbox); `engineering/family-calendar.md` (conflict-detection Phase 8
+  extension noted).
+- **Canonical docs updated:** `docs/DECISIONS.md` (new "Phase 8" subsections: the device-local
+  scheduler rationale, reminder identity, permission-timing gap fix, cross-router
+  disambiguation, Snooze/Done semantics, the full native-verification diagnostic — hierarchy
+  dump, frame-by-frame video, second-Menu reproduction — and a "Verified, not just asserted"
+  closing section with exact re-run counts); `docs/DATA_MODEL.md` (`task_occurrences` section,
+  `reminders`/`recurrence_rules` rewritten, "Recurrence — deliberately not exposed" section
+  replaced); `docs/ARCHITECTURE.md` (new "Recurring tasks and local reminder scheduling"
+  section); `docs/SECURITY_AND_PRIVACY.md` (new Mechanism 4c, `reminders` RPC-only conversion
+  bullet, Mechanism 4/4b framing updated); `docs/TEST_STRATEGY.md` (new `<Menu>`
+  live-Maestro-confirmation bullet); `docs/ROADMAP.md` (MVP-scope items moved from "not yet
+  built" to delivered; calendar/push non-goal lists clarified); `README.md` (new Phase 8
+  bullet, `e2e:recurrence` script row, corrected "still not implemented" list).
+- **Decisions/contradictions recorded:**
+  - Chose bounded materialized occurrences (one real `task_occurrences` row per generated
+    occurrence, idempotent via `unique (task_id, original_date)`) over fully virtual
+    (computed-on-read) occurrences, for three concrete reasons recorded in `DECISIONS.md` —
+    efficient date-range joins for Today/Tomorrow/Calendar, a real row for conflict detection
+    to check, and simpler idempotent-concurrency reasoning.
+  - Direct testing against real Postgres before writing pgTAP surfaced four real bugs: a
+    weekly-interval `date_trunc` timestamp-vs-date cast bug, a weekly-series first-occurrence
+    anchor not snapping to a selected weekday, four occurrence RPCs not checking the parent
+    series' soft-delete state, and a real timezone-mixing bug in my own conflict-detection
+    pgTAP assertion (hardcoded UTC offset vs. the test runner's actual Europe/Kyiv system
+    timezone) — fixed via proper `at time zone` conversion rather than hand-computed offsets.
+  - A real permission-request gap was found and fixed mid-session: `ReminderEditorSection`'s
+    original `addPreset` created a reminder row with no OS permission check at all, meaning a
+    reminder could be silently created and then never fire. Fixed by checking
+    `getNotificationPermissionStatus()` first and only requesting when `'undetermined'`.
+  - A real cross-router payload collision was found and fixed while wiring in the second
+    (local-reminder) notification tap handler: Phase 6's existing router had no way to exclude
+    a local reminder payload, which would otherwise have been double- or mis-handled by both
+    routers on the same tap. Fixed by excluding any payload carrying a `notificationType`
+    field from the Phase 6 router.
+  - A genuinely new, live-environment confirmation of an already-documented limitation: Phase
+    5 recorded `react-native-paper`'s `<Menu>` as unreliable under Jest/`react-test-renderer`.
+    This session reproduced the identical failure in a real native build driven by Maestro —
+    diagnosed exhaustively (six tap strategies, a live accessibility-hierarchy dump, a
+    frame-by-frame screen-recording extraction via `ffmpeg` installed specifically for this,
+    and a second independent `<Menu>` on the same screen) rather than assumed, narrowing the
+    cause to "any `<Menu>` anchored on a screen presented via `presentation: 'modal'`." This
+    blocked real on-device verification of local-notification delivery/tap/Snooze/Done, which
+    is honestly reported as not observed, per this phase's own explicit instruction not to
+    describe a notification as observed unless it actually appeared. Build, launch, sign-in,
+    and data-flow (a task and a reminder created via the app's own RPC path both correctly
+    rendering in the real running app) were directly, visually verified on a real iOS 26.5
+    Simulator.
+  - A real, full-suite-only flaky test was found and fixed: `ReminderEditorSection.test.tsx`'s
+    two Menu-driven tests passed in isolation but intermittently failed among the full 42-suite
+    Jest run — the same `<Menu>`/Portal unreliability reproducing intermittently under Jest at
+    scale. Fixed by extracting the pure `existingReminderOffsets()` function and testing it
+    directly, never driving the Menu open. Confirmed stable across 3 consecutive full runs
+    afterward.
+  - Android: exports and `expo-doctor` pass with the Phase 8 schema/RPC changes in place; no
+    Android exact-alarm permission was requested (Section 24 stop-condition, correctly never
+    triggered). A real Android native build/run was not attempted this session — reported
+    honestly as unverified rather than assumed equivalent to the iOS result.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-08T00:00:00Z — Phase 8 final validation pass: real notification evidence, UX audit, a real bug fix
+
+- **Operation type:** verification (native, on-device) + audit + implementation (bug fix,
+  dead-code removal) + regression tests + documentation + wiki update
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-08-phase8-final-validation.md`](../raw/sessions/2026-09-08-phase8-final-validation.md).
+- **Wiki pages updated:** `engineering/recurring-tasks-and-reminders.md` (status line changed
+  from "not yet verified" to "verified on-device"; the `<Menu>` section rewritten to describe
+  the `__DEV__`-diagnostic-screen workaround and the full real-device evidence obtained through
+  it; two new sections — the Tonight/Tomorrow ordering bug, and the occurrence-vs-series UX
+  audit outcome; test counts updated); `engineering/testing-strategy.md` (two new convention
+  bullets — dev-diagnostic screens as an accepted workaround for a UI-automation limitation, and
+  fixing system time for any test whose assertions depend on real wall-clock "now"; Jest counts
+  331/42 → 342/43).
+- **Canonical docs updated:** `docs/DECISIONS.md` (Phase 8's native-verification section
+  rewritten — the `<Menu>` blocker kept as diagnosed, but followed by the `dev-diagnostics.tsx`
+  workaround and seven concretely itemized, real, on-device-observed results — permission grant,
+  push-token independence, scheduled-key/fire-time proof, delivery observed twice, reschedule
+  cancel-and-reschedule, delete cancellation, past-reminder skip — with tap-to-navigate/Snooze/
+  Done reframed as a distinct, structural cross-process-UI limitation rather than grouped under
+  the `<Menu>` finding; new "Final validation pass" subsection covering the UX audit and the
+  Tonight/Tomorrow bug; "Verified, not just asserted" counts updated); `docs/ARCHITECTURE.md`
+  (the `<Menu>` note extended to mention the diagnostic-screen workaround);
+  `docs/TEST_STRATEGY.md` (two new convention bullets, mirroring the wiki);
+  `docs/MVP_SCOPE.md` (conflict detection corrected from "V2, out of scope" to "implemented in
+  Phase 7; resolution remains V2" — a real, pre-existing docs/code contradiction unrelated to
+  Phase 8, found while auditing scope boundaries).
+- **Decisions/contradictions recorded:**
+  - Rather than accept the already-documented `<Menu>` limitation as a hard stop on Section 19's
+    on-device verification requirement, added a `__DEV__`-only diagnostic screen
+    (`app/dev-diagnostics.tsx`) that calls the exact production functions the broken Menu items
+    would have, skipping only the broken UI trigger. This is recorded explicitly as a workaround
+    with a clear bar (real production code only, never a bypassed business rule, never reachable
+    in production or normal navigation) rather than a shortcut, per the task's own explicit
+    allowance for "a development-only diagnostic log or existing production scheduler
+    inspection."
+  - This let real on-device evidence be obtained for permission-grant, push-token independence,
+    scheduled-key/fire-time correctness, actual delivery (observed twice, via a lock-screen
+    screenshot and via the scheduled-count transition at fire time), reschedule
+    (cancel-and-reschedule under the same key), delete (cancellation), and past-reminder
+    skip-and-never-reschedule behavior — all against real database rows and the real production
+    reconciliation function, not simulated.
+  - Tap-to-navigate and the Snooze/Done notification actions remained unverified, diagnosed as a
+    distinct, structural limitation from the `<Menu>` one: Maestro's `appId`-scoped iOS
+    automation can reliably drive exactly one piece of cross-process system UI (the OS
+    permission alert, confirmed working) but not ordinary lock-screen/Notification-Center
+    content, tried three ways (text selector, point tap, a Notification Center swipe from two
+    different screens). Recorded as not observed, not worked around further, consistent with
+    the standing instruction never to claim an observation that didn't happen.
+  - A real product-level bug was found specifically because this session's own test run
+    happened to execute near midnight: `SNOOZE_TONIGHT` could resolve to a later timestamp than
+    `SNOOZE_TOMORROW` when tapped after the fixed 20:00 anchor had already passed for the day —
+    inverting the two options exactly when a user would reach for "Tonight" in the evening.
+    Fixed in production (a bounded `now + 1 hour` fallback instead of the same anchor 24h later)
+    and in the test (fixed system time via `jest.useFakeTimers().setSystemTime(...)`, split into
+    a normal-hours case and a dedicated late-night case covering the exact scenario that broke).
+  - Audited the "This occurrence / Entire series" UX brief section against the actual
+    implementation and found it already correct by construction — every occurrence action
+    (complete/restore/reschedule/skip) already targets the occurrence directly, every content
+    edit already routes to the series, and the existing `seriesNotice` HelperText already states
+    this — there was never an interactive scope-choice dialog to begin with, and therefore
+    nothing misleading being shown. The one real finding was two dead, zero-reference i18n keys
+    (`seriesActionThisOccurrence`/`seriesActionEntireSeries`) left over as unwired scaffolding,
+    removed from both locale files. Added `TaskEditorForm.test.tsx` (the component had no test
+    file at all before this) to lock in the correct behavior going forward, which incidentally
+    confirmed `react-native-paper`'s `<Dialog>` — unlike `<Menu>` — mounts and interacts
+    correctly under Jest, narrowing the existing Menu limitation to that component specifically.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-08T00:00:00Z — Phase 8 production-surface cleanup: remove the temporary dev-diagnostics route
+
+- **Operation type:** cleanup (code removal) + verification + documentation + wiki update
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-08-phase8-production-cleanup.md`](../raw/sessions/2026-09-08-phase8-production-cleanup.md).
+- **Wiki pages updated:** `engineering/recurring-tasks-and-reminders.md` and
+  `engineering/testing-strategy.md` — both edited to state plainly that
+  `app/dev-diagnostics.tsx` was temporary and has since been removed before merge, while keeping
+  the evidence list it produced intact (past tense, framed as a historical record, not a claim
+  the screen still exists).
+- **Canonical docs updated:** `docs/DECISIONS.md`, `docs/ARCHITECTURE.md`,
+  `docs/TEST_STRATEGY.md` — same correction (screen removed, evidence preserved).
+- **Decisions/contradictions recorded:**
+  - The prior pass's `app/dev-diagnostics.tsx` (a `__DEV__`-only screen used to obtain real
+    on-device notification evidence around the `<Menu>` limitation) was always intended as
+    temporary, not a permanent addition to the codebase — removed in this pass along with its
+    route registration in `app/_layout.tsx`. Confirmed, not assumed, that removal is complete:
+    zero source references remain in `app/`/`src/`; zero trace in either `expo export`
+    platform's route manifest or bundled JS; zero trace in `npx expo config`'s public output.
+  - The production functions the diagnostic screen called
+    (`requestNotificationPermission`/`getNotificationPermissionStatus`, `reconcileReminders`,
+    `expoLocalScheduler`, `useReminderNotificationActions`) live in their own files and were
+    never modified by either adding or removing the diagnostic screen — it only ever called
+    them, so the real on-device evidence obtained through it remains valid documentation of how
+    those functions actually behave, even though the screen used to observe them no longer
+    exists.
+  - `knowledge/raw/` and `knowledge/wiki/log.md` are immutable/append-only by this repository's
+    own stated convention — the prior raw session file and log entry describing the diagnostic
+    screen's creation were left unedited (they accurately describe what was true at the time);
+    this cleanup gets its own new raw file and log entry rather than rewriting history.
+  - `expo-doctor` still reports the same `expo`/`expo-router` patch-version drift first noticed
+    in the prior pass (`20/21`) — new versions published upstream, unrelated to this session's
+    changes. Deliberately not bumped, consistent with this repository's stated tooling-version-
+    pinning discipline; recorded as deferred rather than silently ignored or reflexively fixed.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

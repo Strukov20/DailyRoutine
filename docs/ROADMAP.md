@@ -7,35 +7,15 @@ V2/V3 and how the current architecture leaves room for them without a rewrite.
 
 See [MVP_SCOPE.md](MVP_SCOPE.md).
 
-### MVP-scope items not yet built, with a concrete plan
+### MVP-scope items delivered in Phase 8
 
-Both of these are in `MVP_SCOPE.md`'s in-scope list — unlike the V2/V3 items below, they are
-not deferred to a later horizon on purpose, just not yet implemented, and each needed a
-decision recorded before Phase 4 could safely leave them out of the task editor (see
-`docs/DECISIONS.md`, "Phase 4," and `docs/DATA_MODEL.md`, "tasks").
-
-- **Recurring tasks.** `recurrence_rules` exists but has zero grants/policies, and no
-  personal-task RPC accepts a `recurrence_rule_id` — fully closed, not just unused. The
-  current schema (one `tasks` row per recurring series) can't preserve per-occurrence
-  completion history or prevent duplicate "next occurrence" generation without a schema
-  change: the anticipated shape is a `task_occurrences` table (one row per generated
-  occurrence, its own `completed_at`, `date`, and a FK back to the series' `tasks` row for the
-  shared title/description/priority/etc.), generated either N-ahead on a schedule or lazily on
-  read — same open question `recurrence_rules`' own migration comment already flagged.
-  Explicitly **not** implementable by just rewriting `tasks.date` on the same row when it's
-  completed — that destroys occurrence history, which the brief for this exact feature calls
-  out as unacceptable.
-- **Reminder scheduling.** `reminders` rows can already be created safely (the table's grants
-  are fine), but nothing schedules an actual `expo-notifications` delivery from one. Phase 6
-  built the two pieces this item previously called out as missing — `notification_tokens`
-  client-side registration (`src/lib/notifications/notificationService.ts`) and a Deno Edge
-  Function dispatcher pattern against Expo's push API (`supabase/functions/dispatch-notifications/`)
-  — but wired them to shared family task **assignment** events only, not reminders. What's
-  still missing for reminders specifically: a scheduled scan of `reminders.remind_at` (a
-  `pg_cron` job, most likely, following the same "enqueue to an outbox, dispatch separately"
-  shape Phase 6 established rather than sending directly from the scan) and a reminder-specific
-  outbox event type/payload. The task editor still deliberately has no reminder control until
-  this exists, rather than saving a reminder that silently never fires.
+Both **recurring tasks** and **reminder scheduling** — previously listed here as "not yet
+built, with a concrete plan" — were delivered in Phase 8 (personal tasks only; see
+[DATA_MODEL.md](DATA_MODEL.md), "task_occurrences (Phase 8)" and "Reminders (Phase 8)," and
+[DECISIONS.md](DECISIONS.md), "Phase 8," for the architecture actually built). Reminder
+delivery is a **device-local** `expo-notifications` schedule, not a route through Phase 6's
+server push outbox — see the "Push notification scope" note below for what that distinction
+means for reminders specifically.
 
 ### Push notification scope not covered by Phase 6/7
 
@@ -44,9 +24,12 @@ event-responsibility (drop-off/pick-up/etc.) assignment events (see
 [ARCHITECTURE.md](ARCHITECTURE.md), "Push notifications" and "Family calendar"). Deliberately
 still out of scope, not forgotten:
 
-- Notifications for recurring tasks, task completion, or task restoration.
-- Reminder delivery (see the "Reminder scheduling" item above — related infrastructure now
-  exists, reminders themselves are still not wired to it).
+- Notifications for recurring-task changes, task completion, or task restoration.
+- **Task reminder delivery specifically stays off this outbox** — it is a device-local
+  `expo-notifications` schedule instead (Phase 8; see [ARCHITECTURE.md](ARCHITECTURE.md),
+  "Recurring tasks and local reminder scheduling"), deliberately, since the content/timing are
+  fully known on-device and a server round-trip would only add latency and a network
+  dependency a reminder shouldn't have.
 - Digests/summaries, quiet hours, or any per-notification-type scheduling beyond immediate
   delivery.
 - AI-driven notification content or timing.
@@ -61,8 +44,10 @@ still out of scope, not forgotten:
 
 ### Calendar scope not covered by Phase 7
 
-Per the brief's own explicit non-goals: Week/Month calendar views, recurring events,
-scheduled reminder delivery, snooze, Google/Apple Calendar integration, travel-time
+Per the brief's own explicit non-goals: Week/Month calendar views, recurring **events** (Phase 8
+added recurrence to personal *tasks* only — `events`/`event_participants` gained no recurrence
+support), reminder delivery/snooze **for events** (Phase 8's reminder/snooze model is
+task-scoped only — an event has no `reminders` row), Google/Apple Calendar integration, travel-time
 calculation, maps/locations, *automatic* conflict resolution (detection only — see
 [ARCHITECTURE.md](ARCHITECTURE.md)), AI planning, automatic rescheduling, drag-and-drop
 calendar editing, attachments, event ownership transfer, a full offline write queue, and

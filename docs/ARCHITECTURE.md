@@ -367,6 +367,70 @@ Full design in [DATA_MODEL.md](DATA_MODEL.md) and
   one source per row, and a second trigger (`enqueue_event_responsibility_notification`) on
   `responsibility_assignments` mirroring the task one.
 
+## Recurring tasks and local reminder scheduling (Phase 8)
+
+Full design in [DATA_MODEL.md](DATA_MODEL.md) and [DECISIONS.md](DECISIONS.md). Two
+independent features share this phase but are architecturally separate:
+
+**Recurrence** — bounded materialized occurrences (`task_occurrences`), generated lazily and
+idempotently by `generate_task_occurrences` into a 45-day rolling horizon, never an unbounded
+background job. `src/lib/recurrence/recurrenceService.ts` wraps every recurrence RPC;
+`src/domain/recurrence/hooks.ts` exposes them as TanStack Query hooks. The read model
+(`personal_task_occurrences`) is unioned into the existing `listTasksForDate`/`listOverdueTasks`
+in `src/lib/tasks/taskService.ts` — Today/Tomorrow extend rather than duplicate the pre-Phase-8
+task list, and occurrence actions (complete/restore/reschedule/skip) are **non-optimistic**
+(invalidate-only): a recurring task's `id` repeats across occurrences, so an optimistic cache
+patch keyed by task id risks mutating the wrong occurrence in another mounted list.
+
+**Local reminder scheduling — a second notification pathway, deliberately separate from Phase
+6's server push outbox.** A reminder's content and fire time are entirely known on-device in
+advance, so nothing is server-authoritative here; scheduling goes straight through
+`expo-notifications`, behind a small testable interface:
+
+- `src/lib/reminders/localNotificationScheduler.ts` — the `LocalScheduler` interface
+  (`schedule`/`cancel`/`listScheduled`) and its one real implementation (`expoLocalScheduler`).
+  Screens/hooks never call `expo-notifications` directly.
+- `src/lib/reminders/reminderReconciliation.ts` — `reconcileReminders()`, the production
+  diff-and-apply algorithm (what should be scheduled vs. what is), called from
+  `useReminderReconciliation()` at fixed lifecycle points (auth-ready, app-foreground, and after
+  any mutation that could change what's due) — **never continuously**. Jest's fake-scheduler
+  suite exercises this exact function against an in-memory fake, never a reimplementation of it.
+- `src/components/tasks/ReminderEditorSection.tsx` — the only place `requestNotificationPermission()`
+  is called, and only from "add the first reminder," never at app startup (see
+  [DECISIONS.md](DECISIONS.md) for the permission-timing gap this closed).
+- `src/lib/notifications/useReminderNotificationActions.ts` — handles Snooze/Done/Custom
+  actions and taps on a *local* reminder notification (payload shaped
+  `{ notificationType: 'task_reminder', ... }`), mounted alongside, but disambiguated from,
+  Phase 6's `useNotificationResponseRouter` (server-push payloads have no `notificationType`
+  field — `resolveNotificationRoute` explicitly excludes any payload where one is present, so
+  the two routers can never both react to the same tap).
+
+Reminder identity is a deterministic string key
+(`` `${profileId}:${taskId}:${occurrenceId ?? 'series'}:${reminderId}` ``), embedded in the
+notification's own `data.reminderKey` at schedule time — never derived from the opaque native
+notification id `expo-notifications` assigns.
+
+**A known, real interaction-testability limitation, not an application defect**: both
+`ReminderEditorSection`'s and the task editor's Category picker's `react-native-paper` `<Menu>`
+never visibly opens when driven by Maestro's synthetic taps on a screen presented via
+expo-router's `presentation: 'modal'`, though the same component is already documented as
+unreliable under Jest/react-test-renderer since Phase 5. See
+[DECISIONS.md, "Phase 8"](DECISIONS.md) for the full diagnostic evidence (hierarchy dump,
+frame-by-frame video) and [TEST_STRATEGY.md](TEST_STRATEGY.md) for the resulting test-writing
+convention. Worked around, not left blocking real device verification: a temporary `__DEV__`-only
+diagnostic screen (`app/dev-diagnostics.tsx`, absent from any production build **and since
+removed from the codebase entirely** — see below) called the same production
+`requestNotificationPermission`/`reconcileReminders`/`expoLocalScheduler.listScheduled`
+functions the broken Menu items would have, letting permission-grant, scheduling, delivery,
+reschedule, and cancellation all be directly observed on a real device — see
+[DECISIONS.md, "Phase 8"](DECISIONS.md) for the full evidence, preserved there even though the
+diagnostic route itself no longer exists. Tap-to-navigate and the Snooze/Done notification
+*actions* remain unverified on-device for a separate, structural reason (cross-process iOS
+system UI is outside Maestro's automation scope for an `appId`-scoped flow). The production
+functions the diagnostic exercised (`requestNotificationPermission`, `reconcileReminders`,
+`expoLocalScheduler`, `useReminderNotificationActions`) are unaffected by its removal — none of
+them depended on the diagnostic screen; it only called them.
+
 ## Offline & caching (current state, not the V2 design)
 
 TanStack Query's in-memory cache gives cached reads of the last successfully loaded data for

@@ -1,12 +1,13 @@
 ---
 title: MVP definition
 status: current
-updated: 2026-09-03
+updated: 2026-09-08
 sources:
   - ../../../docs/MVP_SCOPE.md
   - ../../../docs/PRODUCT.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
-tags: [product, mvp]
+  - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
+tags: [product, mvp, phase8]
 ---
 
 ## Confirmed
@@ -25,14 +26,19 @@ drop-off/pickup, changes sync across devices, reminders and assignment notificat
 
 ## Current implementation status
 
-Four phases in: auth (Phase 2), Family Space/invitations/child profiles (Phase 3), and now
-personal tasks/Inbox/Today/Tomorrow (Phase 4 — see
-[personal-planning](../domain/personal-planning.md)) are all implemented and tested against a
-real local Supabase instance. **Still not implemented from the MVP list above**: scheduling
-reminders (data layer only, no actual notification delivery), recurring tasks (schema
-intentionally closed, needs a `task_occurrences`-shaped change), personal calendar, shared
-family calendar, shared task assignment UI, child events, drop-off/pickup responsibilities UI,
-Family Today. See [roadmap](roadmap.md) for the concrete status of each.
+Eight phases in, every bullet in the MVP list above is now implemented and tested against a
+real local Supabase instance: auth (Phase 2); Family Space/invitations/child profiles
+(Phase 3); personal tasks/Inbox/Today/Tomorrow (Phase 4 — see
+[personal-planning](../domain/personal-planning.md)); shared family tasks/assignment/Take Task
+(Phase 5); shared-task push notifications (Phase 6, **not yet deployed to a real device** — see
+[push-notifications](../engineering/push-notifications.md)); the family calendar, child events,
+and drop-off/pickup responsibilities as separate records (Phase 7 — see
+[family-calendar](../engineering/family-calendar.md)); and recurring tasks + reminder
+scheduling + Snooze (Phase 8 — see
+[recurring-tasks-and-reminders](../engineering/recurring-tasks-and-reminders.md), including a
+real on-device local-notification-delivery verification gap that phase left unresolved). Not
+part of the MVP list but worth naming: Realtime sync and Week/Month calendar views remain
+unbuilt — see [roadmap](roadmap.md) for exact status.
 
 ## Explicitly deferred (not MVP)
 
@@ -41,4 +47,5 @@ Full list: [roadmap](roadmap.md). Everything V2/V3-tagged.
 ## See also
 
 - [Product vision](product-vision.md)
+- [Recurring tasks and reminders](../engineering/recurring-tasks-and-reminders.md) — Phase 8
 - [Development workflow](../engineering/development-workflow.md) — recommended next phase

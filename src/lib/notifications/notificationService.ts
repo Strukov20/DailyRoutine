@@ -204,3 +204,26 @@ export async function setNotificationPreference(profileId: string, enabled: bool
     .upsert({ profile_id: profileId, assignment_notifications_enabled: enabled }, { onConflict: 'profile_id' });
   if (error) throw toNotificationServiceError(error);
 }
+
+/**
+ * "Show task titles in notifications" (Phase 8, Section 10) — a missing
+ * row means the column's own server-side default, false: a lock-screen
+ * reminder never shows a task's title/description until the caller
+ * explicitly opts in. See src/lib/reminders/reminderReconciliation.ts,
+ * the only place this preference is actually consumed.
+ */
+export async function getReminderTitlesPreference(): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('notification_preferences')
+    .select('reminder_titles_enabled')
+    .maybeSingle();
+  if (error) throw toNotificationServiceError(error);
+  return data?.reminder_titles_enabled ?? false;
+}
+
+export async function setReminderTitlesPreference(profileId: string, enabled: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('notification_preferences')
+    .upsert({ profile_id: profileId, reminder_titles_enabled: enabled }, { onConflict: 'profile_id' });
+  if (error) throw toNotificationServiceError(error);
+}

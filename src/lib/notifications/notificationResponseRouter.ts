@@ -21,10 +21,18 @@ const logger = createLogger('notification-response-router');
  * then refetches for real through the authenticated Supabase client + RLS.
  * A malformed or unrecognized-version payload resolves to null, never
  * throws.
+ *
+ * A `task_reminder` payload (Phase 8, local-only — see
+ * src/domain/notifications/payload.ts) deliberately resolves to null here
+ * too, even though it also carries a `taskId` field: it needs
+ * `response.actionIdentifier` (Done/Snooze/plain tap) to resolve correctly,
+ * which this generic tap-only router never inspects. See
+ * src/lib/reminders/useReminderNotificationActions.ts, the dedicated
+ * handler for that payload shape.
  */
 export function resolveNotificationRoute(data: unknown): string | null {
   const payload = parseNotificationPayload(data);
-  if (!payload) return null;
+  if (!payload || 'notificationType' in payload) return null;
   return 'taskId' in payload ? `/task/${payload.taskId}/edit` : `/event/${payload.eventId}`;
 }
 

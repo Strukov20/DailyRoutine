@@ -34,9 +34,8 @@ Full product/architecture documentation lives in [`docs/`](docs/):
 - **Phase 4 (Personal Tasks)**: full personal-task lifecycle (create, edit, complete, restore,
   schedule, archive) via RPC-only writes; Inbox, Today (overdue/timed/anytime/completed), and
   Tomorrow screens with quick-add and a full editor; categories (system defaults + basic
-  custom creation). Recurring tasks and reminder scheduling remain MVP-scope but not yet
-  built — see [docs/ROADMAP.md](docs/ROADMAP.md), "MVP-scope items not yet built." See
-  [docs/DECISIONS.md](docs/DECISIONS.md), "Phase 4."
+  custom creation). Recurring tasks and reminder scheduling were MVP-scope but not yet built at
+  this phase — see Phase 8 below. See [docs/DECISIONS.md](docs/DECISIONS.md), "Phase 4."
 - **Phase 5 (Shared Family Tasks)**: assign/reassign/take/accept/decline for family-visible
   tasks, an auditable `task_assignments` history, and a Family task board UI — all RPC-only
   writes, real multi-user backend integration (`scripts/e2e-backend.sh`), and Maestro E2E
@@ -74,10 +73,23 @@ Full product/architecture documentation lives in [`docs/`](docs/):
   [docs/DECISIONS.md](docs/DECISIONS.md), "Phase 7" and "Phase 7 follow-up." Week/Month views,
   recurring events, and Maestro E2E coverage for this feature are explicitly deferred — see
   [docs/ROADMAP.md](docs/ROADMAP.md).
+- **Phase 8 (Recurring Tasks, Scheduled Reminders, and Snooze)**: server-authoritative
+  recurrence (Daily/Weekly/Monthly/Yearly/Custom, DST-safe, bounded materialized occurrences on
+  a 45-day rolling horizon) with individual occurrence complete/restore/reschedule/skip vs.
+  entire-series update/stop; a device-local reminder scheduler (relative or absolute reminders,
+  multiple per task) built as a testable interface around `expo-notifications`, deliberately
+  separate from Phase 6's server push outbox; deterministic reconciliation at fixed app
+  lifecycle points; Snooze/Done/Custom notification actions. See
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), "Recurring tasks and local reminder scheduling,"
+  and [docs/DECISIONS.md](docs/DECISIONS.md), "Phase 8." Real native build/launch/sign-in/data-
+  flow was verified on an iOS Simulator this phase; real on-device local-notification delivery/
+  tap/action verification could not be completed due to a genuine `react-native-paper` `<Menu>`
+  interaction limitation under Maestro automation — see DECISIONS.md for the full evidence and
+  what remains unverified.
 
-Still not implemented: recurring-task generation, reminder scheduling/delivery, Realtime
-sync, notifications for anything beyond shared-task/responsibility assignment, and Week/Month
-calendar views — see [docs/MVP_SCOPE.md](docs/MVP_SCOPE.md) for the exact boundary,
+Still not implemented: Realtime sync, notifications for anything beyond shared-task/
+responsibility-assignment/reminder events, Week/Month calendar views, and shared/family
+recurring tasks — see [docs/MVP_SCOPE.md](docs/MVP_SCOPE.md) for the exact boundary,
 [docs/ROADMAP.md](docs/ROADMAP.md) for what's deliberately deferred, and
 [docs/DECISIONS.md](docs/DECISIONS.md) for why things were built the way they were.
 
@@ -115,6 +127,7 @@ placeholder), but sign-up/sign-in will fail — see `src/lib/supabase/client.ts`
 | `npm run e2e:backend`                      | Real multi-user backend integration — shared tasks (`scripts/e2e-backend.sh`) |
 | `npm run e2e:notifications`                | Real multi-user backend integration — notification outbox/dispatcher (`scripts/e2e-notifications.sh`) |
 | `npm run e2e:calendar`                     | Real multi-user backend integration — events/responsibilities/conflict detection (`scripts/e2e-calendar.sh`) |
+| `npm run e2e:recurrence`                   | Real multi-user backend integration — recurrence, occurrences, reminders (`scripts/e2e-recurrence.sh`) |
 
 ## Git workflow
 

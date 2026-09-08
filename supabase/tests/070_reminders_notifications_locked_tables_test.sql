@@ -1,6 +1,8 @@
--- Tests: reminders (owner-only, never shared even for a shared task),
--- notification_tokens (owner-only), recurrence_rules (fully locked down —
--- no direct client access at all this phase).
+-- Tests: reminders (owner-only, never shared even for a shared task; RPC-only
+-- writes since Phase 8 — see 140_recurring_tasks_reminders_test.sql for the
+-- create/update/delete-RPC coverage, this file keeps only the SELECT/RLS and
+-- direct-INSERT-is-fully-revoked checks), notification_tokens (owner-only),
+-- recurrence_rules (fully locked down — no direct client access at all).
 begin;
 select plan(9);
 
@@ -70,7 +72,8 @@ select throws_ok(
   ),
   '42501',
   null,
-  'another family member cannot create a reminder on the owner''s behalf either'
+  'a direct INSERT on reminders is rejected outright (Phase 8: fully revoked, RPC-only — not '
+  'merely RLS-blocked for a non-owner)'
 );
 
 -- ---------------------------------------------------------------------------

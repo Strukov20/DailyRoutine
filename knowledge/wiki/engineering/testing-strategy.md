@@ -13,7 +13,10 @@ sources:
   - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
   - ../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md
   - ../../raw/sessions/2026-09-08-phase7-followup-audit.md
-tags: [engineering, testing]
+  - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
+  - ../../raw/sessions/2026-09-08-phase8-final-validation.md
+  - ../../raw/sessions/2026-09-08-phase8-production-cleanup.md
+tags: [engineering, testing, phase8]
 ---
 
 ## Confirmed / current
@@ -49,6 +52,19 @@ tags: [engineering, testing]
     applies to `EventEditorForm.test.tsx` (trigger buttons/disabled state/validation/
     submission payloads tested, opened-menu content not). 264 Jest tests total across 37
     suites, up from 233.
+  - **Phase 8** adds `RecurrencePicker.test.tsx` (8), `ReminderEditorSection.test.tsx` (7),
+    `useReminderNotificationActions.test.tsx` (15, after a final-validation-pass fix — see
+    below), `reminderReconciliation.test.ts` (15, a fake-scheduler suite exercising the
+    *production* `reconcileReminders()` function, never a reimplementation),
+    `domain/recurrence/schemas.test.ts` (20), and (final validation pass)
+    `TaskEditorForm.test.tsx` (6, new — the component had no test file before) plus 4 new tests
+    in `notificationService.test.ts`. 342 Jest tests total across 43 suites, up from 264, stable
+    across 3 consecutive full runs. **The `<Menu>` limitation above is not Jest-only** — Phase 8
+    reproduced it live via Maestro on a real simulator too; see "Live-Maestro confirmation"
+    below. `ReminderEditorSection.test.tsx`'s two original Menu-driven tests were also found
+    genuinely flaky at full-suite scale (passed alone, intermittently failed among 42 suites) —
+    fixed by extracting the pure `existingReminderOffsets()` function and testing that directly
+    instead of driving the Menu open at all.
 - **Localization** — `src/i18n/i18n.test.ts` checks i18next initializes, a key translates
   differently per locale, and every namespace has matching keys across `en`/`uk`.
 - **Auth/config** — Jest with `@/lib/supabase/client`/`@/lib/env` mocked at the module
@@ -65,12 +81,13 @@ tags: [engineering, testing]
   optimistic-update architecture rule (see [system-architecture](system-architecture.md))
   requires before any hook is allowed to use one.
 - **RLS/privacy tests** — pgTAP via `supabase test db`, against a real local Postgres
-  instance with RLS enabled. `supabase/tests/*.sql` (13 files, 391 assertions total: 192
+  instance with RLS enabled. `supabase/tests/*.sql` (14 files, 461 assertions total: 192
     through Phase 4, +71 in Phase 5's `100_shared_family_tasks_test.sql`, +30 in Phase 6's
     `110_notification_outbox_test.sql`, +92 in Phase 7's `120_family_calendar_test.sql`
     (88 original + 4 added in the Phase 7 follow-up audit, closing a gap where the
     `declined`/`taken` notification event types had no direct assertion), +6 in Phase 6.1's
-    `130_security_regression_test.sql`), including a dedicated secret-marker
+    `130_security_regression_test.sql`, +70 in Phase 8's new
+    `140_recurring_tasks_reminders_test.sql`), including a dedicated secret-marker
     privacy-regression test (`060_privacy_regression_test.sql`), the full
     family/invitation/child-profile RPC suite (`080_family_management_test.sql`), the
     personal-task RPC suite (`090_personal_task_management_test.sql`, itself extending the
@@ -88,31 +105,41 @@ tags: [engineering, testing]
     responsibilities' assignees untouched and `due_at` derives without drifting), the full
     responsibility assignment state machine, Busy-block privacy for a private family-linked
     event, `has_member_schedule_conflict`'s half-open interval semantics, member-removal
-    resolution extended to responsibilities, and the notification outbox extension — and (Phase
+    resolution extended to responsibilities, and the notification outbox extension — (Phase
     6.1) `130_security_regression_test.sql`, a schema-driven (never hardcoded) invariant check
     that anon/PUBLIC has no `EXECUTE` on any non-trigger function in `public`/`notifications`
     beyond a short reviewed whitelist, meant to durably close the anon-EXECUTE-grant finding
-    class rather than catch it manually again next time.
-    **Verified: all 391 assertions pass** against a real local instance (`supabase db reset &&
+    class rather than catch it manually again next time — and (Phase 8)
+    `140_recurring_tasks_reminders_test.sql`, covering occurrence generation/idempotency,
+    monthly-missing-day and weekly-anchor-snapping recurrence rules, the full occurrence
+    lifecycle RPCs (including the soft-deleted-parent-series check added after the audit found
+    it missing), reminder CRUD and the `remind_at`-xor-`offset_minutes_before` CHECK, snooze,
+    and the extended conflict-detection function.
+    **Verified: all 461 assertions pass** against a real local instance (`supabase db reset &&
 supabase test db`), plus real curl-driven multi-user flows for Family Space, personal
-    tasks, shared tasks, notifications, and the calendar (real `auth.users` accounts, not
-    simulated `set local role`) — see
+    tasks, shared tasks, notifications, the calendar, and recurrence (real `auth.users`
+    accounts, not simulated `set local role`) — see
     [`knowledge/raw/sessions/2026-09-03-phase3-family-space.md`](../../raw/sessions/2026-09-03-phase3-family-space.md),
     [`knowledge/raw/sessions/2026-09-03-phase4-personal-tasks.md`](../../raw/sessions/2026-09-03-phase4-personal-tasks.md),
     [`knowledge/raw/sessions/2026-09-06-phase6-push-notifications.md`](../../raw/sessions/2026-09-06-phase6-push-notifications.md),
     [`knowledge/raw/sessions/2026-09-07-phase7-family-calendar.md`](../../raw/sessions/2026-09-07-phase7-family-calendar.md),
     [`knowledge/raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md`](../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md),
+    [`knowledge/raw/sessions/2026-09-08-phase7-followup-audit.md`](../../raw/sessions/2026-09-08-phase7-followup-audit.md),
     and
-    [`knowledge/raw/sessions/2026-09-08-phase7-followup-audit.md`](../../raw/sessions/2026-09-08-phase7-followup-audit.md).
+    [`knowledge/raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md`](../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md).
     Running the Phase 2 suite for real surfaced and fixed one migration-ordering bug and two
     test-assertion bugs; the Phase 3 audit surfaced a real `anon`-EXECUTE-grant gap, the
     Phase 4 audit surfaced a real `tasks`-direct-`UPDATE` gap, the Phase 6 audit surfaced
-    the same anon-EXECUTE gap recurring on two new functions, and the Phase 7 audit surfaced
+    the same anon-EXECUTE gap recurring on two new functions, the Phase 7 audit surfaced
     the same direct-grant gap Phase 4 found, now for `events`/`event_participants`/
-    `responsibilities` (see [security-model](security-model.md)) — none of these were caught
-    by static review alone, which is exactly why Phase 6.1 built an automated guard instead of
-    relying on the next phase's author remembering to check manually again. CI's `database`
-    job also runs them on every push/PR.
+    `responsibilities`, and Phase 8's own direct testing (against real Postgres, before pgTAP
+    was written) surfaced a weekly-interval timestamp/date-cast bug, a weekly-anchor-snapping
+    gap, a missing soft-deleted-series check across four occurrence RPCs, and a real
+    timezone-mixing bug in the conflict-detection test itself (see
+    [security-model](security-model.md), [recurring-tasks-and-reminders](recurring-tasks-and-reminders.md)) —
+    none of these were caught by static review alone, which is exactly why Phase 6.1 built an
+    automated guard instead of relying on the next phase's author remembering to check manually
+    again. CI's `database` job also runs them on every push/PR.
 - **Edge Function tests (Phase 6)** — Deno's own test runner (`deno test`), not Jest — the
   `dispatch-notifications` Edge Function is a separate Deno module tree
   (`supabase/functions/`), explicitly excluded from `tsconfig.json`/`eslint.config.js`/
@@ -171,10 +198,46 @@ e2e:seed` then `npm run e2e:ios`. Tab bar items get a real testID via
   `scripts/e2e-ios.sh` (Maestro itself has no such built-in option — confirmed by searching its
   bundled jars) as a genuine but unproven stabilization attempt, since the root cause was
   isolated to touch delivery, not an animation race. A hang, unlike a silent no-op, cannot be
-  retried around within a flow at all. **Not extended to Phase 6 (push notifications) or
-  Phase 7 (family calendar)** — deliberately, given the established non-determinism above and
-  each phase's own already-large scope; `scripts/e2e-notifications.sh`/`e2e-calendar.sh` are
-  the real-backend coverage that exists for those instead.
+  retried around within a flow at all. **Not extended to Phase 6 (push notifications), Phase 7
+  (family calendar), or Phase 8 (recurrence/reminders)** — deliberately, given the established
+  non-determinism above and each phase's own already-large scope;
+  `scripts/e2e-notifications.sh`/`e2e-calendar.sh`/`e2e-recurrence.sh` are the real-backend
+  coverage that exists for those instead.
+  - **Live-Maestro confirmation of the `<Menu>` limitation, on a real device build (Phase
+    8)**: ad hoc Maestro/`simctl` investigation (not a checked-in flow) against a real
+    `npx expo run:ios` build reproduced the Jest-documented `<Menu>` failure live. Six tap
+    strategies against `ReminderEditorSection`'s anchor button all reported `COMPLETED` in
+    Maestro's own output with no visible state change; a `maestro hierarchy` dump taken
+    immediately after a tap showed zero menu content anywhere in the tree; `ffmpeg` (installed
+    for this purpose) extracted a screen recording frame-by-frame and showed the button's own
+    pressed-state highlight firing correctly with no menu content in any frame — a genuine
+    non-open, not a flash-open-close race. A second, independent `<Menu>` on the same screen
+    (the Category picker) failed identically, narrowing the cause to "any `<Menu>` whose anchor
+    lives on a screen presented via `presentation: 'modal'`," not a component-specific bug.
+    Full evidence: [DECISIONS.md, "Phase 8"](../../../docs/DECISIONS.md).
+  - **Worked around with a temporary `__DEV__`-only diagnostic screen, not left blocked (Phase 8
+    final validation pass)**: `app/dev-diagnostics.tsx` called the exact production functions
+    the broken Menu items would have (`requestNotificationPermission`, `reconcileReminders`,
+    `expoLocalScheduler.listScheduled`), letting real permission-grant/scheduling/delivery/
+    reschedule/cancellation be directly observed on device despite the Menu never opening. Tap-
+    to-navigate and the Snooze/Done notification *actions* remained unverified for a distinct,
+    structural reason: they need cross-process iOS system UI (lock screen/Notification Center)
+    that Maestro can't drive for an `appId`-scoped flow, except the one specially-supported
+    permission-alert case (which did work). **The diagnostic screen was removed before merge**
+    (a dedicated production-surface cleanup pass, same session) — confirmed absent from both
+    `expo export` outputs and `npx expo config`; the evidence it produced is preserved as a
+    historical record, not as a claim that the screen still exists. See [DECISIONS.md, "Phase
+    8"](../../../docs/DECISIONS.md) for the full evidence and
+    [recurring-tasks-and-reminders](recurring-tasks-and-reminders.md).
+  - **A real Tonight/Tomorrow snooze-ordering bug, found only because a test happened to run
+    near midnight (Phase 8 final validation pass)**: a test asserting `SNOOZE_TONIGHT` always
+    resolves sooner than `SNOOZE_TOMORROW` had never actually been exercised late enough in the
+    day to hit the bug — rolling a passed 20:00 anchor forward 24h landed *after* tomorrow's
+    fixed 09:00 anchor. Fixed in both the production fallback (`now + 1 hour` instead of the
+    same hour next day) and the test (`jest.useFakeTimers().setSystemTime(...)`, with a
+    dedicated late-night case). General lesson recorded in
+    [`docs/TEST_STRATEGY.md`](../../../docs/TEST_STRATEGY.md): a test reading real wall-clock
+    time with no fixed system clock is a real flakiness source, not just a theoretical one.
 
 ## Conventions to follow in new tests
 
@@ -276,3 +339,5 @@ npm run verify       # lint + typecheck + test + wiki:lint
 - [Authentication](authentication.md) — what the auth test suite covers
 - [Development workflow](development-workflow.md) — CI wiring
 - [Family calendar](family-calendar.md) — what's covered and explicitly deferred for Phase 7
+- [Recurring tasks and reminders](recurring-tasks-and-reminders.md) — the fake-scheduler
+  suite, and the full live-Maestro `<Menu>` diagnostic evidence

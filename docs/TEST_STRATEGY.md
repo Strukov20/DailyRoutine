@@ -145,6 +145,58 @@ AsyncStorage is null` even though every call is mocked. Listing the exports expl
   importing an `app/` file is fine at test time and invisible to the production bundle. Any
   future screen-level test should follow this same location, not `app/` itself.
 
+- **`react-native-paper`'s `<Menu>` limitation is not Jest-only (Phase 8).** Phase 5 documented
+  it as unreliable under `react-test-renderer`; Phase 8's live Maestro-driven simulator testing
+  reproduced the identical failure in a real running app — six distinct tap strategies against
+  the anchor button all reported success in Maestro's own output, but a `maestro hierarchy` dump
+  taken immediately after showed zero menu content mounted anywhere, and a frame-by-frame
+  extraction of a screen recording showed the button's own pressed-state highlight firing
+  correctly with no menu content in any frame. The same failure reproduced on a second,
+  independent `<Menu>` on the same screen, narrowing it to "any `<Menu>` whose anchor lives on a
+  screen presented via `presentation: 'modal'`," not a component-specific bug — see
+  [DECISIONS.md, "Phase 8"](DECISIONS.md) for the full evidence. **Consequence for test-writing**:
+  do not attempt to drive a `<Menu>` open in either a Jest test or a Maestro flow on a modal
+  screen; test the pure logic behind it directly instead (Phase 8's
+  `ReminderEditorSection.test.tsx` extracts `existingReminderOffsets()` as a standalone,
+  Menu-free unit for exactly this reason, after the Menu-driven version of that same test proved
+  flaky under a full-suite run — passing in isolation, intermittently failing at suite scale).
+
+- **When a UI-automation limitation blocks a required on-device check, a temporary `__DEV__`-only
+  diagnostic screen calling the real production functions is an accepted workaround — not a
+  shortcut (Phase 8's final validation pass).** The `<Menu>` limitation above blocked granting
+  notification permission and triggering reconciliation through the normal UI. Rather than
+  report that verification as impossible, `app/dev-diagnostics.tsx` (gated by `if (!__DEV__)
+  return null`, registered in `app/_layout.tsx` only when `__DEV__`, reachable only via a direct
+  deep link — absent from any production build and from normal in-app navigation) called the
+  exact production functions a real user action would (`requestNotificationPermission`,
+  `reconcileReminders`, `expoLocalScheduler.listScheduled`) and displayed only ids/keys/times,
+  never a task title. This let real on-device scheduling/delivery/reschedule/cancellation be
+  directly observed — see [DECISIONS.md, "Phase 8"](DECISIONS.md) for the full evidence, which
+  is preserved there as a record even though the diagnostic route no longer exists. The bar it
+  had to clear while it existed: every button must call real production code (never a
+  reimplementation or a mock), never bypass an actual business rule (only the broken *UI
+  trigger* for an already-correct code path), and never render anything a production build
+  would ship or a real user could reach.
+  **`app/dev-diagnostics.tsx` and its route registration were removed before merge** (a
+  dedicated production-surface cleanup pass, same session) — confirmed absent from both
+  `expo export` platforms' route manifests and bundled JS, from `npx expo config`'s public
+  output, and from every source reference reachable from a production build. The production
+  functions it exercised (`requestNotificationPermission`, `reconcileReminders`,
+  `expoLocalScheduler`, `useReminderNotificationActions`) are untouched — the diagnostic only
+  ever called them, nothing in them depended on the diagnostic existing. If a future phase needs
+  the same kind of on-device verification again, re-add a similarly scoped, similarly temporary
+  screen rather than assuming this one still exists.
+- **A test reading real wall-clock time (`new Date()`/`Date.now()`) with no fixed system clock
+  is a real, if usually-invisible, source of flakiness — fix it with `jest.useFakeTimers().
+  setSystemTime(...)`, don't just re-run it (Phase 8's final validation pass).** A
+  `SNOOZE_TONIGHT`/`SNOOZE_TOMORROW` test that had passed throughout Phase 8 failed the first
+  time this suite happened to run near midnight — not test flakiness but a real production bug
+  the untested time-of-day exposed (see `useReminderNotificationActions.ts`'s Tonight/Tomorrow
+  fix, [DECISIONS.md, "Phase 8"](DECISIONS.md)). Any test whose assertions depend on the
+  relationship between "now" and a fixed clock time (a snooze anchor, a daily cutoff, etc.)
+  should fix system time explicitly and add a case for the specific edge the fix addresses, not
+  rely on incidentally passing at whatever time it happens to run.
+
 ## What "at least one test of each kind" means going forward
 
 Every new domain module should ship with a unit test in the same PR (not after). Every new

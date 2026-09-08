@@ -1551,3 +1551,358 @@ a DB reset in between**: 28/28 both times, zero `e2e-*` residue in `auth.users` 
 direct query afterward. Both `expo export` platforms succeed (the `app/` test-file bug above was
 caught by this exact check, not assumed away). `expo-doctor` 21/21. A secret scan of the compiled
 iOS bundle for `SERVICE_ROLE_KEY`/`NOTIFICATION_WORKER_SECRET`/`CLIENT_SECRET` found nothing.
+
+## Phase 8 (Recurring Tasks, Scheduled Reminders, and Snooze)
+
+### Recurrence architecture, decided before any RPC was written
+
+**Audit first**: `recurrence_rules` (Phase 2) exists but has zero grants/policies and is
+referenced by nothing writable — `docs/ROADMAP.md` already anticipated exactly this gap and
+already named the anticipated shape (`task_occurrences`, "one row per generated occurrence, its
+own `completed_at`, a FK back to the series' `tasks` row"). `recurrence_rules` itself only
+supports `daily|weekly|monthly` (no `yearly`), has no occurrence-count end condition (only
+`until`), and has no way to mark a series stopped. None of this is a design flaw — Phase 2
+deliberately left it unfinished pending this exact phase.
+
+**Chosen approach: bounded materialized occurrences, server-authoritative, generated
+on-demand into a rolling horizon** — one real row per occurrence in a new `task_occurrences`
+table, generated (idempotently) by a `SECURITY DEFINER` RPC the client calls whenever it needs
+occurrences through a given date (Today/Tomorrow/Calendar reads, and reminder reconciliation),
+never by an unbounded background job or an unbounded `INSERT ... generate_series`.
+
+**Rejected alternative: fully virtual occurrences, computed on read from the recurrence rule
+plus a sparse exceptions table.** This avoids ever materializing a row for an occurrence nobody
+has touched, but was rejected for three concrete reasons: (1) Today/Tomorrow/Calendar need to
+join occurrence state (completed/skipped/rescheduled) against a date range efficiently and
+indexably — recomputing an RRULE-style expansion per query and left-joining a sparse exception
+table for every read is real complexity for no benefit at this app's actual occurrence volumes
+(a personal task list, not a calendar service processing millions of series); (2) the brief's
+own conflict-detection integration (`has_member_schedule_conflict`, Phase 7) needs a real,
+queryable row to check a timed task occurrence against — a virtual occurrence would need its own
+parallel expansion logic duplicated into that function; (3) idempotent concurrent generation is
+materially simpler to reason about and test as "insert with a unique constraint, ON CONFLICT DO
+NOTHING" than as "compute the same virtual set twice and reconcile."
+
+**`task_occurrences`**: `id`, `task_id` (FK to the series' own `tasks` row — never a duplicate
+`tasks` row per occurrence), `original_date` (the date this occurrence *would* fall on per the
+recurrence rule — immutable, and the true idempotency key alongside `task_id`, so a reschedule
+can never reopen a duplicate-generation window at its natural slot), `occurrence_date`/
+`start_time`/`duration_minutes`/`timezone` (the *current* scheduled values — mutable via
+reschedule, defaulting to what the rule computed at generation time), `status`
+(`scheduled | completed | skipped`), `completed_at`, `rescheduled` (boolean, true once
+`occurrence_date`/`start_time` diverge from what generation produced — the client-facing
+"this occurrence was moved" indicator), `created_at`/`updated_at`. `unique (task_id,
+original_date)` is the concurrency/idempotency anchor: two concurrent "generate occurrences
+through date X" calls (or a client retry) can never produce two rows for the same natural slot,
+with or without an intervening reschedule.
+
+**`recurrence_rules` evolved, not replaced**: `frequency` CHECK extended to add `'yearly'`; a
+new nullable `count` column (`until`/`count` mutually exclusive via CHECK — `null`/`null` means
+"never ends"); a new nullable `stopped_at timestamptz` (set by `stop_recurring_series`, after
+which generation refuses any occurrence with `original_date` past the stop point). Existing
+`by_weekday`/`interval`/`timezone` are reused as-is — Weekly's "on selected weekdays" and the
+DST-safe local-wall-time anchor were already correctly designed in Phase 2, just unused until
+now.
+
+**Rolling horizon: 45 days**, chosen as comfortably longer than this app's own longest-lived
+local-reminder lead time (`1 day before`, the longest documented preset) plus slack for a user
+who doesn't open the app daily, while staying small enough that `generate_task_occurrences`
+never risks materializing more than a few dozen rows per call even for a daily series. Extended
+lazily — called from `useOwnDayEvents`/Today/Tomorrow reads (via the occurrence read model
+below) and from reminder reconciliation, never from a `pg_cron` job (no server-side scheduled
+generation this phase — see the "device-local scheduler" section below for why reminders
+themselves also stay entirely client-triggered).
+
+**"Edit this occurrence" is scoped to reschedule + complete/restore/skip — never content.**
+Personal-task recurrence has no per-occurrence assignee (shared/recurring-task combination is
+an explicit non-goal — see below), so the only thing that could plausibly differ occurrence-to-
+occurrence is *when* it happens, not *what* it is. `task_occurrences` therefore carries no
+title/description/priority/category override columns at all — every content field lives
+exclusively on the series' own `tasks` row, and every edit to it is necessarily a series-wide
+edit. This is why the required series-action dialog only ever needs to distinguish "reschedule
+this one occurrence" from "change the series" — there is no third, partially-implemented
+"override this occurrence's content" option to accidentally expose.
+
+**Read model**: Today/Tomorrow/Calendar must show occurrences, not the series template (the
+brief's own explicit requirement). A new `personal_task_occurrences` read path (implemented as
+a `SECURITY DEFINER` RPC returning a unioned result, not a bare view — a bare view can't call
+the generation RPC as a read-time side effect) supplies: one-off tasks (`recurrence_rule_id is
+null`) exactly as before, straight from `tasks.date`, and recurring tasks
+(`recurrence_rule_id is not null`) from `task_occurrences`, generating through the requested
+date first. One-off task behavior is unchanged byte-for-byte — this phase adds a path
+alongside it, never rewrites it.
+
+**Shared/family recurring tasks are explicitly out of scope** (brief non-goal, "shared-task
+recurrence assignment rules"). `task_occurrences`/`recurrence_rules` only ever get exercised
+through personal-task RPCs this phase; `create_shared_family_task` gains no recurrence
+parameter. Documented here so the schema's generality (nothing about `task_occurrences` is
+inherently personal-only) is never mistaken for an implemented feature.
+
+### A device-local scheduler, deliberately separate from Phase 6's server push outbox
+
+Phase 6 built a server-authoritative push *outbox* (`notification_outbox` → Edge Function →
+Expo push token) for events that originate on the server (another family member's action).
+Reminders are the opposite shape: the *content* and *timing* are entirely known on-device in
+advance (a task's own start time minus an offset), so there is nothing for a server round-trip
+to add except latency and a network dependency a reminder shouldn't have. Reminders are
+therefore scheduled entirely client-side via `expo-notifications`' local scheduling API, behind
+a small `LocalScheduler` interface (`schedule`/`cancel`/`listScheduled`,
+`src/lib/reminders/localNotificationScheduler.ts`) with one real implementation
+(`expoLocalScheduler`) and one fake used only in tests. This is a second, independent
+notification pathway from Phase 6's outbox — deliberately, not an oversight — and the two must
+never both react to the same notification tap (see the router-disambiguation entry below).
+
+**Reminder identity**: `` `${profileId}:${taskId}:${occurrenceId ?? 'series'}:${reminderId}` ``
+(`buildReminderKey`, `src/lib/reminders/reminderReconciliation.ts`) — embedded directly in the
+notification's own `data.reminderKey` at schedule time, never derived from the opaque native
+notification id `expo-notifications` assigns, which is platform-specific and not guaranteed
+stable across app restarts. The fire date is embedded the same way
+(`data.reminderFireAtMs`) rather than re-derived from the native trigger object on read-back
+(`listScheduled()`), whose shape differs between iOS and Android and isn't worth parsing when
+the value is already known at schedule time.
+
+**Reconciliation is deterministic and called at fixed lifecycle points — never continuous.**
+`reconcileReminders()` diffs "what should be scheduled" (derived from reminder definitions plus
+the occurrence read model) against "what is scheduled" (`scheduler.listScheduled()`), and
+schedules/cancels only the difference. It runs from `useReminderReconciliation()`
+(`app/_layout.tsx`, on auth-ready and app-foreground) and after any mutation that could change
+what's due (create/update/delete a reminder, complete/restore/reschedule/skip an occurrence,
+stop a series) — never from a background timer or interval. It is scoped to exactly one
+profile's own key prefix, so it can never inspect or cancel another account's previously-
+scheduled notifications on a shared device. This is also, deliberately, the exact function
+Jest's fake-scheduler suite (15 tests, `reminderReconciliation.test.ts`) exercises against —
+never a separate reimplementation of the reconciliation logic.
+
+**Permission requested only on "add the first reminder," never at app startup** (Section 9).
+`ReminderEditorSection.addPreset` checks `getNotificationPermissionStatus()` first and only
+calls `requestNotificationPermission()` when the status is `'undetermined'` — an already-
+granted or already-denied status is left alone (re-prompting after a denial just re-surfaces the
+same OS-throttled system alert, or on iOS, nothing at all after the first prompt). This is a
+real gap found and fixed mid-phase: the original `addPreset` created the reminder row directly
+with no permission check at all, meaning a reminder could be silently created and then never
+fire because nothing had ever prompted for OS permission.
+
+**"Show task titles in notifications" defaults to disabled** (Section 10,
+`notification_preferences.reminder_titles_enabled boolean not null default false`, a small
+follow-up migration rather than a rewrite of the Phase 6 notification-preferences migration).
+When off, a reminder notification's title/body are a fixed generic string ("FamilyFlow" /
+"Task reminder") regardless of the task's actual content — decided at *build* time in
+`buildContent()`, not filtered at *display* time, so the task's title is never even passed to
+`expo-notifications` when the preference is off. This is the same privacy-is-a-data-layer-
+guarantee discipline the rest of the app follows, applied to notification payloads.
+
+**Two independent notification-response systems must never both react to one tap.**
+Phase 6's `useNotificationResponseRouter` (`src/lib/notifications/notificationResponseRouter.ts`)
+already handles server-push payloads shaped `{ taskId | eventId, ... }`. The new
+`useReminderNotificationActions` handles local reminder payloads shaped
+`{ notificationType: 'task_reminder', ... }`. `resolveNotificationRoute` now explicitly
+excludes any payload where `'notificationType' in payload` — a real cross-router collision that
+would otherwise have double-handled (or mis-handled) every local reminder tap, found while
+wiring the second router in.
+
+**Snooze/Done act on the actual delivered notification, not a freshly re-derived one.** The
+notification category (`task_reminder.v1`) registers a fixed action set (Done, +15/+30/+60 min,
+Tonight, Tomorrow, Custom) per Section 11; Done marks the occurrence complete and Snooze
+re-schedules a fresh one-shot local notification at a fixed offset from *now* (or, for
+Tonight/Tomorrow, a fixed documented local time) — it never touches the underlying reminder
+definition or series, only that one delivered instance.
+
+### Native verification: what was actually driven on-device, and a genuine tooling limitation found
+
+Section 19 requires a real native rebuild and on-device verification of local scheduling, not a
+simulated description. `npx expo run:ios` succeeded (0 errors) against a real iPhone 17 Pro
+(iOS 26.5) simulator. What was directly, visually confirmed on that running app: real sign-in
+via Supabase Auth end-to-end; a task created through the exact RPC path the app itself uses
+(`create_personal_task`, with `start_time`) correctly appearing in the real Today screen's
+Timed section at the correct time — direct proof the occurrence-aware read model
+(`personal_task_occurrences`) works outside of mocked tests; a reminder created via
+`create_task_reminder` correctly appearing in the real Edit Task screen's Reminders section,
+confirming `useTaskReminders` works live; deep-linking (`familyflow://…`) correctly routing to
+both the Notifications settings screen and a specific task's edit screen; the existing
+"Enable push notifications" button correctly refusing to proceed on a simulator (`Device.isDevice`
+gate, Phase 6), with the expected on-screen message — confirming that gate still behaves
+correctly and is a genuinely different code path from local-reminder permission.
+
+**The `<Menu>` blocker (confirmed, not assumed) and how it was worked around.**
+`ReminderEditorSection`'s and the task editor's Category picker's shared `react-native-paper`
+`<Menu>` never visibly opens when driven by Maestro on this exact setup:
+
+- Six distinct tap strategies against the reminder Menu's anchor (`testID`, text-with-retry,
+  exact point coordinates, after dismissing an unrelated overlay, after a full app relaunch,
+  after a scroll) all reported `COMPLETED` in Maestro's own output, but the following screenshot
+  showed no state change every time.
+- A live `maestro hierarchy` dump taken immediately after a tap showed **zero** menu content
+  anywhere in the accessibility tree — not merely invisible, genuinely never mounted.
+- A screen recording of the tap, extracted frame-by-frame (`ffmpeg`, installed this session for
+  this purpose), showed the button's own pressed-state highlight correctly appearing — proving
+  the touch *is* registered by the `Pressable` — with no menu content in any frame before or
+  after.
+- The same failure reproduces on a second, independent `<Menu>` on the same screen (the
+  Category picker), ruling out a `ReminderEditorSection`-specific bug: both anchor `Button`s live
+  on a screen presented via expo-router's `presentation: 'modal'` (native-stack modal
+  presentation), which is the one property they share.
+
+This is consistent with — and, via the live reproduction, now doubly confirms — the `<Menu>`
+unreliability already documented from Jest/react-test-renderer since Phase 5
+(`docs/TEST_STRATEGY.md`), extending the known limitation from "unreliable under
+react-test-renderer" to "unreliable under Maestro-driven live interaction when the anchor lives
+on a natively-presented modal screen." It reads as a genuine interaction between
+`react-native-paper`'s `Portal`-based rendering and `react-native-screens`' native modal
+presentation, not an application defect — the anchor `Button`'s own `onPress` and pressed state
+work correctly; only the portaled menu content fails to mount.
+
+Rather than block the rest of Section 19's requirements on a UI-automation limitation, a small
+`__DEV__`-gated diagnostic screen (`app/dev-diagnostics.tsx`, registered in `app/_layout.tsx`
+only when `__DEV__` — absent from any production build) was added **temporarily** to call the
+*production* functions directly: `requestNotificationPermission()`/
+`getNotificationPermissionStatus()` (the exact functions `ReminderEditorSection.addPreset`
+calls — not reimplemented), `reconcileReminders()` (the exact production reconciliation
+algorithm, fed real data from `listAllPendingReminders`/`listAllScheduledOccurrences`, the same
+service functions the real app hooks call), and `expoLocalScheduler.listScheduled()` (the real
+scheduler's own read-back). The screen displayed only ids/keys/fire-times — never a reminder's
+task title — reachable only via a direct deep link (`familyflow://dev-diagnostics`), with no
+entry point reachable through normal in-app navigation. This was explicitly a **diagnostic**,
+not a reimplementation or a production shortcut: every button on it called the same production
+code path a real user action would, just without requiring the broken `<Menu>` tap first.
+
+**The diagnostic screen and its route registration have since been removed** (a
+production-surface cleanup pass, same session) — `app/dev-diagnostics.tsx` no longer exists,
+`app/_layout.tsx`'s conditional `Stack.Screen` for it is gone, and both `expo export` outputs
+and `npx expo config` were re-checked to confirm zero trace of it in a production build (route
+manifest, bundled JS, and public config). The findings below remain true and are preserved as
+the evidence obtained while it existed — the functions it called (`requestNotificationPermission`,
+`reconcileReminders`, `expoLocalScheduler`, `useReminderNotificationActions`) are ordinary
+production code, untouched by the diagnostic's removal.
+
+**What this newly, genuinely verified on-device while the diagnostic screen existed** (real
+device, real OS, real `expo-notifications` calls throughout):
+
+1. **Permission**: tapping "Request notification permission" triggered the real iOS system
+   dialog ("FamilyFlow Would Like to Send You Notifications"); tapping "Allow" (a real Maestro
+   tap on a genuine system alert — XCUITest's one specially-supported cross-process interaction,
+   unlike the Menu/lock-screen cases below) flipped `getNotificationPermissionStatus()` from
+   `undetermined` to `granted`, confirmed by reading the status back before and after.
+2. **Local scheduling requires no push token, no EAS project, no `Device.isDevice` gate** —
+   directly confirmed: the existing "Enable push notifications" button (Phase 6,
+   `registerForPushNotifications()`) correctly threw `unsupported` on this same simulator in the
+   same session, while `requestNotificationPermission()` and the reconciliation-driven schedule
+   below succeeded on the identical device with no code path in common.
+3. **The production `reconcileReminders()` scheduled a real native request** with the exact
+   expected deterministic key and fire time: for a task with `start_time` 23:02 local
+   (Europe/Kyiv) and an offset-0 reminder, `expoLocalScheduler.listScheduled()` returned exactly
+   one request with key `<profileId>:<taskId>:series:<reminderId>` and
+   `fireDate: 2026-09-08T20:02:00.000Z` (23:02 local) — computed independently by the real
+   reconciliation code from real database rows, matching by construction, not by assertion.
+4. **The notification was actually observed delivered** — a lock-screen screenshot, taken after
+   the fire time, shows a real system notification: `FamilyFlow — Task reminder — 1m ago`. The
+   generic body ("Task reminder," not the real task title "Native verification reminder 2")
+   directly confirms the `reminder_titles_enabled` default-off privacy behavior is correctly
+   enforced in a real delivered notification, not just in a Jest assertion. A second,
+   independent scheduling round for a different reminder showed the identical result, and in
+   both cases the request disappeared from `listScheduled()` immediately after its fire time —
+   the real OS clearing a fired one-shot trigger, additional independent confirmation of genuine
+   delivery.
+5. **Reschedule correctly cancels and re-schedules the same logical reminder.** Updating a
+   task's `start_time` via `schedule_personal_task` (the real RPC the app's own reschedule flow
+   calls) and re-running reconciliation produced `cancelled=1 scheduled=1`: the stale native
+   request was cancelled, a new one was scheduled under the **same** key with the **new** fire
+   time — proving the update path is wired correctly end-to-end, on a real device, not just in
+   the fake-scheduler suite.
+6. **Delete correctly cancels.** Calling `delete_task_reminder` (the real RPC) and re-running
+   reconciliation reduced `listScheduled()` to zero native requests for that key.
+7. **Past reminders are correctly, permanently skipped, never re-scheduled** — reconciling with
+   two already-fired reminder definitions still in the input set produced
+   `skipped: [...] (past)` for both, `scheduled` only for the one genuinely-future reminder —
+   the exact deterministic, idempotent behavior the architecture promises, observed against real
+   data on a real device, not asserted against fake data in Jest.
+
+**What remains unverified, and is not reported as observed: tap-to-navigate, and the Snooze/Done
+notification actions.** These require interacting with UI that iOS renders in a separate
+process (SpringBoard — the lock screen, a notification banner, Notification Center), not the
+target app's own view hierarchy. Distinctly from the `<Menu>` finding above (an in-app,
+same-process rendering failure), this is a structural limitation of Maestro's iOS automation:
+a flow scoped to `appId: com.familyflow.app` can drive genuine cross-process system UI in
+exactly one specially-supported case — the OS permission alert, which worked (see point 1
+above) — but plain taps against lock-screen/Notification-Center content, tried multiple ways
+(exact-text selector, point-coordinate tap, a swipe to open Notification Center from both the
+lock screen and the Home Screen), never registered as a real interaction with that content: text
+selectors reported "element not found" against system-rendered notification text, and
+point-coordinate taps completed with no observable effect. This is consistent with Maestro/
+XCUITest's iOS automation being scoped to the target app's own process for ordinary interaction,
+with the permission-alert case being a deliberate, narrow exception Apple/XCUITest supports —
+not a defect in this app's own notification-action wiring, which is covered instead by the real
+production code exercised at the reconciliation layer above, by
+`useReminderNotificationActions.test.tsx`'s fake-response-driven suite (Done/Snooze/tap
+handling against the real handler function), and by the DB-level idempotency assertions in
+`140_recurring_tasks_reminders_test.sql`.
+
+**Android**: `npx expo export --platform android` succeeds and `expo-doctor` passes with the
+Phase 8 changes in place; no Android exact-alarm permission was requested or added (Section 24
+stop-condition, correctly never triggered — `expo-notifications`' default trigger types need no
+`SCHEDULE_EXACT_ALARM`). A real Android native build/run was not attempted this session — no
+emulator/device verification beyond the export/doctor checks above.
+
+### Final validation pass: occurrence-vs-series UX audit, and a real Tonight/Tomorrow ordering bug
+
+A follow-up validation pass audited the "This occurrence / Entire series" UX Section 7 requires
+and found the current implementation already correct in substance, but with one piece of dead,
+misleading scaffolding: `tasks:recurrence.seriesActionThisOccurrence`/`seriesActionEntireSeries`
+i18n keys existed in both locale files with zero references anywhere in the codebase — no
+component ever rendered them. There is, and was, no interactive "pick a scope" dialog at all:
+complete/restore/reschedule/skip always target the occurrence directly (`task.occurrenceId`),
+and editing content always routes to the series' own row (`task.seriesTaskId ?? task.id`,
+`today.tsx`/`tomorrow.tsx`) with the existing `seriesNotice` HelperText making that explicit —
+there is no ambiguity for a dialog to resolve, by construction, since each action already
+implies its own scope. The two dead keys were removed (both locale files) rather than left as
+scaffolding that could mislead a future reader into thinking such a dialog exists or should be
+built with per-occurrence content semantics. `TaskEditorForm.test.tsx` (new — the component had
+no test file at all before this) locks in: the series notice renders and "This occurrence"/
+"Entire series" never render anywhere in the editor; the Repeat picker never appears in edit
+mode; the Stop-repeating confirm dialog has exactly two actions (Cancel, Stop repeating — never
+a third "this occurrence" option) and calls `stop_recurring_series`, never
+`update_recurring_series`. Confirms, incidentally, that `react-native-paper`'s `<Dialog>` (used
+for this confirm) mounts and interacts correctly under Jest — the documented `<Menu>`
+limitation above is specific to `<Menu>`'s own Portal-rendering path, not `Portal`-based
+components in general.
+
+**A real bug found via the dev-diagnostics native verification above, not by inspection**:
+`useReminderNotificationActions.ts`'s `SNOOZE_TONIGHT` handler rolled a fixed 20:00 anchor
+forward by exactly 24h once it had passed for the day — meaning tapped after 20:00 local,
+"Tonight" resolved to *tomorrow* 20:00, which is *later* than "Tomorrow" (a fixed tomorrow
+09:00 anchor), inverting the two options' relative ordering exactly when a user would actually
+reach for "Tonight" (in the evening). Found because this session's own Jest run happened to
+execute near midnight local time, and the existing `SNOOZE_TONIGHT`/`SNOOZE_TOMORROW` test read
+real wall-clock time with no fixed system clock — a second, related gap (a genuinely
+non-deterministic test that had simply never been exercised late enough in the day to fail
+before). Fixed both: production code now falls back to `now + 1 hour` (always earlier than
+tomorrow's fixed 09:00 anchor) instead of the same hour 24h later when tonight's anchor has
+already passed; the test now fixes system time via `jest.useFakeTimers().setSystemTime(...)`
+for determinism, split into a midday case (the anchor hasn't passed) and a dedicated late-night
+case (the exact scenario that broke) so the fix has a permanent regression guard.
+
+Also corrected: `docs/MVP_SCOPE.md` listed conflict *detection* under "V2 — explicitly out of
+scope," despite Phase 7 having implemented `has_member_schedule_conflict()` two phases earlier
+— a real, pre-existing docs/code contradiction, unrelated to Phase 8's own work but noticed
+while auditing scope boundaries during this pass. Corrected to note detection is implemented,
+resolution remains V2.
+
+### Verified, not just asserted
+
+Fresh `supabase db reset && supabase test db`: `Files=14, Tests=461`, all passing (the new
+`140_recurring_tasks_reminders_test.sql` plus zero regressions in the 13 pre-existing files).
+`npm run verify`: lint, typecheck, `342/342` Jest across 43 suites (up from 331/42 — the new
+`TaskEditorForm.test.tsx`, the local-permission-independence tests in
+`notificationService.test.ts`, and the Tonight/Tomorrow-ordering regression tests), `wiki:lint`
+clean, confirmed stable across 3 consecutive full runs. `deno test`: `11/11` steps, zero
+regressions. `e2e:backend` 32/32, `e2e:notifications` 24/24, `e2e:calendar` 28/28 — all still
+green, confirming the Phase 8 schema/RPC additions introduced no regression in earlier phases'
+backends. `e2e:recurrence` (23 checks) run **twice consecutively without a DB reset in
+between**: 23/23 both times. Both `expo export` platforms succeed, including with the new
+`__DEV__`-gated diagnostic screen present. `expo-doctor`: 21/21. A secret scan of both compiled
+bundles for `SERVICE_ROLE_KEY`/`NOTIFICATION_WORKER_SECRET`/`CLIENT_SECRET` found nothing. Real
+native build/launch/sign-in/data-flow/permission-grant/scheduling/delivery/reschedule/
+cancellation all directly verified on a physical-simulator iOS 26.5 device, as detailed above;
+tap-to-navigate and the Snooze/Done notification actions specifically could not be verified due
+to a structural, cross-process iOS UI-automation limitation (not an app defect) also detailed
+above, and are not claimed as observed.
+

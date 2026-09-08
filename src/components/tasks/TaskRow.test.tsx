@@ -111,4 +111,41 @@ describe('TaskRow', () => {
 
     expect(screen.getByText('Overdue')).toBeOnTheScreen();
   });
+
+  it('shows no recurring indicator for a one-off task', async () => {
+    await renderWithTheme(
+      <TaskRow task={TASK} onToggleComplete={jest.fn()} onEdit={jest.fn()} onArchive={jest.fn()} />,
+    );
+
+    expect(screen.queryByTestId('task-recurring-indicator-t1')).not.toBeOnTheScreen();
+  });
+
+  it('shows a "Repeats" indicator (icon + label, not color alone) for a recurring occurrence', async () => {
+    await renderWithTheme(
+      <TaskRow
+        task={{ ...TASK, isRecurring: true, rescheduled: false }}
+        onToggleComplete={jest.fn()}
+        onEdit={jest.fn()}
+        onArchive={jest.fn()}
+      />,
+    );
+
+    const indicator = screen.getByTestId('task-recurring-indicator-t1');
+    expect(indicator).toBeOnTheScreen();
+    expect(screen.getByText('Repeats')).toBeOnTheScreen();
+  });
+
+  it('shows a "Moved" indicator instead of "Repeats" once the occurrence has been individually rescheduled', async () => {
+    await renderWithTheme(
+      <TaskRow
+        task={{ ...TASK, isRecurring: true, rescheduled: true }}
+        onToggleComplete={jest.fn()}
+        onEdit={jest.fn()}
+        onArchive={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Moved')).toBeOnTheScreen();
+    expect(screen.queryByText('Repeats')).not.toBeOnTheScreen();
+  });
 });

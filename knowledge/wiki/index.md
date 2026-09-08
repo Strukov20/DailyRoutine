@@ -1,7 +1,7 @@
 ---
 title: LLM Wiki index
 status: current
-updated: 2026-09-07
+updated: 2026-09-08
 sources: []
 tags: [index]
 ---
@@ -36,6 +36,9 @@ For a one-off lookup, prefer `rg <term> knowledge/wiki` over reading this whole 
   Function dispatcher, and client-side token/routing layer (Phase 6)
 - [Family calendar](engineering/family-calendar.md) — events, responsibilities, the
   assignment state machine, conflict detection, and the Calendar UI (Phase 7)
+- [Recurring tasks and reminders](engineering/recurring-tasks-and-reminders.md) — bounded
+  materialized occurrences, the device-local reminder scheduler, and a confirmed `<Menu>`
+  testability limitation (Phase 8)
 - [Testing strategy](engineering/testing-strategy.md) — what's tested, what isn't yet
 - [Development workflow](engineering/development-workflow.md) — git rules, CI, **the
   mandatory wiki read/update workflow** — read this once, it governs how every other page

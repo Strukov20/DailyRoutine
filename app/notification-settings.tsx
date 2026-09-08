@@ -9,7 +9,9 @@ import {
   useNotificationPermissionStatus,
   useNotificationPreference,
   useRegisterPushNotifications,
+  useReminderTitlesPreference,
   useSetNotificationPreference,
+  useSetReminderTitlesPreference,
 } from '@/domain/notifications/hooks';
 import { NotificationServiceError, openSystemNotificationSettings } from '@/lib/notifications/notificationService';
 import { useAppTheme } from '@/theme';
@@ -27,6 +29,8 @@ export default function NotificationSettingsScreen() {
   const registerMutation = useRegisterPushNotifications();
   const preferenceQuery = useNotificationPreference();
   const setPreferenceMutation = useSetNotificationPreference();
+  const reminderTitlesQuery = useReminderTitlesPreference();
+  const setReminderTitlesMutation = useSetReminderTitlesPreference();
 
   const [registrationErrorKey, setRegistrationErrorKey] = useState<string | null>(null);
 
@@ -102,6 +106,21 @@ export default function NotificationSettingsScreen() {
           value={preferenceQuery.data ?? true}
           disabled={preferenceQuery.isLoading || setPreferenceMutation.isPending}
           onValueChange={(value) => setPreferenceMutation.mutate(value)}
+        />
+      </View>
+
+      <View style={styles.preferenceRow}>
+        <View style={styles.preferenceText}>
+          <Text variant="bodyMedium">{t('settings.reminderTitlesLabel')}</Text>
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            {t('settings.reminderTitlesDescription')}
+          </Text>
+        </View>
+        <Switch
+          testID="notification-settings-reminder-titles-preference"
+          value={reminderTitlesQuery.data ?? false}
+          disabled={reminderTitlesQuery.isLoading || setReminderTitlesMutation.isPending}
+          onValueChange={(value) => setReminderTitlesMutation.mutate(value)}
         />
       </View>
     </ScreenContainer>

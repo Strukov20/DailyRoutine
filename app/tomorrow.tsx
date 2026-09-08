@@ -11,6 +11,7 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { OfflineBanner } from '@/components/ui/OfflineBanner';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { useCategories } from '@/domain/categories/hooks';
+import { useCompleteOccurrence, useRestoreOccurrence, useSkipOccurrence } from '@/domain/recurrence/hooks';
 import { tomorrowDateString } from '@/domain/tasks/dateUtils';
 import {
   useCompletePersonalTask,
@@ -39,6 +40,9 @@ export default function TomorrowScreen() {
   const restoreTask = useRestorePersonalTask();
   const moveToInbox = useMoveTaskToInbox();
   const deleteTask = useDeletePersonalTask();
+  const completeOccurrence = useCompleteOccurrence();
+  const restoreOccurrence = useRestoreOccurrence();
+  const skipOccurrence = useSkipOccurrence();
 
   if (isLoading) {
     return (
@@ -63,9 +67,15 @@ export default function TomorrowScreen() {
   const onToggleComplete = async (task: Task) => {
     setTogglingTaskId(task.id);
     try {
-      await (task.completedAt
-        ? restoreTask.mutateAsync(task.id)
-        : completeTask.mutateAsync(task.id));
+      if (task.occurrenceId) {
+        await (task.completedAt
+          ? restoreOccurrence.mutateAsync(task.occurrenceId)
+          : completeOccurrence.mutateAsync(task.occurrenceId));
+      } else {
+        await (task.completedAt
+          ? restoreTask.mutateAsync(task.id)
+          : completeTask.mutateAsync(task.id));
+      }
     } finally {
       setTogglingTaskId(null);
     }
@@ -88,9 +98,15 @@ export default function TomorrowScreen() {
         categoriesById={categoriesById}
         onToggleComplete={(task) => void onToggleComplete(task)}
         togglingTaskId={togglingTaskId}
-        onEdit={(task) => router.push({ pathname: '/task/[id]/edit', params: { id: task.id } })}
+        onEdit={(task) =>
+          router.push({ pathname: '/task/[id]/edit', params: { id: task.seriesTaskId ?? task.id } })
+        }
         onMoveToInbox={(task) => void moveToInbox.mutateAsync(task.id)}
-        onArchive={(task) => void deleteTask.mutateAsync(task.id)}
+        onArchive={(task) =>
+          task.occurrenceId
+            ? void skipOccurrence.mutateAsync(task.occurrenceId)
+            : void deleteTask.mutateAsync(task.id)
+        }
         emptyTitle={t('screens:tomorrow.emptyTitle')}
         emptyDescription={t('screens:tomorrow.emptyDescription')}
       />

@@ -4,9 +4,11 @@ import { supabase } from '@/lib/supabase/client';
 
 import {
   deactivateCurrentDeviceToken,
+  getNotificationPermissionStatus,
   getNotificationPreference,
   NotificationServiceError,
   registerForPushNotifications,
+  requestNotificationPermission,
   setNotificationPreference,
 } from './notificationService';
 
@@ -109,6 +111,54 @@ describe('notificationService', () => {
       (supabase.rpc as jest.Mock).mockResolvedValue({ data: null, error: { message: 'db down' } });
 
       await expect(registerForPushNotifications()).rejects.toBeInstanceOf(NotificationServiceError);
+    });
+  });
+
+  // Regression coverage for a real, native-verified distinction (Phase 8
+  // final validation pass): local reminder scheduling must never depend on
+  // ExpoPushToken/EAS registration or the Device.isDevice gate that guards
+  // registerForPushNotifications above — confirmed live on a simulator,
+  // where registerForPushNotifications() correctly throws 'unsupported'
+  // but requestNotificationPermission() succeeds and a real local
+  // notification schedules and delivers with no push token at all. These
+  // two functions are plain expo-notifications wrappers with no shared
+  // code path — this locks that independence in at the unit level too.
+  describe('getNotificationPermissionStatus / requestNotificationPermission (local reminders — independent from push-token registration)', () => {
+    it('requestNotificationPermission never checks Device.isDevice — succeeds on a simulator where registerForPushNotifications would throw', async () => {
+      mockIsDevice = false;
+      (Notifications.requestPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'granted' });
+
+      await expect(requestNotificationPermission()).resolves.toBe('granted');
+
+      // The exact scenario that makes registerForPushNotifications fail —
+      // proving this isn't a coincidental pass but a genuinely different
+      // code path.
+      await expect(registerForPushNotifications()).rejects.toMatchObject({ code: 'unsupported' });
+    });
+
+    it('requestNotificationPermission never touches push-token infrastructure', async () => {
+      (Notifications.requestPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'granted' });
+
+      await requestNotificationPermission();
+
+      expect(Notifications.getExpoPushTokenAsync).not.toHaveBeenCalled();
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    it('getNotificationPermissionStatus reads status without requesting or touching push-token infrastructure', async () => {
+      (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'undetermined' });
+
+      await expect(getNotificationPermissionStatus()).resolves.toBe('undetermined');
+
+      expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled();
+      expect(Notifications.getExpoPushTokenAsync).not.toHaveBeenCalled();
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    it('propagates whatever status the OS returns, granted or denied, without throwing either way', async () => {
+      (Notifications.requestPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'denied' });
+
+      await expect(requestNotificationPermission()).resolves.toBe('denied');
     });
   });
 
