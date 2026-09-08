@@ -879,6 +879,7 @@ export type Database = {
           assignee_member_id: string | null
           assignment_status: string
           category_id: string | null
+          client_operation_id: string | null
           completed_at: string | null
           created_at: string
           created_by: string
@@ -901,6 +902,7 @@ export type Database = {
           assignee_member_id?: string | null
           assignment_status?: string
           category_id?: string | null
+          client_operation_id?: string | null
           completed_at?: string | null
           created_at?: string
           created_by: string
@@ -923,6 +925,7 @@ export type Database = {
           assignee_member_id?: string | null
           assignment_status?: string
           category_id?: string | null
+          client_operation_id?: string | null
           completed_at?: string | null
           created_at?: string
           created_by?: string
@@ -1293,6 +1296,7 @@ export type Database = {
       create_personal_task: {
         Args: {
           p_category_id?: string
+          p_client_operation_id?: string
           p_date?: string
           p_description?: string
           p_duration_minutes?: number
@@ -1370,6 +1374,10 @@ export type Database = {
         Args: { p_reminder_id: string }
         Returns: undefined
       }
+      emit_invalidation: {
+        Args: { p_entity: string; p_topic: string }
+        Returns: undefined
+      }
       generate_task_occurrences: {
         Args: { p_through_date?: string }
         Returns: undefined
@@ -1400,6 +1408,23 @@ export type Database = {
       is_family_owner: {
         Args: { p_family_id: string; p_profile_id?: string }
         Returns: boolean
+      }
+      list_family_conflicts: {
+        Args: { p_family_id: string; p_from: string; p_to: string }
+        Returns: {
+          conflict_date: string
+          conflict_id: string
+          family_id: string
+          member_id: string
+          primary_entity_id: string
+          primary_entity_type: string
+          safe_message_code: string
+          safe_message_params: Json
+          secondary_entity_id: string
+          secondary_entity_type: string
+          severity: string
+          type: string
+        }[]
       }
       move_task_to_inbox: { Args: { p_task_id: string }; Returns: undefined }
       notification_preference_enabled: {
@@ -1450,6 +1475,7 @@ export type Database = {
         Args: {
           p_date: string
           p_duration_minutes?: number
+          p_expected_updated_at?: string
           p_start_time?: string
           p_task_id: string
           p_timezone?: string
@@ -1491,6 +1517,7 @@ export type Database = {
         Returns: undefined
       }
       take_family_task: { Args: { p_task_id: string }; Returns: undefined }
+      try_cast_uuid: { Args: { p_text: string }; Returns: string }
       unassign_family_task: { Args: { p_task_id: string }; Returns: undefined }
       update_child_profile: {
         Args: {
@@ -1523,6 +1550,7 @@ export type Database = {
           p_clear_category?: boolean
           p_clear_description?: boolean
           p_description?: string
+          p_expected_updated_at?: string
           p_family_id?: string
           p_priority?: string
           p_task_id: string

@@ -15,6 +15,7 @@ const BASE_ROW: Tables<'tasks'> = {
   priority: 'normal',
   category_id: null,
   recurrence_rule_id: null,
+  client_operation_id: null,
   visibility: 'private',
   completed_at: null,
   assignee_member_id: null,
