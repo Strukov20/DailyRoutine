@@ -15,6 +15,7 @@ Full product/architecture documentation lives in [`docs/`](docs/):
 - [docs/ROADMAP.md](docs/ROADMAP.md) — V2/V3 and how the architecture anticipates them
 - [docs/DECISIONS.md](docs/DECISIONS.md) — why things were built the way they were
 - [docs/TEST_STRATEGY.md](docs/TEST_STRATEGY.md) — what's tested and how
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — push notification deployment runbook (not yet executed)
 - [docs/LLM_WIKI.md](docs/LLM_WIKI.md) — the `knowledge/` LLM Wiki: how to read/maintain it
 
 ## Current state
@@ -50,6 +51,16 @@ Full product/architecture documentation lives in [`docs/`](docs/):
   implemented and tested against real local infrastructure; **no real device/EAS build has
   sent or received an actual push this phase** — see [docs/DECISIONS.md](docs/DECISIONS.md),
   "Phase 6," for the exact manual configuration steps still required.
+- **Phase 6.1 (Deployment & Real Device Push Validation)**: a durable, schema-driven security
+  regression guard for the anon-EXECUTE-grant class of finding that had recurred across three
+  prior phases (`supabase/tests/130_security_regression_test.sql`), a secret/bundle audit
+  specifically for `NOTIFICATION_WORKER_SECRET`, and a full deployment runbook
+  ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)) — exact commands for EAS setup, the hosted
+  Supabase deploy, the Database Webhook/`pg_cron` dispatcher trigger, and the manual
+  on-device acceptance matrix. **Still not deployed**: no EAS project or hosted Supabase
+  project is linked to this repository, and no physical device has received a real push —
+  both require the operator's own accounts and hardware, which an agent cannot supply. See
+  [docs/DECISIONS.md](docs/DECISIONS.md), "Phase 6.1."
 
 Still not implemented: event/calendar CRUD UI, Family Today, recurring-task generation,
 reminder scheduling/delivery, Realtime sync, and notifications for anything beyond shared-task

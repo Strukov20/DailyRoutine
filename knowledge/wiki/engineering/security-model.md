@@ -1,7 +1,7 @@
 ---
 title: Security model
 status: current
-updated: 2026-09-06
+updated: 2026-09-08
 sources:
   - ../../../docs/SECURITY_AND_PRIVACY.md
   - ../../../docs/DECISIONS.md
@@ -11,15 +11,17 @@ sources:
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
   - ../../raw/sessions/2026-09-05-phase5-shared-family-tasks.md
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
+  - ../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md
 tags: [engineering, security, rls, privacy]
 ---
 
 ## Status: implemented and verified (Mechanisms 1, 2, 4, 5) / not yet implemented (3)
 
-`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 293 assertions
-across 11 files passing against a real local Postgres instance) proves it, particularly
+`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 299 assertions
+across 12 files passing against a real local Postgres instance) proves it, particularly
 `060_privacy_regression_test.sql`, `080_family_management_test.sql`,
-`090_personal_task_management_test.sql`, and `110_notification_outbox_test.sql`. See
+`090_personal_task_management_test.sql`, `110_notification_outbox_test.sql`, and (Phase 6.1)
+`130_security_regression_test.sql`. See
 [privacy-and-availability](../domain/privacy-and-availability.md) for the domain-facing
 version of this same content; this page is the engineering-facing index.
 
@@ -54,6 +56,15 @@ CHECK` protected only `owner_profile_id`; a client could rewrite `family_id`,
   `has_function_privilege` query against a real local instance, not code review. This is
   evidence the checklist item is genuinely load-bearing, not a one-time Phase 3 cleanup. Full
   writeup: [DECISIONS.md, "Phase 6"](../../../docs/DECISIONS.md).
+- **Closed for good (Phase 6.1): a durable, automated regression guard**, not another manual
+  catch. Three recurrences of the same finding (Phase 3, 5, 6) with no general-purpose test
+  ever existing for it was the actual signal — `supabase/tests/130_security_regression_test.sql`
+  queries `pg_proc`/`pg_namespace` directly (a schema-driven invariant, never a hardcoded
+  function list, per the explicit instruction not to build a fragile grant snapshot) and
+  asserts anon/PUBLIC can `EXECUTE` a function in `public`/`notifications` only if it's a
+  trigger function (provably inert regardless of grant — Postgres refuses to invoke one
+  outside trigger context) or is in a short reviewed whitelist. Verified the guard actually
+  fails when the bug is reintroduced, not just when read.
 
 ## The five mechanisms
 

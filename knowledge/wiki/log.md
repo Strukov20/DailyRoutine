@@ -413,3 +413,50 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     and `engineering/testing-strategy.md` as new conventions, since both are exactly the kind
     of hard-won, non-obvious lesson this wiki exists to preserve.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-08T00:00:00Z — Phase 6.1: Deployment & Real Device Push Validation
+
+- **Operation type:** scoping decision + implementation (local-only) + documentation +
+  wiki update
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md`](../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md).
+- **Wiki pages updated:** `engineering/push-notifications.md` (status corrected to "not
+  deployed"; new "Security regression guard" and "Deployment status" sections), `engineering/
+  security-model.md` (assertion count 293 → 299; a new bullet for the durable regression
+  guard closing the recurring anon-EXECUTE finding), `engineering/testing-strategy.md`
+  (pgTAP count/file updated; a new "prove a regression guard actually fails before trusting
+  it" convention).
+- **Canonical docs updated:** a new `docs/DEPLOYMENT.md` (full runbook: EAS setup, hosted
+  Supabase deploy commands, Database Webhook + `pg_cron` configuration and why both, the
+  manual on-device acceptance matrix, Expo tickets-vs-receipts, at-least-once delivery
+  semantics stated explicitly, observability, repeatable secret-audit commands, and a "Known
+  limitations" section), `docs/DECISIONS.md` (new "Phase 6.1" section: the scope-split
+  decision and why, the regression-guard design rationale, why `DEPLOYMENT.md` is a new file
+  rather than folded into an existing doc), `docs/TEST_STRATEGY.md` (RLS row updated for the
+  new test), `README.md` (Phase 6.1 entry added to "Current state"; `docs/DEPLOYMENT.md`
+  linked).
+- **Decisions/contradictions recorded:**
+  - This phase's own brief spans work an agent can do autonomously (a security regression
+    guard, a secret audit, documentation) and work that fundamentally requires the
+    repository operator's own external accounts and a physical device (EAS, a hosted
+    Supabase project, real push credentials, an actual device tap) — the latter is not a
+    permissions question, since even with explicit authorization an agent cannot tap a
+    physical device. Investigated the repo first (confirmed genuinely no linked EAS/hosted-
+    Supabase project exists) rather than assuming, then asked the user directly how to
+    proceed rather than silently doing only part of the brief or spending significant effort
+    on deployment tooling for infrastructure that might not get created. Recorded as a
+    scoping decision in `docs/DECISIONS.md`, not left implicit.
+  - The anon-EXECUTE-grant finding had recurred three times (Phase 3, 5, 6) with no
+    automated test for the general invariant ever existing — every prior "fix" closed only
+    the specific instance found that phase. Phase 6.1 treats this as evidence the class of
+    finding itself needed a durable, schema-driven guard, not another one-off catch — built
+    and, importantly, verified to actually fail when the guarded-against bug is
+    reintroduced (not just verified to pass against already-correct code, which would prove
+    nothing about whether the guard works at all).
+  - `NOTIFICATION_WORKER_SECRET` specifically had never been scanned for by name in any
+    prior phase's bundle audit (Phase 6's own scan checked for `SERVICE_ROLE`/OAuth secret
+    patterns, not this one) — closed as a real, if narrow, gap in previously-claimed
+    verification coverage.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
