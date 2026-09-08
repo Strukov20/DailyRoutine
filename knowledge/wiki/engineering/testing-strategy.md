@@ -12,6 +12,7 @@ sources:
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
   - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
   - ../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md
+  - ../../raw/sessions/2026-09-08-phase7-followup-audit.md
 tags: [engineering, testing]
 ---
 
@@ -42,6 +43,12 @@ tags: [engineering, testing]
     rather than bumping a production `initialNumToRender` (tried and reverted — it only
     existed to satisfy Jest). Full evidence and reasoning:
     [DECISIONS.md, "Phase 5"](../../../docs/DECISIONS.md).
+  - **Phase 7 follow-up** adds `src/components/calendar/{ResponsibilityRow,EventEditorForm,
+    CalendarScreen}.test.tsx` — mandatory per a later, more detailed brief, overriding the
+    original Phase 7 pass's deferral of exactly this coverage. Same `<Menu>` constraint above
+    applies to `EventEditorForm.test.tsx` (trigger buttons/disabled state/validation/
+    submission payloads tested, opened-menu content not). 264 Jest tests total across 37
+    suites, up from 233.
 - **Localization** — `src/i18n/i18n.test.ts` checks i18next initializes, a key translates
   differently per locale, and every namespace has matching keys across `en`/`uk`.
 - **Auth/config** — Jest with `@/lib/supabase/client`/`@/lib/env` mocked at the module
@@ -58,10 +65,12 @@ tags: [engineering, testing]
   optimistic-update architecture rule (see [system-architecture](system-architecture.md))
   requires before any hook is allowed to use one.
 - **RLS/privacy tests** — pgTAP via `supabase test db`, against a real local Postgres
-  instance with RLS enabled. `supabase/tests/*.sql` (13 files, 387 assertions total: 192
+  instance with RLS enabled. `supabase/tests/*.sql` (13 files, 391 assertions total: 192
     through Phase 4, +71 in Phase 5's `100_shared_family_tasks_test.sql`, +30 in Phase 6's
-    `110_notification_outbox_test.sql`, +88 in Phase 7's `120_family_calendar_test.sql`, +6 in
-    Phase 6.1's `130_security_regression_test.sql`), including a dedicated secret-marker
+    `110_notification_outbox_test.sql`, +92 in Phase 7's `120_family_calendar_test.sql`
+    (88 original + 4 added in the Phase 7 follow-up audit, closing a gap where the
+    `declined`/`taken` notification event types had no direct assertion), +6 in Phase 6.1's
+    `130_security_regression_test.sql`), including a dedicated secret-marker
     privacy-regression test (`060_privacy_regression_test.sql`), the full
     family/invitation/child-profile RPC suite (`080_family_management_test.sql`), the
     personal-task RPC suite (`090_personal_task_management_test.sql`, itself extending the
@@ -84,7 +93,7 @@ tags: [engineering, testing]
     that anon/PUBLIC has no `EXECUTE` on any non-trigger function in `public`/`notifications`
     beyond a short reviewed whitelist, meant to durably close the anon-EXECUTE-grant finding
     class rather than catch it manually again next time.
-    **Verified: all 387 assertions pass** against a real local instance (`supabase db reset &&
+    **Verified: all 391 assertions pass** against a real local instance (`supabase db reset &&
 supabase test db`), plus real curl-driven multi-user flows for Family Space, personal
     tasks, shared tasks, notifications, and the calendar (real `auth.users` accounts, not
     simulated `set local role`) — see
@@ -92,8 +101,9 @@ supabase test db`), plus real curl-driven multi-user flows for Family Space, per
     [`knowledge/raw/sessions/2026-09-03-phase4-personal-tasks.md`](../../raw/sessions/2026-09-03-phase4-personal-tasks.md),
     [`knowledge/raw/sessions/2026-09-06-phase6-push-notifications.md`](../../raw/sessions/2026-09-06-phase6-push-notifications.md),
     [`knowledge/raw/sessions/2026-09-07-phase7-family-calendar.md`](../../raw/sessions/2026-09-07-phase7-family-calendar.md),
+    [`knowledge/raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md`](../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md),
     and
-    [`knowledge/raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md`](../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md).
+    [`knowledge/raw/sessions/2026-09-08-phase7-followup-audit.md`](../../raw/sessions/2026-09-08-phase7-followup-audit.md).
     Running the Phase 2 suite for real surfaced and fixed one migration-ordering bug and two
     test-assertion bugs; the Phase 3 audit surfaced a real `anon`-EXECUTE-grant gap, the
     Phase 4 audit surfaced a real `tasks`-direct-`UPDATE` gap, the Phase 6 audit surfaced
@@ -184,6 +194,16 @@ e2e:seed` then `npm run e2e:ios`. Tab bar items get a real testID via
   temporarily (re-granting `anon` `EXECUTE` on a real function), the test was re-run and
   confirmed to fail with the expected assertion, then the grant was reverted and the test
   re-confirmed passing. Do this for any new regression guard, not just this one.
+- **A screen's test file must never live inside `app/`, even co-located with the screen it
+  tests (Phase 7 follow-up)** — Expo Router's Metro bundler treats every file under `app/` as
+  a route candidate by filename-independent convention, not just recognized route patterns.
+  `app/(app)/calendar.test.tsx` passed under Jest but broke `npx expo export --platform ios`
+  outright, bundling `@testing-library/react-native` into the production app and failing on an
+  unresolvable `console` import inside the testing library. This is the actual reason no other
+  screen in this codebase has a test file, not an oversight. Fix: put the test in `src/`
+  instead (e.g. `src/components/calendar/CalendarScreen.test.tsx`) and import the screen via a
+  relative path — Jest doesn't go through Metro, so this is invisible to the production
+  bundle. See [DECISIONS.md, "Phase 7 follow-up"](../../../docs/DECISIONS.md).
 - **`render()` and `fireEvent.*()` are async in the installed RNTL version — always
   `await` them.** (See [`docs/DECISIONS.md`](../../../docs/DECISIONS.md).) Skipping this
   either trips `@typescript-eslint/no-floating-promises` or asserts before the

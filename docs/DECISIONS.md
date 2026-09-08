@@ -1462,3 +1462,92 @@ each call site instead of inside the function; manually purged the 12 leaked acc
 scripts re-verified to leave zero matching `auth.users` rows after two consecutive runs.
 Recorded here rather than silently fixed, since it revises a specific claim
 ["`scripts/e2e-notifications.sh`... zero residue"] made in Phase 6's own final report.
+
+## Phase 7 follow-up: audit against a more detailed brief, four real gaps closed
+
+A later, much more detailed Phase 7 brief arrived after the branch above was already built and
+rebased onto `develop` (which by then included Phase 6.1). Rather than re-implementing from
+scratch, the brief's own working instruction was followed: audit the existing implementation
+first, and only change what a concrete gap actually requires. Four real, if mostly small, gaps
+were found and closed — none of them a design flaw, all of them things the original Phase 7
+pass's own scope or established RNTL limitations had left short.
+
+### Trigger functions: explicit revokes added for consistency, not because they were exploitable
+
+`assert_responsibility_event_is_family_visible()`, `set_responsibility_assignment_family_id()`,
+and `apply_responsibility_assignment_action()` — three of the four new trigger functions in
+`supabase/migrations/20260907120000_family_calendar.sql` — had no explicit
+`revoke ... from public, anon, authenticated`, unlike the file's own fourth trigger function
+(`notifications.enqueue_event_responsibility_notification`, which does) and unlike Phase 6's own
+established precedent for exactly this situation
+(`enqueue_task_assignment_notification`, `supabase/migrations/20260906120000_notification_outbox.sql`,
+whose own comment states the revoke is added "unconditionally... every SECURITY DEFINER function
+gets an explicit revoke... unless explicitly revoked" even though a `returns trigger` function is
+already uninvokable directly regardless of grant). **Not a live vulnerability**: the Phase 6.1
+`130_security_regression_test.sql` guard already exempts every trigger function from its
+anon-EXECUTE check for exactly this Postgres-level reason, and it passed both before and after
+this fix. Added anyway, for the same defense-in-depth reasoning Phase 6 gave — a future reader
+should not have to reason about `pg_get_function_result` to know a function is safe from this
+file alone.
+
+### Notification-outbox test coverage: `declined` and `taken` were never directly asserted
+
+The brief lists all four `event_responsibility.*` event types as required test coverage.
+`120_family_calendar_test.sql` only ever asserted `requested` and `accepted` directly (declined/
+taken existed in the migration's trigger logic and were exercised indirectly by the state-machine
+tests, but no assertion checked the resulting outbox row). Closed with four new pgTAP assertions
+(plan bumped 88 → 92) proving both the event type and the correct recipient
+(`recipient_member_id`) for a decline and a take, reusing `piano_pickup_id`'s existing
+decline-then-take history from the state-machine section rather than new fixtures.
+`scripts/e2e-calendar.sh` had the same gap for `taken` specifically (it called
+`take_event_responsibility` but never asserted the resulting outbox row) — closed the same way,
+with one change to the flow itself: the original script had the *event owner* take back a
+responsibility they themselves had created the event for, which is exactly the self-actor/
+self-recipient case Mechanism 4's self-notification suppression exists to catch — so no `taken`
+row would ever have been enqueued to assert on. Changed the taker to the spouse (a family member
+distinct from the event's creator) so the notification is expected to fire, and left a comment
+explaining why, rather than silently picking a different actor with no explanation.
+
+### The Day Calendar was missing the two other screens' own offline/refresh conventions
+
+`app/(app)/calendar.tsx` had neither `<OfflineBanner />` (present on `today.tsx`) nor pull-to-
+refresh (present on `FamilyTaskBoard.tsx`, the closest existing precedent for a family-wide list
+screen) nor a retry action wired to its `<ErrorState />`. All three were the brief's own
+explicit ask for the Day Calendar (Section 12) and already-established conventions elsewhere in
+this codebase, not new design — added by mirroring `FamilyTaskBoard.tsx`'s
+`RefreshControl`/`onRetry` pattern exactly, refetching whichever query pair is active for the
+current mode.
+
+### Mandatory Jest UI coverage, previously deferred, now built — and a real Metro/Expo Router gotcha found while building it
+
+The original Phase 7 pass explicitly deferred Jest coverage for `EventEditorForm`,
+`ResponsibilityRow`, and `app/(app)/calendar.tsx`, citing the phase's already-large scope and the
+Phase 5-documented `react-native-paper` `<Menu>` limitation. This brief's own Section 16/18
+explicitly overrides that: "deterministic Jest UI tests are mandatory and may not be deferred."
+Built all three — `ResponsibilityRow.test.tsx` and a scoped `EventEditorForm.test.tsx` (trigger
+buttons, disabled state, validation, and submission payloads are tested; content inside an opened
+`<Menu>` still is not, per the same unchanged RNTL constraint) fully cover their brief-mandated
+cases.
+
+**A genuinely new environment gotcha, not previously documented**: the Calendar Day view's own
+test was first written as `app/(app)/calendar.test.tsx`, co-located with the screen the same way
+every other test in this codebase sits next to its source file. It passed under Jest — but broke
+`npx expo export --platform ios` outright, because Expo Router's Metro bundler treats every file
+under `app/` as a route candidate by filename-independent convention, and tried to bundle
+`@testing-library/react-native` straight into the production app, failing on an unresolvable
+`console` import inside the testing library itself. This is the real reason no other screen in
+this codebase has ever had a co-located test file — not an oversight this phase corrected, but a
+hard constraint now confirmed and documented. Fixed by moving the test to
+`src/components/calendar/CalendarScreen.test.tsx`, importing the screen via a relative path
+(Jest doesn't go through Metro, so this is invisible to the production bundle) — see
+`docs/TEST_STRATEGY.md` for the convention this establishes for any future screen-level test.
+
+### Verified, not just asserted
+
+Fresh `supabase db reset && supabase test db`: `Files=13, Tests=391`, all passing. `npm run
+verify` (lint, typecheck, 264/264 Jest across 37 suites, wiki:lint). `deno test`: 11/11.
+`e2e:backend` 32/32, `e2e:notifications` 24/24, `e2e:calendar` run **twice consecutively without
+a DB reset in between**: 28/28 both times, zero `e2e-*` residue in `auth.users` confirmed by
+direct query afterward. Both `expo export` platforms succeed (the `app/` test-file bug above was
+caught by this exact check, not assumed away). `expo-doctor` 21/21. A secret scan of the compiled
+iOS bundle for `SERVICE_ROLE_KEY`/`NOTIFICATION_WORKER_SECRET`/`CLIENT_SECRET` found nothing.

@@ -13,12 +13,13 @@ sources:
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
   - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
   - ../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md
+  - ../../raw/sessions/2026-09-08-phase7-followup-audit.md
 tags: [engineering, security, rls, privacy]
 ---
 
 ## Status: implemented and verified (Mechanisms 1, 2, 4, 5) / not yet implemented (3)
 
-`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 387 assertions
+`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 391 assertions
 across 13 files passing against a real local Postgres instance) proves it, particularly
 `060_privacy_regression_test.sql`, `080_family_management_test.sql`,
 `090_personal_task_management_test.sql`, `110_notification_outbox_test.sql`,
@@ -73,6 +74,15 @@ CHECK` protected only `owner_profile_id`; a client could rewrite `family_id`,
   trigger function (provably inert regardless of grant — Postgres refuses to invoke one
   outside trigger context) or is in a short reviewed whitelist. Verified the guard actually
   fails when the bug is reintroduced, not just when read.
+
+**Not a seventh gap, but worth recording (Phase 7 follow-up):** three of the family calendar
+migration's four new trigger functions were missing the explicit
+`revoke ... from public, anon, authenticated` that Phase 6 established as the convention for
+this exact situation — not exploitable (the 130 guard above already exempts every trigger
+function, and Postgres itself refuses to invoke one outside trigger context regardless of
+grant), but inconsistent with that convention. Added for defense-in-depth, matching Phase 6's
+own stated reasoning. Full writeup:
+[DECISIONS.md, "Phase 7 follow-up"](../../../docs/DECISIONS.md).
 
 ## The five mechanisms
 

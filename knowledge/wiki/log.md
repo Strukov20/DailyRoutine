@@ -533,3 +533,54 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     the fact, and this entry order matches the entries' own dates rather than the order the
     branches happened to land in.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-08T00:00:00Z — Phase 7 follow-up: audit against a more detailed brief
+
+- **Operation type:** audit + implementation (targeted fixes) + documentation + wiki update
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-08-phase7-followup-audit.md`](../raw/sessions/2026-09-08-phase7-followup-audit.md).
+- **Wiki pages updated:** `engineering/family-calendar.md` (Jest coverage section rewritten —
+  the components previously marked "not covered this phase" are now covered; e2e-calendar
+  check count 27 → 28; new "Phase 7 follow-up" section), `engineering/testing-strategy.md`
+  (pgTAP count 387 → 391; new Components-row bullet for the three new calendar test files; a
+  new "screen tests must never live inside `app/`" convention), `engineering/security-model.md`
+  (assertion count 387 → 391; a note on the trigger-function revoke consistency fix, explicitly
+  not counted as a seventh "real gap" since nothing was reachable).
+- **Canonical docs updated:** `docs/DECISIONS.md` (new "Phase 7 follow-up" section covering all
+  four findings below), `docs/TEST_STRATEGY.md` (Components row rewritten; pgTAP count updated;
+  new convention entry for the `app/`-test-file bundling gotcha), `README.md` (Phase 7 bullet
+  updated to mention the follow-up's UI-coverage and offline/refresh additions).
+- **Decisions/contradictions recorded:**
+  - A later, more detailed Phase 7 brief arrived after the original Phase 7 branch was already
+    built and rebased onto `develop`. Followed that brief's own explicit working rule: audited
+    the existing implementation against it line by line before changing anything, rather than
+    re-implementing from scratch or assuming the original pass already satisfied it.
+  - Three of four new trigger functions in the Phase 7 migration were missing an explicit
+    `revoke` present on the fourth and established as Phase 6's own convention for this exact
+    situation. Confirmed via the Phase 6.1 regression guard (unchanged pass before/after) that
+    this was never actually exploitable — trigger functions are uninvokable directly regardless
+    of grant — and fixed anyway for consistency, explicitly documented as *not* a seventh "real
+    gap" in `security-model.md`'s running count, to avoid overstating severity.
+  - The `declined`/`taken` notification event types had no direct pgTAP or e2e-script assertion
+    despite the brief explicitly requiring coverage of all four event types. Worse, discovered
+    while fixing this that the e2e script's existing `take_event_responsibility` call was made
+    by the event's own owner — the exact self-actor/self-recipient case Mechanism 4's
+    self-notification suppression is designed to catch — so no `taken` outbox row could ever
+    have existed to assert on even if the assertion had been written. Changed the actor to a
+    different family member and documented why, rather than silently working around it.
+  - The original Phase 7 pass's own explicit deferral of Jest UI coverage for
+    `EventEditorForm`/`ResponsibilityRow`/`app/(app)/calendar.tsx` (citing scope and the
+    Phase-5-documented RNTL `<Menu>` limitation) is overridden by this brief's explicit
+    "deterministic Jest UI tests are mandatory and may not be deferred" instruction — built all
+    three, same `<Menu>` scoping constraint still applied where relevant.
+  - A genuinely new, previously undocumented environment constraint was found while building
+    the third of those: a test file placed inside `app/` (co-located with its screen, matching
+    every other test file's convention relative to its source) passes under Jest but breaks
+    `npx expo export --platform ios` outright, because Expo Router's Metro bundler treats every
+    file under `app/` as a route candidate regardless of filename. This is confirmed to be the
+    actual reason no other screen in this codebase has a test file, not an oversight — recorded
+    as a hard constraint and a new convention (test screens from `src/`, import via relative
+    path) rather than silently worked around with no explanation.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

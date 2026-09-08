@@ -1,7 +1,7 @@
 ---
 title: Family calendar
 status: current
-updated: 2026-09-07
+updated: 2026-09-08
 sources:
   - ../../../docs/ARCHITECTURE.md
   - ../../../docs/DATA_MODEL.md
@@ -9,6 +9,7 @@ sources:
   - ../../../docs/DECISIONS.md
   - ../../../docs/TEST_STRATEGY.md
   - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
+  - ../../raw/sessions/2026-09-08-phase7-followup-audit.md
 tags: [engineering, calendar, events, responsibilities, phase7]
 ---
 
@@ -116,17 +117,28 @@ notifications](push-notifications.md).
   untouched; `due_at` derives and never drifts), the full responsibility state machine,
   Busy-block privacy (secret-marker sweep), conflict-detection interval semantics,
   member-removal resolution, and the notification outbox extension.
-- **`scripts/e2e-calendar.sh`** (`npm run e2e:calendar`, 27 checks) — real `auth.users`
-  accounts, real RPCs, a real deterministic conflict, notification outbox verification
-  (including that a rejected stale-state replay never enqueues a duplicate), and
-  authorization boundaries. Confirmed repeatable twice, zero residue.
+- **`scripts/e2e-calendar.sh`** (`npm run e2e:calendar`, 28 checks — 27 original + 1 added in
+  the Phase 7 follow-up audit for the `taken` notification event type) — real `auth.users`
+  accounts, real RPCs, a real deterministic conflict, notification outbox verification for
+  all four `event_responsibility.*` event types (including that a rejected stale-state replay
+  never enqueues a duplicate), and authorization boundaries. Confirmed repeatable twice
+  consecutively without a DB reset, zero residue both times.
 - **Jest** (`src/domain/calendar/{dateUtils,schemas,mappers}.test.ts`) — day-boundary/
   interval-overlap arithmetic and the event editor's kind-specific validation rules.
-- **Not covered this phase**: `EventEditorForm`/`ResponsibilityRow`/`calendar.tsx` component
-  tests (deferred given this phase's scope and the documented RNTL/`Menu` limitations from
-  Phase 5 both new components would likely hit) and Maestro E2E flows (deferred given the
-  established Maestro non-determinism and this phase's already-large scope, rather than risk
-  a rushed/flaky addition). See [testing-strategy](testing-strategy.md).
+  `src/components/calendar/{ResponsibilityRow,EventEditorForm}.test.tsx` and
+  `src/components/calendar/CalendarScreen.test.tsx` (Phase 7 follow-up — mandatory per a
+  later, more detailed brief, overriding the original phase's deferral) cover the Day
+  Calendar's Personal/Family modes, member filters, chronological rendering, Busy-block
+  non-navigability, and conflict-warning content; the responsibility action buttons; and the
+  event editor's validation/submission logic (scoped around the same RNTL `<Menu>`
+  limitation Phase 5 documented — opened-menu content still isn't tested, trigger buttons and
+  submitted payloads are). `CalendarScreen.test.tsx` deliberately lives in
+  `src/components/calendar/`, not co-located with `app/(app)/calendar.tsx` — see
+  [testing-strategy](testing-strategy.md) for why a test file under `app/` broke the iOS
+  bundle export.
+- **Not covered**: Maestro E2E flows (deferred given the established Maestro non-determinism
+  and this feature's own scope, rather than risk a rushed/flaky addition) — unchanged from the
+  original phase. See [testing-strategy](testing-strategy.md).
 
 ## A real bug found while building the backend integration script
 
@@ -137,6 +149,18 @@ array mutation before it ever reached `cleanup()`. `e2e-notifications.sh` had be
 leaking its test `auth.users` accounts since Phase 6 (12 accumulated, found and purged while
 building this phase's own script). Fixed in both scripts by appending at the call site
 instead. Full write-up: [DECISIONS.md, "Phase 7"](../../../docs/DECISIONS.md).
+
+## Phase 7 follow-up: audit against a more detailed brief
+
+A later, more detailed Phase 7 brief arrived after this feature was already built and merged
+onto `develop`. Audited the existing implementation against it (per that brief's own
+instruction) rather than rebuilding, and closed four real gaps: three trigger functions in the
+migration were missing an explicit `revoke` (not exploitable — the Phase 6.1 anon-EXECUTE
+guard already exempts trigger functions — but inconsistent with Phase 6's own established
+defense-in-depth convention); the `declined`/`taken` notification event types had no direct
+pgTAP/e2e assertion; the Day Calendar screen was missing the offline banner and pull-to-refresh
+every comparable screen already has; and the mandatory Jest UI coverage above was added. Full
+write-up: [DECISIONS.md, "Phase 7 follow-up"](../../../docs/DECISIONS.md).
 
 ## See also
 

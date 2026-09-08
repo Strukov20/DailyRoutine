@@ -67,9 +67,12 @@ Full product/architecture documentation lives in [`docs/`](docs/):
   state machine (assign/reassign/take/accept/decline/remove), Busy-block privacy for private
   family-linked events, and deterministic privacy-safe conflict detection (a warning only,
   never a blocked save). Push notifications extended (not duplicated) to event-responsibility
-  events. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), "Family calendar," and
-  [docs/DECISIONS.md](docs/DECISIONS.md), "Phase 7." Week/Month views, recurring events, and
-  Maestro E2E coverage for this feature are explicitly deferred — see
+  events. Deterministic Jest UI coverage for the Day Calendar screen, the event editor, and
+  responsibility controls was added in a Phase 7 follow-up audit, alongside an offline banner
+  and pull-to-refresh for the calendar screen. See
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), "Family calendar," and
+  [docs/DECISIONS.md](docs/DECISIONS.md), "Phase 7" and "Phase 7 follow-up." Week/Month views,
+  recurring events, and Maestro E2E coverage for this feature are explicitly deferred — see
   [docs/ROADMAP.md](docs/ROADMAP.md).
 
 Still not implemented: recurring-task generation, reminder scheduling/delivery, Realtime
