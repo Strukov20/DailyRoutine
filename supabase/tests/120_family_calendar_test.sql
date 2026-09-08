@@ -5,7 +5,7 @@
 -- function, member-removal resolution extended to responsibilities, and
 -- that every new SECURITY DEFINER function is unreachable by anon.
 begin;
-select plan(88);
+select plan(92);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password,
@@ -633,6 +633,32 @@ select is(
   (select count(*)::int from notifications.outbox where responsibility_id = :'notif_dropoff_id' and event_type = 'event_responsibility.assignment_accepted.v1'),
   1,
   'accepting enqueues an accepted-event outbox row for the assigner'
+);
+
+-- 'declined' and 'taken' event types (the other two of the four listed in
+-- docs/DECISIONS.md, "Phase 7") — proven here against piano_pickup_id's own
+-- earlier decline (adult B declining, assigned by the owner) and take
+-- (adult C taking it while unassigned) actions from the assignment-state-
+-- machine section above, rather than re-deriving new fixtures.
+select is(
+  (select count(*)::int from notifications.outbox where responsibility_id = :'piano_pickup_id' and event_type = 'event_responsibility.assignment_declined.v1'),
+  1,
+  'declining a responsibility (adult B declining piano pick_up) enqueues a declined-event outbox row'
+);
+select is(
+  (select recipient_member_id from notifications.outbox where responsibility_id = :'piano_pickup_id' and event_type = 'event_responsibility.assignment_declined.v1'),
+  :'owner_member_id',
+  'the declined-event notification is addressed to the original assigner, not the decliner'
+);
+select is(
+  (select count(*)::int from notifications.outbox where responsibility_id = :'piano_pickup_id' and event_type = 'event_responsibility.assignment_taken.v1'),
+  1,
+  'taking an unassigned responsibility (adult C taking piano pick_up) enqueues a taken-event outbox row'
+);
+select is(
+  (select recipient_member_id from notifications.outbox where responsibility_id = :'piano_pickup_id' and event_type = 'event_responsibility.assignment_taken.v1'),
+  :'owner_member_id',
+  'the taken-event notification is addressed to the event''s creator, not the adult who took it'
 );
 
 -- Self-notification suppression: the owner assigning a responsibility to

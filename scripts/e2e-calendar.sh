@@ -227,9 +227,15 @@ rpc "$SPOUSE_JWT" "decline_event_responsibility" "{\"p_responsibility_id\":\"$PI
 DECLINED_STATUS=$(rest_get "$OWNER_JWT" "responsibilities?id=eq.$PIANO_PICKUP_ID&select=status,assignee_member_id" | jq -r '.[0].status')
 check "the spouse declining resolves pick_up back to unassigned" "$([ "$DECLINED_STATUS" = "unassigned" ] && echo 1 || echo 0)"
 
-rpc "$OWNER_JWT" "take_event_responsibility" "{\"p_responsibility_id\":\"$PIANO_PICKUP_ID\"}" >/dev/null
+# Taken by the spouse, not the owner: the owner is the piano event's
+# creator, so an owner self-take would hit the same self-notification
+# suppression as the swim event's self-assigned drop_off below, leaving no
+# 'taken' outbox row to assert on. The spouse reconsidering and taking the
+# responsibility they just declined is a different family member than the
+# event creator, so the notification is expected to fire.
+rpc "$SPOUSE_JWT" "take_event_responsibility" "{\"p_responsibility_id\":\"$PIANO_PICKUP_ID\"}" >/dev/null
 TAKEN_STATUS=$(rest_get "$OWNER_JWT" "responsibilities?id=eq.$PIANO_PICKUP_ID&select=status,assignee_member_id" | jq -r '.[0].status')
-check "the owner taking the declined/unassigned responsibility is immediate acceptance" "$([ "$TAKEN_STATUS" = "accepted" ] && echo 1 || echo 0)"
+check "taking the declined/unassigned responsibility is immediate acceptance" "$([ "$TAKEN_STATUS" = "accepted" ] && echo 1 || echo 0)"
 
 echo "== Deterministic conflict detection (Steps 11-12) =="
 rpc "$SPOUSE_JWT" "create_personal_event" "{\"p_title\":\"SECRET-MARKER-dentist\",\"p_starts_at\":\"2026-09-23T17:00:00+00:00\",\"p_ends_at\":\"2026-09-23T18:00:00+00:00\",\"p_timezone\":\"Europe/Kyiv\"}" >/dev/null
@@ -249,6 +255,8 @@ ACCEPTED_COUNT=$(psql_query "select count(*) from notifications.outbox where fam
 check "'accepted' outbox rows exist for the accept actions above" "$([ "$ACCEPTED_COUNT" -ge 2 ] && echo 1 || echo 0)"
 DECLINED_COUNT=$(psql_query "select count(*) from notifications.outbox where family_id = '$FAMILY_ID' and event_type = 'event_responsibility.assignment_declined.v1';")
 check "a 'declined' outbox row exists for the piano pick_up decline" "$([ "$DECLINED_COUNT" = "1" ] && echo 1 || echo 0)"
+TAKEN_COUNT=$(psql_query "select count(*) from notifications.outbox where family_id = '$FAMILY_ID' and event_type = 'event_responsibility.assignment_taken.v1';")
+check "a 'taken' outbox row exists for the spouse taking back the declined piano pick_up" "$([ "$TAKEN_COUNT" = "1" ] && echo 1 || echo 0)"
 SELF_ASSIGN_COUNT=$(psql_query "select count(*) from notifications.outbox where family_id = '$FAMILY_ID' and responsibility_id = '$DROPOFF_ID';")
 check "the owner's self-assigned drop_off never enqueued a 'requested' notification (self-notification suppression)" "$([ "$SELF_ASSIGN_COUNT" = "0" ] && echo 1 || echo 0)"
 

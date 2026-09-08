@@ -67,6 +67,14 @@ begin
 end;
 $$;
 
+-- A `returns trigger` function isn't directly callable via SQL in any role
+-- regardless of GRANT (Postgres raises 0A000) — the Phase 6.1 anon-EXECUTE
+-- regression guard exempts trigger functions from its check for exactly
+-- this reason. The revoke below is still explicit anyway, matching Phase
+-- 6's own established convention (see enqueue_task_assignment_notification):
+-- unconditional, not "trust the trigger semantics."
+revoke all on function public.assert_responsibility_event_is_family_visible() from public, anon, authenticated;
+
 create trigger responsibilities_assert_event_family_visible
   before insert or update of event_id on public.responsibilities
   for each row
@@ -129,6 +137,8 @@ begin
 end;
 $$;
 
+revoke all on function public.set_responsibility_assignment_family_id() from public, anon, authenticated;
+
 create trigger responsibility_assignments_set_family_id
   before insert on public.responsibility_assignments
   for each row
@@ -161,6 +171,8 @@ begin
   return new;
 end;
 $$;
+
+revoke all on function public.apply_responsibility_assignment_action() from public, anon, authenticated;
 
 create trigger responsibility_assignments_apply_action
   after insert on public.responsibility_assignments
