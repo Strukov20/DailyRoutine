@@ -1551,3 +1551,90 @@ a DB reset in between**: 28/28 both times, zero `e2e-*` residue in `auth.users` 
 direct query afterward. Both `expo export` platforms succeed (the `app/` test-file bug above was
 caught by this exact check, not assumed away). `expo-doctor` 21/21. A secret scan of the compiled
 iOS bundle for `SERVICE_ROLE_KEY`/`NOTIFICATION_WORKER_SECRET`/`CLIENT_SECRET` found nothing.
+
+## Phase 8 (Recurring Tasks, Scheduled Reminders, and Snooze)
+
+### Recurrence architecture, decided before any RPC was written
+
+**Audit first**: `recurrence_rules` (Phase 2) exists but has zero grants/policies and is
+referenced by nothing writable — `docs/ROADMAP.md` already anticipated exactly this gap and
+already named the anticipated shape (`task_occurrences`, "one row per generated occurrence, its
+own `completed_at`, a FK back to the series' `tasks` row"). `recurrence_rules` itself only
+supports `daily|weekly|monthly` (no `yearly`), has no occurrence-count end condition (only
+`until`), and has no way to mark a series stopped. None of this is a design flaw — Phase 2
+deliberately left it unfinished pending this exact phase.
+
+**Chosen approach: bounded materialized occurrences, server-authoritative, generated
+on-demand into a rolling horizon** — one real row per occurrence in a new `task_occurrences`
+table, generated (idempotently) by a `SECURITY DEFINER` RPC the client calls whenever it needs
+occurrences through a given date (Today/Tomorrow/Calendar reads, and reminder reconciliation),
+never by an unbounded background job or an unbounded `INSERT ... generate_series`.
+
+**Rejected alternative: fully virtual occurrences, computed on read from the recurrence rule
+plus a sparse exceptions table.** This avoids ever materializing a row for an occurrence nobody
+has touched, but was rejected for three concrete reasons: (1) Today/Tomorrow/Calendar need to
+join occurrence state (completed/skipped/rescheduled) against a date range efficiently and
+indexably — recomputing an RRULE-style expansion per query and left-joining a sparse exception
+table for every read is real complexity for no benefit at this app's actual occurrence volumes
+(a personal task list, not a calendar service processing millions of series); (2) the brief's
+own conflict-detection integration (`has_member_schedule_conflict`, Phase 7) needs a real,
+queryable row to check a timed task occurrence against — a virtual occurrence would need its own
+parallel expansion logic duplicated into that function; (3) idempotent concurrent generation is
+materially simpler to reason about and test as "insert with a unique constraint, ON CONFLICT DO
+NOTHING" than as "compute the same virtual set twice and reconcile."
+
+**`task_occurrences`**: `id`, `task_id` (FK to the series' own `tasks` row — never a duplicate
+`tasks` row per occurrence), `original_date` (the date this occurrence *would* fall on per the
+recurrence rule — immutable, and the true idempotency key alongside `task_id`, so a reschedule
+can never reopen a duplicate-generation window at its natural slot), `occurrence_date`/
+`start_time`/`duration_minutes`/`timezone` (the *current* scheduled values — mutable via
+reschedule, defaulting to what the rule computed at generation time), `status`
+(`scheduled | completed | skipped`), `completed_at`, `rescheduled` (boolean, true once
+`occurrence_date`/`start_time` diverge from what generation produced — the client-facing
+"this occurrence was moved" indicator), `created_at`/`updated_at`. `unique (task_id,
+original_date)` is the concurrency/idempotency anchor: two concurrent "generate occurrences
+through date X" calls (or a client retry) can never produce two rows for the same natural slot,
+with or without an intervening reschedule.
+
+**`recurrence_rules` evolved, not replaced**: `frequency` CHECK extended to add `'yearly'`; a
+new nullable `count` column (`until`/`count` mutually exclusive via CHECK — `null`/`null` means
+"never ends"); a new nullable `stopped_at timestamptz` (set by `stop_recurring_series`, after
+which generation refuses any occurrence with `original_date` past the stop point). Existing
+`by_weekday`/`interval`/`timezone` are reused as-is — Weekly's "on selected weekdays" and the
+DST-safe local-wall-time anchor were already correctly designed in Phase 2, just unused until
+now.
+
+**Rolling horizon: 45 days**, chosen as comfortably longer than this app's own longest-lived
+local-reminder lead time (`1 day before`, the longest documented preset) plus slack for a user
+who doesn't open the app daily, while staying small enough that `generate_task_occurrences`
+never risks materializing more than a few dozen rows per call even for a daily series. Extended
+lazily — called from `useOwnDayEvents`/Today/Tomorrow reads (via the occurrence read model
+below) and from reminder reconciliation, never from a `pg_cron` job (no server-side scheduled
+generation this phase — see the "device-local scheduler" section below for why reminders
+themselves also stay entirely client-triggered).
+
+**"Edit this occurrence" is scoped to reschedule + complete/restore/skip — never content.**
+Personal-task recurrence has no per-occurrence assignee (shared/recurring-task combination is
+an explicit non-goal — see below), so the only thing that could plausibly differ occurrence-to-
+occurrence is *when* it happens, not *what* it is. `task_occurrences` therefore carries no
+title/description/priority/category override columns at all — every content field lives
+exclusively on the series' own `tasks` row, and every edit to it is necessarily a series-wide
+edit. This is why the required series-action dialog only ever needs to distinguish "reschedule
+this one occurrence" from "change the series" — there is no third, partially-implemented
+"override this occurrence's content" option to accidentally expose.
+
+**Read model**: Today/Tomorrow/Calendar must show occurrences, not the series template (the
+brief's own explicit requirement). A new `personal_task_occurrences` read path (implemented as
+a `SECURITY DEFINER` RPC returning a unioned result, not a bare view — a bare view can't call
+the generation RPC as a read-time side effect) supplies: one-off tasks (`recurrence_rule_id is
+null`) exactly as before, straight from `tasks.date`, and recurring tasks
+(`recurrence_rule_id is not null`) from `task_occurrences`, generating through the requested
+date first. One-off task behavior is unchanged byte-for-byte — this phase adds a path
+alongside it, never rewrites it.
+
+**Shared/family recurring tasks are explicitly out of scope** (brief non-goal, "shared-task
+recurrence assignment rules"). `task_occurrences`/`recurrence_rules` only ever get exercised
+through personal-task RPCs this phase; `create_shared_family_task` gains no recurrence
+parameter. Documented here so the schema's generality (nothing about `task_occurrences` is
+inherently personal-only) is never mistaken for an implemented feature.
+
