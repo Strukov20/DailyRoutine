@@ -1,13 +1,14 @@
 import { router, type Href } from 'expo-router';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { Chip, FAB, IconButton, SegmentedButtons, Text } from 'react-native-paper';
 
 import { ResponsibilityRow } from '@/components/calendar/ResponsibilityRow';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { OfflineBanner } from '@/components/ui/OfflineBanner';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import {
   useAcceptEventResponsibility,
@@ -99,8 +100,20 @@ export default function CalendarScreen() {
       ? (ownEventsQuery.data ?? []).length > 0
       : filteredFamilySchedule.length > 0 || filteredResponsibilities.length > 0;
 
+  const isRefreshing =
+    mode === 'personal' ? ownEventsQuery.isFetching : familyScheduleQuery.isFetching || familyResponsibilitiesQuery.isFetching;
+  const onRefresh = () => {
+    if (mode === 'personal') {
+      void ownEventsQuery.refetch();
+    } else {
+      void familyScheduleQuery.refetch();
+      void familyResponsibilitiesQuery.refetch();
+    }
+  };
+
   return (
     <ScreenContainer>
+      <OfflineBanner />
       <View style={styles.header}>
         <IconButton
           icon="chevron-left"
@@ -152,9 +165,13 @@ export default function CalendarScreen() {
         </ScrollView>
       ) : null}
 
-      <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+      <ScrollView
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
+      >
         {isLoading ? <LoadingState /> : null}
-        {isError ? <ErrorState /> : null}
+        {isError ? <ErrorState onRetry={onRefresh} /> : null}
         {!isLoading && !isError && !hasContent ? (
           <EmptyState title={t('emptyTitle')} description={t('emptyDescription')} />
         ) : null}
@@ -204,7 +221,9 @@ export default function CalendarScreen() {
       </ScrollView>
 
       <FAB
+        testID="calendar-new-event-fab"
         icon="plus"
+        accessibilityLabel={t('editor.createTitle')}
         style={[styles.fab, { backgroundColor: theme.colors.primary }]}
         onPress={() =>
           router.push(
