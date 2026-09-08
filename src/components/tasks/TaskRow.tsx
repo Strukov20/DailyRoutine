@@ -1,5 +1,6 @@
+import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet, View } from 'react-native';
-import { Text } from 'react-native-paper';
+import { Icon, Text } from 'react-native-paper';
 
 import type { Category } from '@/domain/categories/types';
 import type { Task } from '@/domain/tasks/types';
@@ -44,6 +45,7 @@ export function TaskRow({
   showOverdue = false,
 }: TaskRowProps) {
   const theme = useAppTheme();
+  const { t } = useTranslation('tasks');
   const completed = task.completedAt !== null;
 
   return (
@@ -72,6 +74,22 @@ export function TaskRow({
         </Text>
         <View style={styles.meta}>
           {showOverdue ? <OverdueIndicator /> : null}
+          {task.isRecurring ? (
+            <View
+              testID={`task-recurring-indicator-${task.id}`}
+              style={styles.indicator}
+              accessibilityLabel={task.rescheduled ? t('row.rescheduledIndicator') : t('row.recurringIndicator')}
+            >
+              <Icon
+                source={task.rescheduled ? 'calendar-edit' : 'repeat'}
+                size={14}
+                color={theme.colors.onSurfaceVariant}
+              />
+              <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                {task.rescheduled ? t('row.rescheduledIndicator') : t('row.recurringIndicator')}
+              </Text>
+            </View>
+          ) : null}
           {task.startTime ? (
             <TimeLabel startTime={task.startTime} durationMinutes={task.durationMinutes} />
           ) : null}
@@ -106,6 +124,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+  },
+  indicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
   },
   completedTitle: {
     textDecorationLine: 'line-through',

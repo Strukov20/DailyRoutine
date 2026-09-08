@@ -39,4 +39,34 @@ export interface Task {
   /** family_members.id of the current assignee — only ever set on a shared (family) task. */
   assigneeMemberId: string | null;
   assignmentStatus: AssignmentStatus;
+
+  /**
+   * Set on a recurring series' own `tasks` row (never on an occurrence —
+   * see `occurrenceId` below). `recurrence_rules` itself has no direct
+   * client SELECT grant at all (locked down since Phase 2), so this is
+   * only ever a presence signal ("this task is a recurring series' own
+   * template row") — never a source of the rule's actual frequency/
+   * interval/etc., which the client never reads back after creation (see
+   * docs/DECISIONS.md, "Phase 8," for why the edit UI doesn't re-populate
+   * those fields).
+   */
+  recurrenceRuleId?: string | null;
+
+  /**
+   * Phase 8 — set only when this row represents one occurrence of a
+   * recurring series (from `personal_task_occurrences`, never from a plain
+   * `tasks` row). When set, `id` is the *occurrence*'s own id (not the
+   * series' task id — see `seriesTaskId`) so two occurrences of the same
+   * series never collide as list keys, and every completion/reschedule/
+   * skip action must go through the `*_task_occurrence` RPCs
+   * (src/lib/recurrence/recurrenceService.ts), never
+   * complete_personal_task/schedule_personal_task (the server rejects
+   * those for a recurring series — see docs/DECISIONS.md, "Phase 8").
+   */
+  occurrenceId?: string | null;
+  /** The underlying series' own task id — always present when occurrenceId is set. */
+  seriesTaskId?: string;
+  isRecurring?: boolean;
+  /** True once this occurrence's date/time was individually moved away from the series' own pattern. */
+  rescheduled?: boolean;
 }

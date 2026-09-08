@@ -49,6 +49,7 @@ export default function EditTaskScreen() {
           visibility: task.visibility,
         }}
         sharedFamilyId={task.visibility === 'family' ? (task.familyId ?? undefined) : undefined}
+        isRecurringSeries={Boolean(task.recurrenceRuleId)}
         onDone={() => router.back()}
       />
     </ScreenContainer>

@@ -79,7 +79,7 @@ export function TaskSectionList({
           onEdit={() => onEdit(item)}
           onMoveToToday={onMoveToToday ? () => onMoveToToday(item) : undefined}
           onMoveToTomorrow={onMoveToTomorrow ? () => onMoveToTomorrow(item) : undefined}
-          onMoveToInbox={onMoveToInbox ? () => onMoveToInbox(item) : undefined}
+          onMoveToInbox={onMoveToInbox && !item.occurrenceId ? () => onMoveToInbox(item) : undefined}
           onArchive={() => onArchive(item)}
           showOverdue={(section as TaskSection).showOverdue ?? false}
         />
