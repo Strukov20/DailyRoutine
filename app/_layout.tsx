@@ -11,6 +11,7 @@ import { initI18n } from '@/i18n';
 import { AuthProvider, useAuth } from '@/lib/auth/AuthProvider';
 import { useNotificationResponseRouter } from '@/lib/notifications/notificationResponseRouter';
 import { QueryProvider } from '@/lib/query/QueryProvider';
+import { useRealtimeSync } from '@/lib/realtime/useRealtimeSync';
 import { useReminderNotificationActions } from '@/lib/reminders/useReminderNotificationActions';
 import { useReminderReconciliation } from '@/lib/reminders/useReminderReconciliation';
 import { useUIStore } from '@/store/uiStore';
@@ -59,6 +60,12 @@ function RootNavigator() {
   // server-push one useNotificationResponseRouter handles above).
   useReminderReconciliation();
   useReminderNotificationActions(status === 'signed-in');
+  // Phase 9 — the single Realtime sync manager (see
+  // src/lib/realtime/useRealtimeSync.ts): owns subscribe/unsubscribe
+  // lifecycle for the profile/family broadcast channels and drives
+  // TanStack Query invalidation on generic invalidation messages. Mounted
+  // once here, never from an individual screen.
+  useRealtimeSync();
 
   // A signed-out visitor who opened an invitation deep link
   // (app/invite/[token].tsx) was sent to sign in/up with no way to carry
