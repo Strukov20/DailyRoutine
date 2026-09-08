@@ -1,44 +1,42 @@
 ---
 title: Roadmap (V2/V3)
 status: current
-updated: 2026-09-07
+updated: 2026-09-08
 sources:
   - ../../../docs/ROADMAP.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
   - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
-tags: [product, roadmap, v2, v3]
+  - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
+tags: [product, roadmap, v2, v3, phase8]
 ---
 
 ## Confirmed
 
-**MVP-scope, not V2 — recurrence and reminders (Phase 4 update)**: both are in
-[MVP definition](mvp-definition.md)'s in-scope list, not deferred to V2, but neither is built
-yet. Recurrence needs a schema change (`recurrence_rules` currently has zero grants/policies;
-a `task_occurrences` table is the anticipated shape, to preserve per-occurrence completion
-history — explicitly **not** "rewrite the same task row's date on completion," which would
-destroy that history). Reminders need a scheduling mechanism (a background job/Edge Function
-calling Expo's push API) — `reminders` rows can already be created safely. **Phase 6 built the
-two pieces this previously called out as missing** (`notification_tokens` client-side
-registration and a Deno Edge Function dispatcher pattern — see [Push
-notifications](../engineering/push-notifications.md)), but wired them to shared-task
-*assignment* events only, not reminders; a reminder-specific scheduled scan and outbox event
-type are still unbuilt. Neither recurrence nor reminders is exposed in the task editor, on
-purpose, so as not to imply either does something it doesn't. See `docs/ROADMAP.md`,
-"MVP-scope items not yet built," for the full proposal.
+**MVP-scope, delivered in Phase 8 — recurrence and reminders.** Both were in
+[MVP definition](mvp-definition.md)'s in-scope list, not deferred to V2, and are now built for
+personal tasks: bounded materialized occurrences (`task_occurrences`, never a rewrite of the
+same row's date on completion) and a device-local `expo-notifications` reminder schedule
+(never routed through Phase 6's server push outbox). Full design:
+[Recurring tasks and reminders](../engineering/recurring-tasks-and-reminders.md). Explicit
+non-goals kept out of Phase 8: shared/family task recurrence, and any recurrence/reminder
+support for calendar events (see the Calendar-scope line below).
 
-**Push notification scope not covered by Phase 6/7**: recurring-task/completion/restoration
-notifications, reminder delivery, digests/quiet hours, AI-driven content, email/SMS, an in-app
-notification inbox, general event-content-change or child-profile notifications,
+**Push notification scope not covered by Phase 6/7/8**: recurring-task/completion/restoration
+notifications through the server outbox, digests/quiet hours, AI-driven content, email/SMS, an
+in-app notification inbox, general event-content-change or child-profile notifications,
 ownership-transfer notifications, and direct APNs/FCM — all deliberately deferred, not
-forgotten. See [Push notifications](../engineering/push-notifications.md), [Family
+forgotten. (Task *reminder* delivery is covered — as a device-local schedule, not this outbox —
+see the line above.) See [Push notifications](../engineering/push-notifications.md), [Family
 calendar](../engineering/family-calendar.md), and `docs/ROADMAP.md` for the full list.
 
-**Calendar scope not covered by Phase 7**: Week/Month views, recurring events, scheduled
-reminders, Google/Apple Calendar sync, travel-time/maps, *automatic* conflict resolution
-(deterministic detection only — see [Family calendar](../engineering/family-calendar.md)), AI
-planning, drag-and-drop editing, attachments, event ownership transfer, a full offline write
-queue, and all-day/date-only events.
+**Calendar scope not covered by Phase 7 (or Phase 8)**: Week/Month views, recurring **events**
+(Phase 8 added recurrence to personal tasks only), reminder delivery/snooze **for events**
+(Phase 8's model is task-scoped only), Google/Apple Calendar sync, travel-time/maps,
+*automatic* conflict resolution (deterministic detection only — see
+[Family calendar](../engineering/family-calendar.md), extended in Phase 8 to also check a
+member's recurring occurrences), AI planning, drag-and-drop editing, attachments, event
+ownership transfer, a full offline write queue, and all-day/date-only events.
 
 **Also still open**: family ownership transfer / an owner leaving their own family has no RPC
 (`remove_family_member` unconditionally refuses to remove the `role = 'owner'` row) — see
@@ -88,3 +86,5 @@ shopping-list schema shape is explicitly "decide at design time, not now").
 - [MVP definition](mvp-definition.md)
 - [Family calendar](../engineering/family-calendar.md) — what Phase 7 built and what's still
   deferred
+- [Recurring tasks and reminders](../engineering/recurring-tasks-and-reminders.md) — what
+  Phase 8 built and what's still deferred

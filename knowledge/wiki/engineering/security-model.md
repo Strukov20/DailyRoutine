@@ -14,16 +14,18 @@ sources:
   - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
   - ../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md
   - ../../raw/sessions/2026-09-08-phase7-followup-audit.md
-tags: [engineering, security, rls, privacy]
+  - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
+tags: [engineering, security, rls, privacy, phase8]
 ---
 
 ## Status: implemented and verified (Mechanisms 1, 2, 4, 5) / not yet implemented (3)
 
-`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 391 assertions
-across 13 files passing against a real local Postgres instance) proves it, particularly
+`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 461 assertions
+across 14 files passing against a real local Postgres instance) proves it, particularly
 `060_privacy_regression_test.sql`, `080_family_management_test.sql`,
 `090_personal_task_management_test.sql`, `110_notification_outbox_test.sql`,
-`120_family_calendar_test.sql`, and `130_security_regression_test.sql`. See
+`120_family_calendar_test.sql`, `130_security_regression_test.sql`, and (Phase 8)
+`140_recurring_tasks_reminders_test.sql`. See
 [privacy-and-availability](../domain/privacy-and-availability.md) for the domain-facing
 version of this same content; this page is the engineering-facing index.
 
@@ -75,6 +77,14 @@ CHECK` protected only `owner_profile_id`; a client could rewrite `family_id`,
   outside trigger context) or is in a short reviewed whitelist. Verified the guard actually
   fails when the bug is reintroduced, not just when read.
 
+**Not a seventh gap either (Phase 8): `reminders` moved to RPC-only writes pre-emptively.**
+Unlike every gap above, `reminders`' direct grants were never shown to be exploitable — Phase 8
+converted it anyway (`create_task_reminder`/`update_task_reminder`/`delete_task_reminder`) to
+get a validation point for the new `reminders_exactly_one_time` CHECK and the
+`occurrence_id`/`is_snooze` invariants a bare CHECK can express but a raw client `INSERT`
+could still technically violate in intent. Full writeup:
+[DECISIONS.md, "Phase 8"](../../../docs/DECISIONS.md).
+
 **Not a seventh gap, but worth recording (Phase 7 follow-up):** three of the family calendar
 migration's four new trigger functions were missing the explicit
 `revoke ... from public, anon, authenticated` that Phase 6 established as the convention for
@@ -117,9 +127,18 @@ own stated reasoning. Full writeup:
    - **4a. The `notifications` outbox schema is excluded from PostgREST routing entirely** —
      a schema-level control, not just RLS/grants, and the only mechanism in this document
      that holds even against `service_role`. See [Push notifications](push-notifications.md).
-   - **4b. Conflict detection (Phase 7) returns a boolean only** —
-     `has_member_schedule_conflict()` checks three private-content-bearing sources but never
-     reveals which one, or any of its content. See [Family calendar](family-calendar.md).
+   - **4b. Conflict detection (Phase 7, extended Phase 8) returns a boolean only** —
+     `has_member_schedule_conflict()` checks three private-content-bearing sources (extended in
+     Phase 8 to include a member's own recurring occurrences and one-off timed personal tasks)
+     but never reveals which one, or any of its content. See [Family calendar](family-calendar.md).
+   - **4c. Local reminder notification content is a preference, decided at build time (Phase
+     8)** — a task reminder never leaves the device, so the risk is a lock-screen leak, not a
+     network one. "Show task titles in notifications"
+     (`notification_preferences.reminder_titles_enabled`) defaults `false`; when off, the
+     task's title is never even read into the notification content object, the same
+     data-layer-guarantee discipline as every other mechanism here, applied to a payload that
+     happens not to cross the network. See
+     [Recurring tasks and reminders](recurring-tasks-and-reminders.md).
 5. **Logs** — `src/lib/logger/logger.ts` / `ErrorBoundary.tsx` log ids and error text only,
    never content fields. **Implemented**, unchanged since Phase 1 (it's app code, not a
    migration).
@@ -200,6 +219,18 @@ read-only and returns nothing sensitive — see Mechanism 4b above.
 closing this table's write grant specifically (it wasn't closed proactively — it was Phase
 2's original design, tightened here after finding a real gap).
 
+## Recurrence/reminder mutations are RPC-only too (Phase 8)
+
+`task_occurrences` (new table) and `recurrence_rules`/`reminders` (evolved) follow the same
+`SECURITY DEFINER`, revoke-then-grant pattern as every other mutable table in this codebase —
+`recurrence_rules` keeps its zero-grant posture from Phase 2 (reachable only through the
+recurrence RPCs), and `reminders` joins the RPC-only group this phase (see the "not a seventh
+gap" entry above). `generate_task_occurrences` is idempotent by construction
+(`unique (task_id, original_date)`, `ON CONFLICT DO NOTHING`) rather than relying on
+application-level locking to prevent duplicate generation under concurrent calls. Full RPC
+list and design: [Recurring tasks and reminders](recurring-tasks-and-reminders.md) and
+[DECISIONS.md, "Phase 8"](../../../docs/DECISIONS.md).
+
 ## Before enabling Realtime on any table
 
 Confirm which broadcast mechanism is actually active — Supabase Realtime config is per-table,
@@ -214,3 +245,5 @@ first time Realtime is turned on for `events`/`tasks`.
   Supabase for this class of test would test the mock, not the guarantee
 - [Authentication](authentication.md) — how sessions/profiles connect to this RLS model
 - [Family calendar](family-calendar.md) — the Phase 7 RPC-only conversion and Mechanism 4b
+- [Recurring tasks and reminders](recurring-tasks-and-reminders.md) — the Phase 8 RPC-only
+  conversion, Mechanism 4c, and the extended Mechanism 4b

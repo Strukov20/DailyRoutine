@@ -584,3 +584,88 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     as a hard constraint and a new convention (test screens from `src/`, import via relative
     path) rather than silently worked around with no explanation.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-08T00:00:00Z — Phase 8: Recurring Tasks, Scheduled Reminders, and Snooze
+
+- **Operation type:** implementation (new feature) + native verification + documentation +
+  wiki update
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md`](../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md).
+- **Wiki pages updated:** new
+  `engineering/recurring-tasks-and-reminders.md`; `index.md` (new page linked);
+  `domain/personal-planning.md` (recurrence/reminder boundaries rewritten from "deliberately
+  not built" to delivered); `product/mvp-definition.md` (implementation status brought current
+  through Phase 8 — every MVP-list bullet is now implemented); `product/roadmap.md`
+  (recurrence/reminders moved from "MVP-scope items not yet built" to delivered; calendar/push
+  non-goal lists clarified as task-scoped, not calendar-event-scoped); `engineering/data-model.md`
+  (new `task_occurrences` entity, `reminders`/`recurrence_rules`/`notification_preferences`
+  evolution, migration count 14→16, resolved the long-open "recurrence materialization
+  strategy" unresolved item); `engineering/security-model.md` (pgTAP count 391→461, files
+  13→14; new "not a seventh gap" entry for the pre-emptive `reminders` RPC-only conversion;
+  Mechanism 4b extension and new Mechanism 4c; new "Recurrence/reminder mutations are RPC-only
+  too" section); `engineering/testing-strategy.md` (Jest count 264→331, suites 37→42; pgTAP
+  count/file breakdown updated; new Phase 8 Components bullet; the `<Menu>` limitation
+  explicitly extended from "Jest-only" to "confirmed live via Maestro on a real device build,
+  narrowed to native-modal-presented screens"; new flaky-test convention entry);
+  `engineering/push-notifications.md` (clarified reminders are now delivered, deliberately
+  never through this outbox); `engineering/family-calendar.md` (conflict-detection Phase 8
+  extension noted).
+- **Canonical docs updated:** `docs/DECISIONS.md` (new "Phase 8" subsections: the device-local
+  scheduler rationale, reminder identity, permission-timing gap fix, cross-router
+  disambiguation, Snooze/Done semantics, the full native-verification diagnostic — hierarchy
+  dump, frame-by-frame video, second-Menu reproduction — and a "Verified, not just asserted"
+  closing section with exact re-run counts); `docs/DATA_MODEL.md` (`task_occurrences` section,
+  `reminders`/`recurrence_rules` rewritten, "Recurrence — deliberately not exposed" section
+  replaced); `docs/ARCHITECTURE.md` (new "Recurring tasks and local reminder scheduling"
+  section); `docs/SECURITY_AND_PRIVACY.md` (new Mechanism 4c, `reminders` RPC-only conversion
+  bullet, Mechanism 4/4b framing updated); `docs/TEST_STRATEGY.md` (new `<Menu>`
+  live-Maestro-confirmation bullet); `docs/ROADMAP.md` (MVP-scope items moved from "not yet
+  built" to delivered; calendar/push non-goal lists clarified); `README.md` (new Phase 8
+  bullet, `e2e:recurrence` script row, corrected "still not implemented" list).
+- **Decisions/contradictions recorded:**
+  - Chose bounded materialized occurrences (one real `task_occurrences` row per generated
+    occurrence, idempotent via `unique (task_id, original_date)`) over fully virtual
+    (computed-on-read) occurrences, for three concrete reasons recorded in `DECISIONS.md` —
+    efficient date-range joins for Today/Tomorrow/Calendar, a real row for conflict detection
+    to check, and simpler idempotent-concurrency reasoning.
+  - Direct testing against real Postgres before writing pgTAP surfaced four real bugs: a
+    weekly-interval `date_trunc` timestamp-vs-date cast bug, a weekly-series first-occurrence
+    anchor not snapping to a selected weekday, four occurrence RPCs not checking the parent
+    series' soft-delete state, and a real timezone-mixing bug in my own conflict-detection
+    pgTAP assertion (hardcoded UTC offset vs. the test runner's actual Europe/Kyiv system
+    timezone) — fixed via proper `at time zone` conversion rather than hand-computed offsets.
+  - A real permission-request gap was found and fixed mid-session: `ReminderEditorSection`'s
+    original `addPreset` created a reminder row with no OS permission check at all, meaning a
+    reminder could be silently created and then never fire. Fixed by checking
+    `getNotificationPermissionStatus()` first and only requesting when `'undetermined'`.
+  - A real cross-router payload collision was found and fixed while wiring in the second
+    (local-reminder) notification tap handler: Phase 6's existing router had no way to exclude
+    a local reminder payload, which would otherwise have been double- or mis-handled by both
+    routers on the same tap. Fixed by excluding any payload carrying a `notificationType`
+    field from the Phase 6 router.
+  - A genuinely new, live-environment confirmation of an already-documented limitation: Phase
+    5 recorded `react-native-paper`'s `<Menu>` as unreliable under Jest/`react-test-renderer`.
+    This session reproduced the identical failure in a real native build driven by Maestro —
+    diagnosed exhaustively (six tap strategies, a live accessibility-hierarchy dump, a
+    frame-by-frame screen-recording extraction via `ffmpeg` installed specifically for this,
+    and a second independent `<Menu>` on the same screen) rather than assumed, narrowing the
+    cause to "any `<Menu>` anchored on a screen presented via `presentation: 'modal'`." This
+    blocked real on-device verification of local-notification delivery/tap/Snooze/Done, which
+    is honestly reported as not observed, per this phase's own explicit instruction not to
+    describe a notification as observed unless it actually appeared. Build, launch, sign-in,
+    and data-flow (a task and a reminder created via the app's own RPC path both correctly
+    rendering in the real running app) were directly, visually verified on a real iOS 26.5
+    Simulator.
+  - A real, full-suite-only flaky test was found and fixed: `ReminderEditorSection.test.tsx`'s
+    two Menu-driven tests passed in isolation but intermittently failed among the full 42-suite
+    Jest run — the same `<Menu>`/Portal unreliability reproducing intermittently under Jest at
+    scale. Fixed by extracting the pure `existingReminderOffsets()` function and testing it
+    directly, never driving the Menu open. Confirmed stable across 3 consecutive full runs
+    afterward.
+  - Android: exports and `expo-doctor` pass with the Phase 8 schema/RPC changes in place; no
+    Android exact-alarm permission was requested (Section 24 stop-condition, correctly never
+    triggered). A real Android native build/run was not attempted this session — reported
+    honestly as unverified rather than assumed equivalent to the iOS result.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

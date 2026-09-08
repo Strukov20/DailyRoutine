@@ -10,6 +10,7 @@ sources:
   - ../../../docs/TEST_STRATEGY.md
   - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
   - ../../raw/sessions/2026-09-08-phase7-followup-audit.md
+  - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
 tags: [engineering, calendar, events, responsibilities, phase7]
 ---
 
@@ -65,7 +66,9 @@ returns **only a boolean** — never which item it conflicted with or any of its
 view was considered and rejected: it would need to either leak an identifying id (defeating
 the privacy goal) or be too sanitized to be useful. The client renders a fixed, generic
 warning ("{name} is busy at this time") regardless of which of the three sources triggered
-it; conflicts never block a save, only warn. See
+it; conflicts never block a save, only warn. **Extended in Phase 8** (via `CREATE OR REPLACE`,
+signature unchanged) to also check a member's own recurring task occurrences and one-off timed
+personal tasks — see [recurring-tasks-and-reminders](recurring-tasks-and-reminders.md). See
 [security-model](security-model.md), Mechanism 4b.
 
 ## Two sanitized read views, combined client-side
@@ -171,5 +174,7 @@ write-up: [DECISIONS.md, "Phase 7 follow-up"](../../../docs/DECISIONS.md).
 - [Security model](security-model.md) — Mechanisms 4/4a/4b
 - [Data model](data-model.md) — the schema
 - [Push notifications](push-notifications.md) — the outbox this phase extends
+- [Recurring tasks and reminders](recurring-tasks-and-reminders.md) — the Phase 8 extension to
+  `has_member_schedule_conflict`
 - [Testing strategy](testing-strategy.md) — what's covered, what's deferred
 - [Roadmap](../product/roadmap.md) — what's explicitly out of scope

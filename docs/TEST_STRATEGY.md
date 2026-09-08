@@ -145,6 +145,22 @@ AsyncStorage is null` even though every call is mocked. Listing the exports expl
   importing an `app/` file is fine at test time and invisible to the production bundle. Any
   future screen-level test should follow this same location, not `app/` itself.
 
+- **`react-native-paper`'s `<Menu>` limitation is not Jest-only (Phase 8).** Phase 5 documented
+  it as unreliable under `react-test-renderer`; Phase 8's live Maestro-driven simulator testing
+  reproduced the identical failure in a real running app — six distinct tap strategies against
+  the anchor button all reported success in Maestro's own output, but a `maestro hierarchy` dump
+  taken immediately after showed zero menu content mounted anywhere, and a frame-by-frame
+  extraction of a screen recording showed the button's own pressed-state highlight firing
+  correctly with no menu content in any frame. The same failure reproduced on a second,
+  independent `<Menu>` on the same screen, narrowing it to "any `<Menu>` whose anchor lives on a
+  screen presented via `presentation: 'modal'`," not a component-specific bug — see
+  [DECISIONS.md, "Phase 8"](DECISIONS.md) for the full evidence. **Consequence for test-writing**:
+  do not attempt to drive a `<Menu>` open in either a Jest test or a Maestro flow on a modal
+  screen; test the pure logic behind it directly instead (Phase 8's
+  `ReminderEditorSection.test.tsx` extracts `existingReminderOffsets()` as a standalone,
+  Menu-free unit for exactly this reason, after the Menu-driven version of that same test proved
+  flaky under a full-suite run — passing in isolation, intermittently failing at suite scale).
+
 ## What "at least one test of each kind" means going forward
 
 Every new domain module should ship with a unit test in the same PR (not after). Every new

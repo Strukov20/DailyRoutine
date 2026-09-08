@@ -135,12 +135,17 @@ per-family Realtime channel (`family:{family_id}:schedule`). Personal, non-share
 
 Reminders (`reminders` table) are owner-only by construction (`profile_id`) — a reminder for
 a private task never has another recipient, so there is no cross-user leak path to design
-against.
+against. Task reminders are delivered as **device-local** notifications (Phase 8 —
+`expo-notifications` scheduled entirely on-device, never routed through the server outbox
+below), so unlike the push mechanisms in this section, the content never leaves the device or
+crosses the network at all; the privacy question for reminders is purely "what does this
+device's own lock screen show," covered in Mechanism 4c below.
 
 **Implemented in Phase 6** for shared family task assignment events, **extended in Phase 7**
-to event-responsibility assignment events (drop-off/pick-up/etc.) — never personal tasks,
-never generic event content notifications (see [ROADMAP.md](ROADMAP.md) for what's still
-deferred). Both surfaces share the same constraint that makes this safe: shared family tasks
+to event-responsibility assignment events (drop-off/pick-up/etc.) — never personal tasks (a
+personal task has no other family member to notify) — this section's push-outbox mechanisms
+never fire for a reminder; see Mechanism 4c for personal-task reminder notifications
+specifically. Both surfaces share the same constraint that makes this safe: shared family tasks
 are the only task shape that reaches `task_assignments` at all, and a responsibility can only
 exist on a `visibility = 'family'` event (Phase 7's trigger — see
 [DATA_MODEL.md](DATA_MODEL.md)); either way, a recipient already has read access to the full
@@ -214,6 +219,21 @@ the raw HTTP response body from a real RPC call contains no secret-marker text a
 recognizable field name (`title`/`description`) at all — the strongest test this mechanism
 allows, short of exhaustively enumerating every possible leak shape.
 
+### Mechanism 4c — local reminder notification content is a preference, decided at build time (Phase 8)
+
+A task reminder never leaves the device (see above), so the risk here isn't a network leak —
+it's a task title (potentially sensitive: a medical appointment, a surprise gift) sitting on a
+lock screen where anyone glancing at the phone can read it. **"Show task titles in
+notifications" (`notification_preferences.reminder_titles_enabled`) defaults to `false`.** When
+disabled, `reminderReconciliation.ts`'s `buildContent()` never passes the task's title/body to
+`expo-notifications` at all — the notification's title/body are the fixed generic strings
+"FamilyFlow" / "Task reminder" regardless of the actual task, decided at the moment the
+notification content is *built*, not filtered afterward at *display* time. This is the same
+privacy-is-a-data-layer-guarantee discipline as the rest of this document, applied to a payload
+that happens to never touch the network: the task's own title is simply never read into the
+notification content object when the preference is off, the same way a sanitized view never
+selects a column it shouldn't return.
+
 ## Mechanism 5 — logs
 
 Application logs go through `src/lib/logger/logger.ts`, whose contract (documented in that
@@ -244,8 +264,11 @@ database logs) must follow the same rule once they exist: log row ids, not row c
   only), server-derived recipients inside the same transaction as the mutation, the
   `notifications` schema's own API-layer isolation (Mechanism 4a), and (Phase 7) a
   privacy-safe deterministic conflict-detection function returning a boolean only
-  (Mechanism 4b). **Not yet implemented**: notifications for anything else (personal tasks,
-  completion/restoration) — see [ROADMAP.md](ROADMAP.md).
+  (Mechanism 4b). **Implemented in Phase 8**: personal-task reminder notifications, as a
+  device-local `expo-notifications` schedule (never the push outbox above), with a
+  content-shown-or-not preference decided at build time (Mechanism 4c). **Still not
+  implemented**: notifications for task completion/restoration, and any reminder/recurrence
+  notification for calendar events — see [ROADMAP.md](ROADMAP.md).
 - ⚠️ **Function EXECUTE grants are a separate mechanism from table grants — audited in Phase
   3, fixed where it mattered.** The "REVOKE ALL ... FROM anon, authenticated" bullet above is
   about _tables_ and remains accurate. _Functions_ are different: Supabase's own role bootstrap
@@ -276,6 +299,16 @@ database logs) must follow the same rule once they exist: log row ids, not row c
   plain PATCH, bypassing the accept/decline/take state machine and its audit trail entirely.
   Closed the same way as the `tasks` finding: the three grants revoked, every mutation
   replaced by a narrowly scoped RPC. See [DECISIONS.md, "Phase 7"](DECISIONS.md).
+- ⚠️ **`reminders` moved to RPC-only writes in Phase 8, pre-emptively rather than as an audit
+  finding.** Unlike the `tasks`/`events` gaps above, `reminders`' direct grants were never
+  shown to be exploitable — but Phase 8 needed a validation point for the new
+  `reminders_exactly_one_time` CHECK and the `occurrence_id`/`is_snooze` invariants (a snooze
+  row must reference a real occurrence it can be scoped to) that a bare `CHECK` constraint
+  alone can express but a raw client `INSERT` could still technically satisfy while violating
+  the *intent* (e.g., setting `is_snooze = true` on a reminder the user never actually
+  snoozed). Converted to `create_task_reminder`/`update_task_reminder`/`delete_task_reminder`
+  before shipping, matching the RPC-only pattern established for every other mutable table in
+  this codebase. See [DECISIONS.md, "Phase 8"](DECISIONS.md).
 
 ## Non-goals for MVP
 

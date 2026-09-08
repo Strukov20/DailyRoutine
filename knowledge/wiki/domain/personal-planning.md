@@ -1,14 +1,15 @@
 ---
 title: Personal planning
 status: current
-updated: 2026-09-03
+updated: 2026-09-08
 sources:
   - ../../../docs/PRODUCT.md
   - ../../../docs/DATA_MODEL.md
   - ../../../docs/DECISIONS.md
   - ../../../docs/ARCHITECTURE.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
-tags: [domain, personal, tasks]
+  - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
+tags: [domain, personal, tasks, phase8]
 ---
 
 ## Confirmed
@@ -19,9 +20,10 @@ categories, priorities, and a Private/Family visibility flag per item. Calendar 
 out of scope through Phase 4 — see [MVP scope](../product/mvp-definition.md).
 
 **Task fields**: title, description, date, start time, duration, priority, category,
-visibility, completion status (`completed_at`), soft-delete (`deleted_at`, Phase 4). Reminder
-and recurrence fields exist in the schema but are not editable from the UI this phase — see
-"Reminder and recurrence boundaries" below. **Only title is mandatory** — enforced both
+visibility, completion status (`completed_at`), soft-delete (`deleted_at`, Phase 4), plus
+recurrence (`recurrence_rule_id`) and reminders since Phase 8 — see
+[recurring tasks and reminders](../engineering/recurring-tasks-and-reminders.md). **Only title
+is mandatory** — enforced both
 client-side (`src/domain/tasks/schemas.ts`'s `taskEditorSchema`) and at the database layer
 (`tasks.title NOT NULL`).
 
@@ -79,25 +81,21 @@ the calendar day in any non-zero-UTC-offset timezone near midnight. See
 `jest-expo` environment quirk found while testing this (`process.env.TZ` doesn't reliably
 change `Date`'s output inside Jest the way it does in plain Node).
 
-## Reminder and recurrence boundaries — deliberately not built this phase
+## Reminders and recurrence — built in Phase 8
 
-- **Reminders**: `reminders` rows can be created safely (existing grants are fine — see
-  [security model](../engineering/security-model.md)), but nothing schedules an actual Expo
-  notification from one yet. The task editor has no reminder control this phase, specifically
-  so it never implies a reminder does something it doesn't.
-- **Recurrence**: `recurrence_rules` has zero grants/policies, and no personal-task RPC
-  accepts a `recurrence_rule_id`. A correct implementation needs per-occurrence completion
-  history and duplicate-generation prevention, which the current one-row-per-series schema
-  can't provide without a schema change (a `task_occurrences` table is the anticipated shape).
-  **Explicitly not implemented as "rewrite the same row's date on completion"** — that
-  destroys occurrence history, which is unacceptable by the brief's own explicit instruction.
-
-Both are MVP-scope items (per `docs/MVP_SCOPE.md`), not deferred to V2 — see
-[roadmap](../product/roadmap.md), "MVP-scope items not yet built," for the concrete
-implementation proposal for each.
+Both were MVP-scope items long documented here as "deliberately not built this phase" — now
+delivered. A personal task can carry a recurrence rule (Daily/Weekly/Monthly/Yearly/Custom,
+generating real `task_occurrences` rows into a rolling horizon, never a rewrite of the same
+row's date on completion — that would destroy occurrence history) and one or more reminder
+definitions (absolute or relative, scheduled as a device-local `expo-notifications` entry, not
+a server dispatch). Full design, the bounded-materialized-occurrences architecture, the
+reconciliation model, and a genuine `<Menu>` interaction limitation confirmed via live
+on-device testing: [recurring tasks and reminders](../engineering/recurring-tasks-and-reminders.md).
 
 ## See also
 
+- [Recurring tasks and reminders](../engineering/recurring-tasks-and-reminders.md) — the full
+  Phase 8 design
 - [Tasks and assignments](tasks-and-assignments.md) — the family-facing half of task
   behavior (assignment, Take Task) — still not built; personal tasks never set
   `assignee_member_id`/`assignment_status` via any Phase 4 RPC

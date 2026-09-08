@@ -1,7 +1,7 @@
 ---
 title: Data model
 status: current
-updated: 2026-09-07
+updated: 2026-09-08
 sources:
   - ../../../docs/DATA_MODEL.md
   - ../../../docs/DECISIONS.md
@@ -11,12 +11,13 @@ sources:
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
   - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
-tags: [engineering, data-model, supabase]
+  - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
+tags: [engineering, data-model, supabase, phase8]
 ---
 
 ## Status: implemented
 
-`supabase/migrations/` (14 files) implements this schema against a local Supabase project
+`supabase/migrations/` (16 files) implements this schema against a local Supabase project
 only — no hosted/production project connected. See [`docs/DATA_MODEL.md`](../../../docs/DATA_MODEL.md)
 for the normative description; the migrations are the source of truth for exact syntax.
 
@@ -25,10 +26,13 @@ for the normative description; the migrations are the source of truth for exact 
 `profiles`, `families`, `family_members` (unified adult+child — see
 [family-spaces](../domain/family-spaces.md)), `family_invitations`, `categories`, `tasks`,
 `task_assignments` (audit trail — see [tasks-and-assignments](../domain/tasks-and-assignments.md)),
-`reminders`, `recurrence_rules`, `events`, `event_participants`, `responsibilities`,
+`reminders`, `recurrence_rules`, `task_occurrences` (Phase 8 — generated occurrences of a
+recurring personal task, see [recurring-tasks-and-reminders](recurring-tasks-and-reminders.md)),
+`events`, `event_participants`, `responsibilities`,
 `responsibility_assignments` (audit trail, Phase 7 — see
 [events-and-responsibilities](../domain/events-and-responsibilities.md)),
-`notification_tokens`, `notification_preferences` (Phase 6), plus a private `notifications`
+`notification_tokens`, `notification_preferences` (Phase 6, gained
+`reminder_titles_enabled` in Phase 8), plus a private `notifications`
 schema (`outbox`, `deliveries`) not reachable via the client API at all — see
 [Push notifications](push-notifications.md).
 
@@ -73,6 +77,18 @@ expose `participant_member_id`); `notifications.outbox` gained nullable `event_i
 reasoning: [DECISIONS.md, "Phase 7"](../../../docs/DECISIONS.md) and
 [Family calendar](family-calendar.md).
 
+**Phase 8 additions**: `task_occurrences` (new table — bounded materialized occurrences of a
+recurring personal task, `unique (task_id, original_date)` as the idempotency anchor);
+`recurrence_rules` extended (`yearly` frequency, `count`, `stopped_at`); `reminders`'
+`INSERT`/`UPDATE`/`DELETE` grants for `authenticated` revoked (RPC-only, pre-emptively rather
+than an audit finding — see [security model](security-model.md)), plus new `occurrence_id`/
+`is_snooze`/`label` columns and a `remind_at`-xor-`offset_minutes_before` CHECK;
+`notification_preferences.reminder_titles_enabled` (new, defaults `false`);
+`has_member_schedule_conflict()` extended (via `CREATE OR REPLACE`, signature unchanged) to
+also check a member's own recurring occurrences and one-off timed personal tasks. Full
+reasoning: [DECISIONS.md, "Phase 8"](../../../docs/DECISIONS.md) and
+[Recurring tasks and reminders](recurring-tasks-and-reminders.md).
+
 ## Ownership summary (who owns what, who can read it)
 
 See [`docs/DATA_MODEL.md`, "Ownership and authorization
@@ -80,7 +96,11 @@ summary"](../../../docs/DATA_MODEL.md#ownership-and-authorization-summary) for t
 table. Key points not to get wrong:
 
 - `reminders`, `notification_tokens`, and `notification_preferences` are **owner-only,
-  always** — never visible to other family members, even for a shared task.
+  always** — never visible to other family members, even for a shared task. `reminders` writes
+  are RPC-only since Phase 8; `SELECT` remains direct/RLS-governed.
+- `task_occurrences` (Phase 8) is owned by the same profile as its parent `tasks` row
+  (`owner_profile_id`, denormalized at generation time) — never a duplicate `tasks` row per
+  occurrence.
 - `notifications.outbox`/`deliveries` (Phase 6) aren't owned by any *user* at all in the usual
   sense — the whole schema is excluded from PostgREST's routing config, so no client role,
   including `service_role`, can reach it. See [Push notifications](push-notifications.md).
@@ -95,11 +115,10 @@ table. Key points not to get wrong:
   basic custom-category creation, but family-scoped only (`create_custom_category`,
   owner-only) — a personal-scope column (e.g. `owner_profile_id`) was not added. See
   [personal-planning](../domain/personal-planning.md).
-- Recurrence materialization strategy (generate-ahead vs. on-read) — still open, and now has
-  a concrete blocker recorded: the current one-row-per-series schema can't preserve
-  per-occurrence completion history without a schema change (a `task_occurrences` table is
-  the anticipated shape). See [roadmap](../product/roadmap.md), "MVP-scope items not yet
-  built."
+- ~~Recurrence materialization strategy (generate-ahead vs. on-read)~~ — resolved in Phase 8:
+  bounded materialized occurrences (`task_occurrences`), generated lazily on demand into a
+  45-day rolling horizon, never fully-ahead and never purely virtual. See
+  [Recurring tasks and reminders](recurring-tasks-and-reminders.md).
 - ~~No family-creation RPC exists yet~~ — resolved in Phase 3: `create_family_with_owner`
   atomically creates the family row and its owner's membership row; `families`/
   `family_members` still have no direct INSERT grant for `authenticated` by design. See
@@ -115,6 +134,8 @@ table. Key points not to get wrong:
 ## See also
 
 - [Security model](security-model.md) — the RLS design this schema is written against
+- [Recurring tasks and reminders](recurring-tasks-and-reminders.md) — `task_occurrences`/
+  `reminders`/`recurrence_rules` in full (Phase 8)
 - [Testing strategy](testing-strategy.md) — why RLS needs its own test layer
 - [Authentication](authentication.md) — how `profiles` connects to `auth.users`
 - [Family calendar](family-calendar.md) — the Phase 7 schema additions in full
