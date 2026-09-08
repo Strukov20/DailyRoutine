@@ -1287,3 +1287,67 @@ whoever operates the actual Supabase project when this phase is ready to go live
    a physical device (Expo push tokens are simulator-inert — see
    `notificationService.ts`'s own `Device.isDevice` check) and is out of scope for this phase's
    local-infrastructure-only verification loop.
+
+## Phase 6.1 (Deployment & Real Device Push Validation)
+
+### Scope split, decided with the user before writing any code
+
+This phase's own brief spans two fundamentally different kinds of work: (a) things
+verifiable entirely from this repository against real local infrastructure — a security
+regression guard, a secret/bundle audit, documentation — and (b) things that require
+creating external accounts/resources (an EAS project, a hosted Supabase project, push
+credentials) and a physical device, none of which an agent can do autonomously under this
+repository's own standing rule against creating/modifying external resources without
+explicit authorization, and the last of which (a physical device receiving and being tapped)
+is not something an agent can do *at all*, authorization or not. Investigated the repo first
+(no `eas.json`, no `eas` CLI installed, no `extra.eas.projectId` in `app.config.ts`, no
+linked Supabase project) rather than assuming either way, confirmed the repo is genuinely
+greenfield for deployment, then asked the user directly how to proceed rather than either
+silently skipping most of the brief or burning significant effort on tooling for
+infrastructure that might not even get created. The user chose: local-only work now, a
+precise runbook for everything else. This decision, and the reasoning above, is recorded
+here rather than left implicit, since it determines why roughly half this phase's own brief
+(Sections 1, 2 (execution), 3 (execution), 4–8, most of the Definition of Done) is
+documented-as-manual-steps rather than executed.
+
+### Security regression guard: an invariant check, not a grant snapshot
+
+The anon-EXECUTE-grant class of finding recurred three times before this phase (Phase 3, 5,
+6) with no automated test ever existing for the *general* case — each time it was only ever
+caught by a one-off manual `pg_proc`/`has_function_privilege` query, never by CI. Considered
+a literal snapshot of every function's grants (compare against a recorded expected list).
+Rejected per the brief's own explicit instruction — a snapshot needs editing every time a
+legitimate new function is added, which trains whoever's adding it to "just update the
+snapshot" rather than actually verifying the new function is safe. Built instead as a
+schema-driven query (`pg_proc`/`pg_namespace`, never a hardcoded function list) asserting the
+actual invariant: anon/PUBLIC may `EXECUTE` a function in `public`/`notifications` only if
+it's a trigger function (Postgres itself refuses to invoke a `returns trigger` function
+outside trigger context, regardless of grant — verified directly in the test, not just
+asserted) or is in a short, reviewed whitelist (currently one entry:
+`current_profile_id()`, a harmless `auth.uid()` wrapper). Verified the guard actually catches
+a regression, not just documents one — temporarily re-granted `anon` `EXECUTE` on a real
+function, confirmed the test failed with the expected assertion, reverted, confirmed it
+passed again.
+
+### `docs/DEPLOYMENT.md`: a new file, not folded into `DECISIONS.md`
+
+The brief asks for a "deployment/runbook" as one of its documentation deliverables — this
+repository had no existing home for operational (as opposed to architectural/historical)
+content, so a new `docs/DEPLOYMENT.md` was added rather than growing `DECISIONS.md` (a
+decision log, not a runbook) or `ARCHITECTURE.md` (design, not operations) further. Contains
+exact commands for every external step (EAS init, `supabase link`/`db push`/`secrets set`/
+`functions deploy`, the webhook + `pg_cron` configuration, the manual device test matrix) so
+whoever has the actual accounts/device can execute it directly, plus the retry/idempotency
+semantics and tickets-vs-receipts explanation the brief asks documented explicitly (an
+at-least-once, not exactly-once, guarantee — matching what Expo's own infrastructure
+provides, deliberately not oversold as more than that).
+
+### What was actually verified this phase, locally
+
+`npm run verify`, a fresh `db reset` + `test db` (299/299 pgTAP — 293 existing + 6 new),
+`deno test` (11/11, unaffected), `scripts/e2e-backend.sh` (32/32) and
+`scripts/e2e-notifications.sh` (24/24), `expo-doctor` (21/21), both `expo export` platforms,
+and a fresh secret scan of both compiled bundles plus the public Expo config specifically for
+`NOTIFICATION_WORKER_SECRET` (the brief's own named secret for this phase, not previously
+scanned for by name) — clean throughout, confirming it is referenced only via `Deno.env.get`
+inside the Edge Function, never client-side.

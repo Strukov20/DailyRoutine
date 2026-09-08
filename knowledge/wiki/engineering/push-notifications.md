@@ -1,18 +1,20 @@
 ---
 title: Push notifications
 status: current
-updated: 2026-09-06
+updated: 2026-09-08
 sources:
   - ../../../docs/ARCHITECTURE.md
   - ../../../docs/DATA_MODEL.md
   - ../../../docs/SECURITY_AND_PRIVACY.md
   - ../../../docs/DECISIONS.md
   - ../../../docs/TEST_STRATEGY.md
+  - ../../../docs/DEPLOYMENT.md
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
-tags: [engineering, notifications, edge-functions, phase6]
+  - ../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md
+tags: [engineering, notifications, edge-functions, phase6, phase6.1, deployment]
 ---
 
-## Status: implemented (Phase 6), scoped to shared family task assignment events only
+## Status: implemented (Phase 6), scoped to shared family task assignment events only. **Not deployed** (Phase 6.1)
 
 Push notifications for the four assignment lifecycle events (assigned/reassigned → requested,
 accepted, declined, took → taken). Everything else — recurring tasks, reminders, digests,
@@ -20,13 +22,18 @@ quiet hours, AI-driven content, email/SMS, an in-app notification inbox, event/c
 notifications, ownership-transfer notifications, direct APNs/FCM — is deliberately out of
 scope. See [roadmap](../product/roadmap.md).
 
-**No real push has been sent or received.** Every layer of testing (pgTAP, the Deno Edge
-Function suite, Jest, `scripts/e2e-notifications.sh`) uses a fake `PushTransport` — never a
-real Expo network call. The Database Webhook/`pg_cron` invocation and any EAS/Apple/Firebase
-configuration were deliberately not created this phase — see [DECISIONS.md, "Phase
-6"](../../../docs/DECISIONS.md) for the exact manual steps still required, and this
-repository's standing rule against creating external resources without explicit
-authorization.
+**No real push has been sent or received, through two phases now.** Every layer of testing
+(pgTAP, the Deno Edge Function suite, Jest, `scripts/e2e-notifications.sh`) uses a fake
+`PushTransport` — never a real Expo network call. Phase 6.1 set out specifically to close
+this gap (EAS project, hosted Supabase deploy, a physical device) and, after auditing the
+repo (no `eas.json`, no linked Supabase project — genuinely greenfield) and asking the user
+how to proceed, was scoped by the user to **local-only verification plus a full deployment
+runbook** — the actual deploy/device steps require the operator's own EAS/Apple/Google/
+Supabase accounts and a physical device, which an agent cannot create or use autonomously
+(the last of those, not even with authorization — a physical device tap is not something an
+agent can perform at all). See [`docs/DEPLOYMENT.md`](../../../docs/DEPLOYMENT.md) for the
+exact commands and the manual acceptance matrix, and [DECISIONS.md, "Phase
+6.1"](../../../docs/DECISIONS.md) for the scoping decision and rationale.
 
 ## Durable transactional outbox — why not a direct send
 
@@ -147,6 +154,31 @@ Client-side Jest coverage (`src/domain/notifications/payload.test.ts`,
 `src/lib/notifications/{notificationService,notificationResponseRouter}.test.ts`) surfaced two
 non-obvious RNTL/Jest gotchas — see [testing-strategy](testing-strategy.md) for both in full.
 
+## Security regression guard (Phase 6.1)
+
+The anon-EXECUTE-grant finding (see "Four... five real gaps" in
+[security-model](security-model.md)) recurred three times across phases before ever getting
+an automated test for the general case — each time caught only by a one-off manual query.
+`supabase/tests/130_security_regression_test.sql` closes this: a schema-driven invariant
+check (queries `pg_proc`/`pg_namespace` directly, never a hardcoded function list) rather than
+a snapshot of every grant — asserts anon/PUBLIC can `EXECUTE` a function in
+`public`/`notifications` only if it's a trigger function (Postgres itself refuses to invoke
+one outside trigger context, proven directly in the test) or is in a short whitelist. The
+`notifications` schema gets a stricter zero-whitelist rule. Verified the guard actually fails
+when the bug it guards against is reintroduced, not just when read.
+
+## Deployment status (Phase 6.1)
+
+**Still not deployed.** Phase 6.1 set out to close this gap and, after confirming the repo has
+no linked EAS/hosted-Supabase project at all, was scoped (with the user) to local-only
+verification plus a full runbook — see [`docs/DEPLOYMENT.md`](../../../docs/DEPLOYMENT.md)
+for the exact commands (EAS init, `supabase link`/`db push`/`secrets set`/`functions deploy`,
+Database Webhook + `pg_cron` configuration) and the manual on-device acceptance matrix, none
+of which an agent can execute — the required accounts and a physical device belong to the
+repository's operator. The runbook also documents the actual delivery guarantee
+(at-least-once, matching what Expo itself provides — not oversold as exactly-once) and the
+Expo ticket-vs-receipt two-phase flow in full.
+
 ## See also
 
 - [Tasks and assignments](../domain/tasks-and-assignments.md) — the assignment state machine
@@ -155,3 +187,4 @@ non-obvious RNTL/Jest gotchas — see [testing-strategy](testing-strategy.md) fo
 - [Data model](data-model.md) — the schema
 - [Testing strategy](testing-strategy.md) — the RNTL/Jest gotchas found this phase
 - [Roadmap](../product/roadmap.md) — what's explicitly out of scope
+- [`docs/DEPLOYMENT.md`](../../../docs/DEPLOYMENT.md) — the full deployment runbook (Phase 6.1)

@@ -1,7 +1,7 @@
 ---
 title: Testing strategy
 status: current
-updated: 2026-09-06
+updated: 2026-09-08
 sources:
   - ../../../docs/TEST_STRATEGY.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
@@ -10,6 +10,7 @@ sources:
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
   - ../../raw/sessions/2026-09-05-phase5-shared-family-tasks.md
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
+  - ../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md
 tags: [engineering, testing]
 ---
 
@@ -56,9 +57,10 @@ tags: [engineering, testing]
   optimistic-update architecture rule (see [system-architecture](system-architecture.md))
   requires before any hook is allowed to use one.
 - **RLS/privacy tests** — pgTAP via `supabase test db`, against a real local Postgres
-  instance with RLS enabled. `supabase/tests/*.sql` (11 files, 293 assertions total: 192
+  instance with RLS enabled. `supabase/tests/*.sql` (12 files, 299 assertions total: 192
     through Phase 4, +71 in Phase 5's `100_shared_family_tasks_test.sql`, +30 in Phase 6's
-    `110_notification_outbox_test.sql`), including a dedicated secret-marker
+    `110_notification_outbox_test.sql`, +6 in Phase 6.1's `130_security_regression_test.sql`),
+    including a dedicated secret-marker
     privacy-regression test (`060_privacy_regression_test.sql`), the full
     family/invitation/child-profile RPC suite (`080_family_management_test.sql`), the
     personal-task RPC suite (`090_personal_task_management_test.sql`, itself extending the
@@ -66,24 +68,31 @@ tags: [engineering, testing]
     suite (`100_shared_family_tasks_test.sql`) — creation/outsider-rejection, the full
     assignment state machine, stale-acceptance-after-reassignment, Take Task concurrency proxy,
     completion permissions, member-removal resolution (both pending and accepted), and every new
-    RPC's anon/authenticated privilege check — and the notification outbox suite
+    RPC's anon/authenticated privilege check — the notification outbox suite
     (`110_notification_outbox_test.sql`, Phase 6) — every event type, self-notification/
     removed-member/disabled-preference suppression, dedup via idempotency key, RPC-replay
     safety, and complete `notifications`-schema inaccessibility (every table/function, both
-    `authenticated` and `anon`).
-    **Verified: all 293 assertions pass** against a real local instance (`supabase db reset &&
+    `authenticated` and `anon`) — and (Phase 6.1) `130_security_regression_test.sql`, a
+    schema-driven (never hardcoded) invariant check that anon/PUBLIC has no `EXECUTE` on any
+    non-trigger function in `public`/`notifications` beyond a short reviewed whitelist, meant
+    to durably close the anon-EXECUTE-grant finding class rather than catch it manually again
+    next time.
+    **Verified: all 299 assertions pass** against a real local instance (`supabase db reset &&
 supabase test db`), plus real curl-driven multi-user flows for Family Space, personal
     tasks, shared tasks, and notifications (real `auth.users` accounts, not simulated `set
     local role`) — see
     [`knowledge/raw/sessions/2026-09-03-phase3-family-space.md`](../../raw/sessions/2026-09-03-phase3-family-space.md),
     [`knowledge/raw/sessions/2026-09-03-phase4-personal-tasks.md`](../../raw/sessions/2026-09-03-phase4-personal-tasks.md),
+    [`knowledge/raw/sessions/2026-09-06-phase6-push-notifications.md`](../../raw/sessions/2026-09-06-phase6-push-notifications.md),
     and
-    [`knowledge/raw/sessions/2026-09-06-phase6-push-notifications.md`](../../raw/sessions/2026-09-06-phase6-push-notifications.md).
+    [`knowledge/raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md`](../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md).
     Running the Phase 2 suite for real surfaced and fixed one migration-ordering bug and two
     test-assertion bugs; the Phase 3 audit surfaced a real `anon`-EXECUTE-grant gap, the
     Phase 4 audit surfaced a real `tasks`-direct-`UPDATE` gap, and the Phase 6 audit surfaced
     the same anon-EXECUTE gap recurring on two new functions (see
-    [security-model](security-model.md)) — none of these were caught by static review alone.
+    [security-model](security-model.md)) — none of these were caught by static review alone,
+    which is exactly why Phase 6.1 built an automated guard instead of relying on the next
+    phase's author remembering to check manually again.
     CI's `database` job also runs them on every push/PR.
 - **Edge Function tests (Phase 6)** — Deno's own test runner (`deno test`), not Jest — the
   `dispatch-notifications` Edge Function is a separate Deno module tree
@@ -147,6 +156,13 @@ e2e:seed` then `npm run e2e:ios`. Tab bar items get a real testID via
 
 ## Conventions to follow in new tests
 
+- **A regression guard must be proven to fail before it's trusted to pass (Phase 6.1)** —
+  writing an invariant test and watching it pass against already-correct code proves nothing
+  about whether it would actually catch the bug it's meant to prevent. Before trusting
+  `130_security_regression_test.sql`, the exact bug it guards against was reintroduced
+  temporarily (re-granting `anon` `EXECUTE` on a real function), the test was re-run and
+  confirmed to fail with the expected assertion, then the grant was reverted and the test
+  re-confirmed passing. Do this for any new regression guard, not just this one.
 - **`render()` and `fireEvent.*()` are async in the installed RNTL version — always
   `await` them.** (See [`docs/DECISIONS.md`](../../../docs/DECISIONS.md).) Skipping this
   either trips `@typescript-eslint/no-floating-promises` or asserts before the
