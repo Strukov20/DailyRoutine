@@ -167,8 +167,18 @@ OUTSIDER_JWT=$(sign_in "$OUTSIDER_EMAIL" "$PASSWORD")
 check "both users signed in with a real JWT" "$([ -n "$OWNER_JWT" ] && [ "$OWNER_JWT" != "null" ] && [ -n "$OUTSIDER_JWT" ] && [ "$OUTSIDER_JWT" != "null" ] && echo 1 || echo 0)"
 
 echo "== Create a daily recurring task and expand into a bounded window (Steps 1-2) =="
+# The server's own 45-day horizon (generate_task_occurrences) is anchored to
+# current_date *at call time*, not to this task's own start date — so the
+# anchor here must be "today" too, computed fresh on every run, not a fixed
+# calendar date. A hardcoded date here previously caused this exact check to
+# fail the moment real time advanced past it (creation on day D generates
+# D..D+45 inclusive = 46 rows only when D really is "today"; one day of
+# drift between a hardcoded D and the real current_date silently produces 47
+# and trips the upper bound) — the same class of wall-clock fragility as the
+# Phase 8 Snooze Tonight/Tomorrow bug. See docs/DECISIONS.md, "Phase 9."
+TODAY="$(date -u +%Y-%m-%d)"
 TASK_ID=$(rpc "$OWNER_JWT" "create_recurring_personal_task" \
-  '{"p_title":"Take vitamins","p_date":"2026-09-08","p_timezone":"Europe/Kyiv","p_frequency":"daily","p_start_time":"08:00:00"}' \
+  "{\"p_title\":\"Take vitamins\",\"p_date\":\"$TODAY\",\"p_timezone\":\"Europe/Kyiv\",\"p_frequency\":\"daily\",\"p_start_time\":\"08:00:00\"}" \
   | jq -r '.')
 check "owner created a daily recurring task" "$([ -n "$TASK_ID" ] && [ "$TASK_ID" != "null" ] && echo 1 || echo 0)"
 
