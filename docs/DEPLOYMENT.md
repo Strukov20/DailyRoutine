@@ -49,8 +49,13 @@ Required before a device can obtain a real `ExpoPushToken`:
    own managed credentials); iOS needs an APNs key/cert, which requires an active Apple
    Developer Program membership. EAS can manage both for you interactively.
 3. **A development or production build**, not Expo Go — `expo-notifications`' real push-token
-   API behaves differently (or is unavailable) in Expo Go on SDK 53+. `npx eas build --profile
-   development` (or `production`) for whichever platform you're validating on.
+   API behaves differently (or is unavailable) in Expo Go on SDK 53+. `eas.json` (Phase 10)
+   defines four profiles: `development-simulator` (iOS Simulator, no real push token
+   possible — `Device.isDevice` is false), `development-device` (a real device, dev client,
+   for exactly this kind of manual push validation), `preview` (internal distribution —
+   TestFlight/Play Internal Testing, see "Beta distribution" below), and `production` (store
+   submission, auto-incrementing build number). `npx eas build --profile development-device`
+   for real push-token validation on a physical device.
 4. **Never commit credentials.** `eas credentials` stores what it needs on Expo's servers, not
    in this repo. The EAS project ID itself is not a secret (it's already read from the public
    Expo config on every device) and is safe to commit to `app.config.ts`/`eas.json` once
