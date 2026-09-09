@@ -13,5 +13,8 @@ module.exports = {
   // supabase/functions runs on Deno (npm:/https:// specifiers, a Deno
   // global) — its own deno test suite, not Jest. See docs/DECISIONS.md,
   // "Phase 6."
-  testPathIgnorePatterns: ['/node_modules/', '/knowledge/', '/supabase/functions/'],
+  // __e2e__ suites (Phase 9's offline-queue integration test) need a live
+  // local Supabase stack and run via their own `jest.e2e.config.js` +
+  // `npm run e2e:offline` — never picked up by the default `npm test`.
+  testPathIgnorePatterns: ['/node_modules/', '/knowledge/', '/supabase/functions/', '/__e2e__/'],
 };
