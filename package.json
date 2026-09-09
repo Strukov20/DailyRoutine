@@ -88,6 +88,7 @@
     "e2e:notifications": "bash scripts/e2e-notifications.sh",
     "e2e:calendar": "bash scripts/e2e-calendar.sh",
     "e2e:recurrence": "bash scripts/e2e-recurrence.sh",
-    "e2e:offline": "jest --config jest.e2e.config.js"
+    "e2e:offline": "jest --config jest.e2e.config.js",
+    "e2e:realtime": "node scripts/e2e-realtime.mjs"
   }
 }
