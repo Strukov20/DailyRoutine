@@ -41,23 +41,29 @@ device).
 
 ## Native device test matrix
 
+**Platform scope for the first beta round (decided 2026-09-09): iOS only.** Android rows below
+are kept in the table (not deleted) because Android remains part of the eventual beta target —
+they're deferred, not dropped. Do not spend Stage B effort on Android credentials/builds until
+iOS has been through this matrix and the repo owner says to add it.
+
 | Area | iOS physical | Android physical | Notes |
 | --- | --- | --- | --- |
-| Clean install | Required | Required | |
-| Sign-up + email confirmation | Required | Required | Real deep link, real device. |
-| Invitation deep link (cold start + warm) | Required | Required | |
-| Local reminder notification (scheduled, tap routes correctly) | Required | Required | |
-| Remote push notification (assignment/responsibility) | Required | Required | Needs Stage B. |
-| Background / cold-start notification tap | Required | Required | |
-| Offline → reconnect (queued mutation replays) | Required | Required | |
-| Account-switch isolation (no cached-content flash) | Required | Required | |
-| Family Realtime sync across two real devices | Required | Required | |
-| App update preserves local/offline data | Required | Required | |
+| Clean install | Required | Deferred | |
+| Sign-up + email confirmation | Required | Deferred | Real deep link, real device. |
+| Invitation deep link (cold start + warm) | Required | Deferred | |
+| Local reminder notification (scheduled, tap routes correctly) | Required | Deferred | |
+| Remote push notification (assignment/responsibility) | Required | Deferred | Needs Stage B. |
+| Background / cold-start notification tap | Required | Deferred | |
+| Offline → reconnect (queued mutation replays) | Required | Deferred | |
+| Account-switch isolation (no cached-content flash) | Required | Deferred | |
+| Family Realtime sync across two real devices | Required | Deferred | Two iOS devices for this round. |
+| App update preserves local/offline data | Required | Deferred | |
 
 Simulator/emulator evidence may supplement this table but never replaces the physical-device
 rows above, particularly for push notifications — see
-[DEPLOYMENT.md, "Known limitations"](DEPLOYMENT.md). If Android hardware is unavailable when
-this matrix is run, report Android as blocked/pending rather than inferring a pass from iOS.
+[DEPLOYMENT.md, "Known limitations"](DEPLOYMENT.md). When Android is added to scope in a later
+round, report it as blocked/pending until actually run — never infer an Android pass from an
+iOS result.
 
 **Record for each row**: device model, OS version, app build number, environment (staging vs.
 local), date tested, pass/fail, evidence (screen recording or screenshot reference), and any

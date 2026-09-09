@@ -33,11 +33,11 @@ exercised at all.
 
 | Area | Status | What's needed |
 | --- | --- | --- |
-| Hosted Supabase staging project | ⏳ Not created | An Expo/Supabase account decision (see "Questions for the repo owner" below), then project creation and migration deployment per [DEPLOYMENT.md](DEPLOYMENT.md). |
-| EAS project link / credentials | ⏳ Not created | Expo account + org, `eas init`, signing credential generation (Apple/Google). |
-| Real device push notifications | ⏳ Not verified | A hosted Supabase project, a linked EAS project, and a physical iOS and/or Android device — see [DEPLOYMENT.md, "4–11"](DEPLOYMENT.md). |
-| Native beta test matrix (iOS/Android physical) | ⏳ Not run | Physical devices; see [BETA_TESTING.md](BETA_TESTING.md) for the exact matrix. |
-| TestFlight / Play Internal Testing builds | ⏳ Not built | Apple Developer / Google Play Console accounts, approved EAS Build/Submit. |
+| Hosted Supabase staging project | ⏳ Not created — confirmed needed | See "Next Stage B step" below for the walkthrough (not yet executed). |
+| EAS project link / credentials | ⏳ Not created | Expo account/org still needed (unanswered); `eas init`, iOS signing credential generation (Apple). Android deferred — see Platform target below. |
+| Real device push notifications | ⏳ Not verified | A hosted Supabase project, a linked EAS project, and a physical iOS device — see [DEPLOYMENT.md, "4–11"](DEPLOYMENT.md). |
+| Native beta test matrix — **iOS physical** | ⏳ Not run | A physical iOS device; see [BETA_TESTING.md](BETA_TESTING.md) for the exact matrix. Android rows deferred by the platform-target decision below, not dropped. |
+| TestFlight build | ⏳ Not built | Apple Developer account, approved EAS Build/Submit. Play Internal Testing deferred (Android not in scope for the first beta round). |
 | Beta tag (`v0.1.0-beta.1` suggested) | ⏳ Not created | Explicit operator approval of the exact commit, after Stage B validation. |
 
 **If the repo owner chooses to stop here**, this is honestly **Phase 10A complete; Phase 10B
@@ -47,18 +47,56 @@ physical hardware, which Stage A cannot provide.
 
 ## Questions for the repo owner (needed before any Stage B step)
 
-None of these have been asked yet in this session; asking them is the next step before any
-Stage B work can begin, per this phase's own "ask, don't infer approval" rule:
+Answered 2026-09-09:
 
-1. Final beta display name (distinct from the internal working name "FamilyFlow" if desired).
-2. Expo account/organization to build under.
-3. Expo project slug, iOS bundle identifier, Android application ID, and URL scheme — none of
-   these have been reserved; the current [`app.config.ts`](../app.config.ts) values are
-   placeholders and must be confirmed or changed before any identifier is locked in by a real
-   build or store listing.
-4. Initial version number (recommended `0.1.0`) and build number/version code starting point.
-5. Whether the beta targets iOS, Android, or both from day one.
-6. Whether a hosted Supabase staging project already exists or needs to be created.
+1. Final beta display name — not asked separately; no objection raised to the internal working
+   name, treat "FamilyFlow" as the beta name unless told otherwise.
+2. Expo account/organization to build under — **not yet answered**, still needed before `eas
+   init`.
+3. Expo project slug, iOS bundle identifier, Android application ID, and URL scheme —
+   **keep the current placeholders**: slug `familyflow`, bundle/application id
+   `com.familyflow.app`, scheme `familyflow` (`src/config/app-info.json`). These are now
+   confirmed, not placeholders pending change — do not alter them without asking again.
+4. Initial version number and build number — not yet answered; `0.1.0` remains the recommended
+   default, unconfirmed.
+5. Platform target — **iOS only for now**. Do not spend Stage B effort on an Android EAS
+   build/credential/TestFlight-equivalent until iOS is through the matrix and the repo owner
+   says to add Android.
+6. Hosted Supabase staging project — **does not exist; needs to be created.** This is the next
+   concrete Stage B step once the repo owner is ready — see "Next Stage B step," below, for
+   the walkthrough (not yet executed).
+
+## Next Stage B step: creating the hosted Supabase staging project
+
+Not yet executed — presented here per this phase's own Stage B protocol (state what it does,
+why, the cost, the credential, verification, and rollback, before doing it). Requires the repo
+owner to actually click through the Supabase dashboard; this cannot be scripted from here
+without a Supabase account access token, which has not been provided and should not be pasted
+into chat.
+
+- **What**: create a new Supabase project (a Postgres database + Auth + Realtime + Storage +
+  Edge Functions, hosted by Supabase) dedicated to staging — never the same project used for
+  production once one exists, per [DEPLOYMENT.md, "0. Environments"](DEPLOYMENT.md).
+- **Why**: Stage B (real device push, real Realtime across devices, a real staging-hosted
+  auth/deep-link flow) has no backend to run against without this.
+- **How**: [supabase.com/dashboard](https://supabase.com/dashboard) → New Project → choose an
+  org, a project name (suggest `familyflow-staging`), a database password (generate and store
+  it in a password manager, never in this repo), and a region close to the beta testers.
+- **Cost**: Supabase's free tier covers a small beta's usage; no payment method is required to
+  create a free-tier project. Confirm current pricing on Supabase's own pricing page before
+  proceeding if this matters to you — this document is not the source of truth for their
+  pricing.
+- **Credentials produced**: a project URL, an anon/publishable key (safe for the client), and a
+  service-role/secret key (never goes in the client, never in this repo — see
+  [DEPLOYMENT.md](DEPLOYMENT.md) for exactly where each belongs).
+- **Verification**: the dashboard shows the project as active; `npx supabase projects list`
+  (after `supabase login`) shows it.
+- **Rollback**: deleting an unused Supabase project from its dashboard settings is
+  straightforward and reversible in the sense that no other system depends on it yet at this
+  stage — do this before any migration has been deployed to it if you change your mind.
+
+Once this project exists, the next steps are `supabase link`, comparing local vs. remote
+migrations, and deploying — all covered in [DEPLOYMENT.md](DEPLOYMENT.md), none of it run yet.
 
 ## Security audit results (this pass)
 
