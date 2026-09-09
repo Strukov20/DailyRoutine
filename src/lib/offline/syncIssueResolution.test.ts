@@ -65,6 +65,7 @@ function fakeOp(overrides: Partial<OfflineOperation> = {}): OfflineOperation {
     clientGeneratedId: null,
     payload: { title: 'Local title' },
     expectedUpdatedAt: '2026-01-01T00:00:00.000Z',
+    reviewedVersion: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     attemptCount: 1,
     status: 'conflict',
@@ -113,7 +114,7 @@ describe('getLocalChangeFields', () => {
 });
 
 describe('getConflictComparison', () => {
-  it('fetches the server task through the authenticated repository and returns both sides', async () => {
+  it('fetches the server task through the authenticated repository, returns both sides, and records reviewedVersion', async () => {
     mockGetTask.mockResolvedValue(fakeTask());
     await seedQueue(fakeOp());
 
@@ -122,15 +123,21 @@ describe('getConflictComparison', () => {
     expect(mockGetTask).toHaveBeenCalledWith('task-1');
     expect(comparison?.serverTask?.title).toBe('Server title');
     expect(comparison?.fields).toEqual([{ field: 'title', local: 'Local title', server: 'Server title' }]);
+    const op = useOfflineQueueStore.getState().operations.find((o) => o.operationId === 'op-1');
+    expect(op?.reviewedVersion).toBe('2026-01-02T00:00:00.000Z');
   });
 
-  it('returns a null serverTask (never throws) when the task no longer exists or is no longer authorized', async () => {
+  it('transitions to task_unavailable (never throws) when the task no longer exists, belongs to someone else, or is no longer visible', async () => {
     mockGetTask.mockResolvedValue(null);
     await seedQueue(fakeOp());
 
     const comparison = await getConflictComparison('op-1');
 
     expect(comparison).toEqual({ serverTask: null, fields: [] });
+    const op = useOfflineQueueStore.getState().operations.find((o) => o.operationId === 'op-1');
+    expect(op?.status).toBe('permanent_failure');
+    expect(op?.lastSafeErrorCode).toBe('task_unavailable');
+    expect(op?.reviewedVersion).toBeNull();
   });
 
   it('returns null for an operation type comparison does not apply to (e.g. complete_task_occurrence)', async () => {
@@ -146,8 +153,8 @@ describe('getConflictComparison', () => {
 });
 
 describe('reloadServerSnapshot', () => {
-  it('refreshes the comparison without discarding the local pending operation', async () => {
-    mockGetTask.mockResolvedValue(fakeTask());
+  it('refreshes the comparison and records reviewedVersion without discarding the local pending operation', async () => {
+    mockGetTask.mockResolvedValue(fakeTask({ updatedAt: '2026-01-09T00:00:00.000Z' }));
     await seedQueue(fakeOp());
 
     await reloadServerSnapshot('op-1');
@@ -155,9 +162,10 @@ describe('reloadServerSnapshot', () => {
     const op = useOfflineQueueStore.getState().operations.find((o) => o.operationId === 'op-1');
     expect(op).toBeDefined();
     expect(op?.status).toBe('conflict');
+    expect(op?.reviewedVersion).toBe('2026-01-09T00:00:00.000Z');
   });
 
-  it('transitions to a safe entity_deleted state when the entity disappeared or authorization changed mid-review', async () => {
+  it('transitions to a safe task_unavailable state when the entity disappears or authorization changes mid-review', async () => {
     mockGetTask.mockResolvedValue(null);
     await seedQueue(fakeOp());
 
@@ -165,7 +173,7 @@ describe('reloadServerSnapshot', () => {
 
     const op = useOfflineQueueStore.getState().operations.find((o) => o.operationId === 'op-1');
     expect(op?.status).toBe('permanent_failure');
-    expect(op?.lastSafeErrorCode).toBe('entity_deleted');
+    expect(op?.lastSafeErrorCode).toBe('task_unavailable');
   });
 });
 
@@ -188,13 +196,31 @@ describe('discardSyncIssue (Keep server version)', () => {
     await expect(discardSyncIssue('op-1')).resolves.toBeUndefined();
     expect(useOfflineQueueStore.getState().operations).toEqual([]);
   });
+
+  it('remains terminal — a repeat discard on an operation resolved this way never re-queues it', async () => {
+    await seedQueue(fakeOp());
+    await discardSyncIssue('op-1');
+    await discardSyncIssue('op-1');
+    await discardSyncIssue('op-1');
+
+    expect(useOfflineQueueStore.getState().operations).toEqual([]);
+  });
 });
 
 describe('applyMyChange', () => {
-  it('refetches the latest server version, reapplies the original patch against it, and removes the operation on success', async () => {
+  it('is a safe no-op ("not_applicable") when the operation has never been reviewed — Apply is only valid after an explicit review', async () => {
+    await seedQueue(fakeOp({ reviewedVersion: null }));
+
+    const outcome = await applyMyChange('op-1');
+
+    expect(outcome).toEqual({ result: 'not_applicable' });
+    expect(mockGetTask).not.toHaveBeenCalled();
+  });
+
+  it('reapplies the original patch when the freshly-fetched version matches what was reviewed, and removes the operation on success', async () => {
     mockGetTask.mockResolvedValue(fakeTask({ updatedAt: '2026-01-03T00:00:00.000Z' }));
     mockUpdatePersonalTask.mockResolvedValue(undefined);
-    await seedQueue(fakeOp());
+    await seedQueue(fakeOp({ reviewedVersion: '2026-01-03T00:00:00.000Z' }));
 
     const outcome = await applyMyChange('op-1');
 
@@ -208,7 +234,7 @@ describe('applyMyChange', () => {
   it('never overwrites fields outside the original local patch — the payload sent is exactly the original patch', async () => {
     mockGetTask.mockResolvedValue(fakeTask({ updatedAt: '2026-01-03T00:00:00.000Z' }));
     mockUpdatePersonalTask.mockResolvedValue(undefined);
-    await seedQueue(fakeOp({ payload: { title: 'Local title' } }));
+    await seedQueue(fakeOp({ payload: { title: 'Local title' }, reviewedVersion: '2026-01-03T00:00:00.000Z' }));
 
     await applyMyChange('op-1');
 
@@ -216,11 +242,42 @@ describe('applyMyChange', () => {
     expect(Object.keys(sentPayload).sort()).toEqual(['expectedUpdatedAt', 'taskId', 'title'].sort());
   });
 
-  it('stays in "conflict" (never falls back to last-write-wins) when another update happened between review and apply', async () => {
+  it('window A — returns "stale_review" (never mutates) when the server version moved since the last review, and refreshes reviewedVersion to the new value', async () => {
+    mockGetTask.mockResolvedValue(fakeTask({ updatedAt: '2026-01-05T00:00:00.000Z' }));
+    await seedQueue(fakeOp({ reviewedVersion: '2026-01-03T00:00:00.000Z' }));
+
+    const outcome = await applyMyChange('op-1');
+
+    expect(outcome).toEqual({ result: 'stale_review' });
+    expect(mockUpdatePersonalTask).not.toHaveBeenCalled();
+    const op = useOfflineQueueStore.getState().operations.find((o) => o.operationId === 'op-1');
+    expect(op?.status).toBe('conflict');
+    expect(op?.reviewedVersion).toBe('2026-01-05T00:00:00.000Z');
+  });
+
+  it('window A — a second explicit Apply after the refreshed review succeeds when nothing else has changed', async () => {
+    mockGetTask.mockResolvedValue(fakeTask({ updatedAt: '2026-01-05T00:00:00.000Z' }));
+    mockUpdatePersonalTask.mockResolvedValue(undefined);
+    await seedQueue(fakeOp({ reviewedVersion: '2026-01-03T00:00:00.000Z' }));
+
+    const first = await applyMyChange('op-1');
+    expect(first).toEqual({ result: 'stale_review' });
+
+    const second = await applyMyChange('op-1');
+    expect(second).toEqual({ result: 'succeeded' });
+    expect(mockUpdatePersonalTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('window B — stays in "conflict" (never falls back to last-write-wins) when a write races between this Apply\'s own fetch and its own write', async () => {
     const { TaskServiceError } = jest.requireActual('@/lib/tasks/taskService');
+    // The freshly-fetched version *matches* what was reviewed (so the
+    // version check passes and Apply proceeds to replay) — the race is
+    // simulated at the RPC layer itself, exactly as a real write landing
+    // in that same instant would produce: the server's own precondition
+    // check rejects it despite our having just confirmed the version.
     mockGetTask.mockResolvedValue(fakeTask({ updatedAt: '2026-01-03T00:00:00.000Z' }));
     mockUpdatePersonalTask.mockRejectedValue(new TaskServiceError('conflict', 'stale write'));
-    await seedQueue(fakeOp());
+    await seedQueue(fakeOp({ reviewedVersion: '2026-01-03T00:00:00.000Z' }));
 
     const outcome = await applyMyChange('op-1');
 
@@ -229,9 +286,9 @@ describe('applyMyChange', () => {
     expect(op?.status).toBe('conflict');
   });
 
-  it('transitions to entity_deleted (never applies) when the task disappeared before Apply could run', async () => {
+  it('transitions to task_unavailable (never applies) when the task disappeared before Apply could run', async () => {
     mockGetTask.mockResolvedValue(null);
-    await seedQueue(fakeOp());
+    await seedQueue(fakeOp({ reviewedVersion: '2026-01-03T00:00:00.000Z' }));
 
     const outcome = await applyMyChange('op-1');
 
@@ -239,7 +296,7 @@ describe('applyMyChange', () => {
     expect(mockUpdatePersonalTask).not.toHaveBeenCalled();
     const op = useOfflineQueueStore.getState().operations.find((o) => o.operationId === 'op-1');
     expect(op?.status).toBe('permanent_failure');
-    expect(op?.lastSafeErrorCode).toBe('entity_deleted');
+    expect(op?.lastSafeErrorCode).toBe('task_unavailable');
   });
 
   it('is a safe no-op ("not_applicable") when the operation is not actually a conflict — double-tap idempotency', async () => {
@@ -249,6 +306,19 @@ describe('applyMyChange', () => {
 
     expect(outcome).toEqual({ result: 'not_applicable' });
     expect(mockGetTask).not.toHaveBeenCalled();
+  });
+
+  it('double Apply remains idempotent — a repeat call after a successful apply is a safe no-op, never re-applies', async () => {
+    mockGetTask.mockResolvedValue(fakeTask({ updatedAt: '2026-01-03T00:00:00.000Z' }));
+    mockUpdatePersonalTask.mockResolvedValue(undefined);
+    await seedQueue(fakeOp({ reviewedVersion: '2026-01-03T00:00:00.000Z' }));
+
+    const first = await applyMyChange('op-1');
+    expect(first).toEqual({ result: 'succeeded' });
+
+    const second = await applyMyChange('op-1');
+    expect(second).toEqual({ result: 'not_applicable' });
+    expect(mockUpdatePersonalTask).toHaveBeenCalledTimes(1);
   });
 });
 

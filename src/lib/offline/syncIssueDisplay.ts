@@ -6,7 +6,7 @@ export type SyncIssueStatusLabel = 'waitingToRetry' | 'needsReview' | 'cannotSyn
 export function getSyncIssueStatusLabel(operation: OfflineOperation): SyncIssueStatusLabel {
   if (operation.status === 'retry_wait') return 'waitingToRetry';
   if (operation.status === 'conflict') return 'needsReview';
-  if (operation.lastSafeErrorCode === 'entity_deleted') return 'taskGone';
+  if (operation.lastSafeErrorCode === 'task_unavailable') return 'taskGone';
   return 'cannotSync';
 }
 
@@ -25,7 +25,12 @@ export type SyncIssueAction =
  * Retry action before the user chooses a resolution") — only Review
  * changes / Reload latest version; Apply/Keep live on the comparison
  * screen itself, reached through Review. A permanent validation failure
- * never gets Retry either ("the same payload can never succeed").
+ * never gets Retry either ("the same payload can never succeed"). Final
+ * security pass — 'task_unavailable' is the one merged outcome for "gone,"
+ * "not yours," and "no longer visible," all deliberately indistinguishable
+ * at the RPC layer (see docs/DECISIONS.md, "Phase 9"); Discard local
+ * change is the only safe action regardless of which of those three it
+ * actually was.
  */
 export function getAvailableActions(operation: OfflineOperation): SyncIssueAction[] {
   switch (operation.status) {
@@ -37,8 +42,7 @@ export function getAvailableActions(operation: OfflineOperation): SyncIssueActio
       switch (operation.lastSafeErrorCode) {
         case 'permanent_validation':
           return ['reviewPendingChange', 'discardMyChange'];
-        case 'authorization_lost':
-        case 'entity_deleted':
+        case 'task_unavailable':
           return ['discardLocalChange'];
         case 'unknown':
         default:

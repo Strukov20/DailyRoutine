@@ -23,6 +23,7 @@ function fakeOp(overrides: Partial<OfflineOperation> = {}): OfflineOperation {
     clientGeneratedId: null,
     payload: { title: 'Buy milk' },
     expectedUpdatedAt: '2026-01-01T00:00:00.000Z',
+    reviewedVersion: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     attemptCount: 1,
     status: 'retry_wait',
@@ -81,7 +82,7 @@ describe('SyncIssueCard', () => {
 
   it('shows "Task no longer available" and only a Discard action for a deleted entity', async () => {
     await renderCard({
-      operation: fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'entity_deleted' }),
+      operation: fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'task_unavailable' }),
     });
     expect(screen.getByText('Task no longer available')).toBeTruthy();
     expect(screen.queryByTestId('sync-issue-retry-op-1')).toBeNull();

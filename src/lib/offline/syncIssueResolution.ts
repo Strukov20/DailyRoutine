@@ -9,11 +9,12 @@ import type { OfflineOperation } from './types';
 const logger = createLogger('sync-issue-resolution');
 
 /**
- * The Sync Issues resolution actions (Phase 9 completion pass, Section 5).
- * Every function here operates on the *existing* queued operation by its
- * stable `operationId` — none of them ever create a replacement operation,
- * matching the brief's "reuse the same idempotency identity" /
- * "preserve the original operation/audit relationship" requirements.
+ * The Sync Issues resolution actions (Phase 9 completion pass, Section 5,
+ * final security/concurrency pass). Every function here operates on the
+ * *existing* queued operation by its stable `operationId` — none of them
+ * ever create a replacement operation, matching the brief's "reuse the
+ * same idempotency identity" / "preserve the original operation/audit
+ * relationship" requirements.
  */
 
 export type ComparisonFieldKey =
@@ -36,7 +37,7 @@ export interface ComparisonField {
 }
 
 export interface ConflictComparison {
-  /** null once the reload discovers the task is gone — see reloadServerSnapshot. */
+  /** null once the fetch discovers the task is gone/unavailable — see reloadServerSnapshot. */
   serverTask: Task | null;
   /** Only the fields the original local patch actually touched (Section 4: "Only show fields relevant to that operation"). */
   fields: ComparisonField[];
@@ -131,49 +132,56 @@ export function getLocalChangeFields(operation: OfflineOperation): ComparisonFie
 }
 
 /**
- * Section 4 — fetches the comparison through the authenticated repository
- * and existing RLS (never a cached snapshot trusted as current
- * authorization). Only meaningful for 'conflict' operations
- * (update/schedule_personal_task — the only two operation types that
- * carry an expected-version precondition at all; comparison is
- * deliberately not implemented for anything else, per Section 4's own
- * scope note).
+ * Shared by getConflictComparison/reloadServerSnapshot — fetches the
+ * server row through the authenticated repository and existing RLS (never
+ * a cached snapshot trusted as current authorization), and, on success,
+ * records the fetched version as `reviewedVersion` on the operation: this
+ * is the one and only place that value is ever written, so it always
+ * means exactly "the server version as of the user's last look at this
+ * comparison." If the task is gone or no longer visible to this caller
+ * (both collapse to the same outcome — see docs/DECISIONS.md, "Phase 9"),
+ * transitions the operation to the matching safe issue state instead of
+ * leaving it stuck showing a stale comparison.
  */
-export async function getConflictComparison(operationId: string): Promise<ConflictComparison | null> {
+async function fetchAndRecordReview(operationId: string): Promise<ConflictComparison | null> {
   const operation = selectOperationById(useOfflineQueueStore.getState(), operationId);
   if (!operation || !operation.entityId) return null;
   if (operation.operationType !== 'update_personal_task' && operation.operationType !== 'schedule_personal_task') {
     return null;
   }
+
   const serverTask = await getTask(operation.entityId);
-  if (!serverTask) return { serverTask: null, fields: [] };
+  if (!serverTask) {
+    await useOfflineQueueStore.getState().updateOperation(operationId, {
+      status: 'permanent_failure',
+      lastSafeErrorCode: 'task_unavailable',
+      reviewedVersion: null,
+    });
+    return { serverTask: null, fields: [] };
+  }
+
+  await useOfflineQueueStore.getState().updateOperation(operationId, { reviewedVersion: serverTask.updatedAt });
   return { serverTask, fields: buildComparisonFields(operation, serverTask) };
 }
 
 /**
+ * Section 4 — the comparison screen's initial fetch. Only meaningful for
+ * 'conflict' operations (update/schedule_personal_task — the only two
+ * operation types that carry an expected-version precondition at all;
+ * comparison is deliberately not implemented for anything else, per
+ * Section 4's own scope note).
+ */
+export async function getConflictComparison(operationId: string): Promise<ConflictComparison | null> {
+  return fetchAndRecordReview(operationId);
+}
+
+/**
  * Section 5 — "Reload latest server version." Refreshes the comparison
- * without discarding the local pending operation. If the entity is gone
- * or no longer visible to this caller, transitions the operation to the
- * matching safe issue state instead of leaving it stuck showing a stale
- * comparison — `getTask` goes through the base table's own RLS (a plain
- * `SELECT ... .maybeSingle()`, not an RPC), which cannot itself
- * distinguish "deleted" from "no longer authorized" (both come back as a
- * silent `null`) — for a personal task, ownership never changes hands, so
- * a null result is treated as "deleted," the only reachable cause here.
+ * (and, like every review, records the freshly-fetched version) without
+ * discarding the local pending operation.
  */
 export async function reloadServerSnapshot(operationId: string): Promise<ConflictComparison | null> {
-  const operation = selectOperationById(useOfflineQueueStore.getState(), operationId);
-  if (!operation || !operation.entityId) return null;
-
-  const comparison = await getConflictComparison(operationId);
-  if (!comparison || !comparison.serverTask) {
-    await useOfflineQueueStore.getState().updateOperation(operationId, {
-      status: 'permanent_failure',
-      lastSafeErrorCode: 'entity_deleted',
-    });
-    return comparison;
-  }
-  return comparison;
+  return fetchAndRecordReview(operationId);
 }
 
 /**
@@ -192,32 +200,65 @@ export async function discardSyncIssue(operationId: string): Promise<void> {
   invalidateAfterReplay(operation.operationType);
 }
 
+export type ApplyOutcome =
+  | { result: 'succeeded' }
+  /** The row changed again after the user's last review, before they pressed Apply — final security/concurrency pass's "stale review" window. Nothing was sent to the server; the comparison was refreshed in place and the user must explicitly review it and press Apply again. */
+  | { result: 'stale_review' }
+  /** A write landed in the narrow gap between this Apply's own fetch and its own write (the RPC's own precondition caught it) — the other, tighter concurrency window. */
+  | { result: 'conflict' }
+  | { result: 'not_applicable' };
+
 /**
- * Section 5 — "Apply my change." Only valid once the user has reviewed
- * the current server version (callers are expected to have called
- * `getConflictComparison`/`reloadServerSnapshot` first). Re-applies the
- * *original* local patch — never a new/derived payload — against the
- * just-fetched server version as the new expected-version precondition,
- * then lets the server perform the final concurrency check exactly as it
- * would for a normal online edit. Never falls back to last-write-wins: a
- * renewed conflict (someone else changed it again between review and
- * apply) leaves the operation in 'conflict', unresolved.
+ * Section 5 — "Apply my change," final security/concurrency pass. Only
+ * valid once the user has reviewed the current server version at least
+ * once (`operation.reviewedVersion` set by getConflictComparison/
+ * reloadServerSnapshot — never by this function). Re-applies the
+ * *original* local patch — never a new/derived payload.
+ *
+ * Two distinct concurrency windows, both refuse to mutate silently:
+ *  1. Stale review — a fresh fetch's version no longer matches
+ *     `reviewedVersion` (something changed after the user last looked).
+ *     The comparison is refreshed in place (reviewedVersion moves to the
+ *     newly-fetched value) and the operation stays 'conflict' — the user
+ *     must look at the refreshed comparison and press Apply again.
+ *  2. Fetch-to-write race — the freshly-fetched version *did* match
+ *     reviewedVersion, so the replay is attempted with it as the
+ *     precondition, but another write commits before this one does; the
+ *     RPC's own 40001 check catches it, and the operation goes back to
+ *     'conflict' with a renewed comparison available (never a silent
+ *     merge, never last-write-wins).
  */
-export async function applyMyChange(
-  operationId: string,
-): Promise<{ result: 'succeeded' } | { result: 'conflict' } | { result: 'not_applicable' }> {
+export async function applyMyChange(operationId: string): Promise<ApplyOutcome> {
   const store = useOfflineQueueStore.getState();
   const operation = selectOperationById(store, operationId);
   if (!operation || operation.status !== 'conflict') return { result: 'not_applicable' };
   if (operation.operationType !== 'update_personal_task' && operation.operationType !== 'schedule_personal_task') {
     return { result: 'not_applicable' };
   }
-  if (!operation.entityId) return { result: 'not_applicable' };
+  if (!operation.entityId || !operation.reviewedVersion) return { result: 'not_applicable' };
 
   const serverTask = await getTask(operation.entityId);
   if (!serverTask) {
-    await store.updateOperation(operationId, { status: 'permanent_failure', lastSafeErrorCode: 'entity_deleted' });
+    await store.updateOperation(operationId, {
+      status: 'permanent_failure',
+      lastSafeErrorCode: 'task_unavailable',
+      reviewedVersion: null,
+    });
     return { result: 'not_applicable' };
+  }
+
+  if (serverTask.updatedAt !== operation.reviewedVersion) {
+    logger.warn('apply-my-change found a newer server version than the one last reviewed — refusing to mutate', {
+      operationId,
+    });
+    // "Refresh the comparison": the operation's own reviewedVersion moves
+    // to what was just fetched, so the *next* Apply attempt compares
+    // against this call's own fresh read — the screen must still re-fetch
+    // its own cached comparison to actually show the new fields to the
+    // user, but the safety property (never apply against an unreviewed
+    // version) holds regardless of whether the screen does that promptly.
+    await store.updateOperation(operationId, { reviewedVersion: serverTask.updatedAt });
+    return { result: 'stale_review' };
   }
 
   const refreshed: OfflineOperation = { ...operation, expectedUpdatedAt: serverTask.updatedAt };
@@ -236,7 +277,7 @@ export async function applyMyChange(
   }
 
   if (outcome.code === 'conflict') {
-    logger.warn('apply-my-change hit a renewed conflict — another update happened between review and apply', {
+    logger.warn('apply-my-change hit a renewed conflict — another write landed between fetch and write', {
       operationId,
     });
     await useOfflineQueueStore.getState().updateOperation(operationId, {
@@ -249,6 +290,7 @@ export async function applyMyChange(
   await useOfflineQueueStore.getState().updateOperation(operationId, {
     status: 'permanent_failure',
     lastSafeErrorCode: outcome.code,
+    reviewedVersion: null,
   });
   return { result: 'not_applicable' };
 }
@@ -256,12 +298,13 @@ export async function applyMyChange(
 /**
  * Section 5 — "Retry," restricted to retryable transient failures only
  * (Section 3: never offered for a conflict or a genuinely permanent
- * validation/authorization/deleted failure — "Do not show Retry if the
- * same payload can never succeed"). Reuses the same operationId and the
- * existing bounded queue worker (`runOfflineQueueReplay`, imported by the
- * caller — kept out of this module to avoid a circular import with
- * offlineQueueReplay.ts) rather than replaying directly, so it respects
- * FIFO ordering against whatever else is queued.
+ * validation/task-unavailable/exhausted-retries failure — "Do not show
+ * Retry if the same payload can never succeed"). Reuses the same
+ * operationId and the existing bounded queue worker
+ * (`runOfflineQueueReplay`, imported by the caller — kept out of this
+ * module to avoid a circular import with offlineQueueReplay.ts) rather
+ * than replaying directly, so it respects FIFO ordering against whatever
+ * else is queued.
  */
 export function isRetryEligible(operation: OfflineOperation): boolean {
   if (operation.status === 'retry_wait') return true;

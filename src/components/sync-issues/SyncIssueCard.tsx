@@ -120,7 +120,7 @@ export function SyncIssueCard({ operation, locale, onRetry, onDiscard, isBusy }:
             testID={`sync-issue-discard-${operation.operationId}`}
             onPress={() => onDiscard(operation.operationId)}
           >
-            {t(operation.lastSafeErrorCode === 'authorization_lost' ? 'actions.discardLocalChange' : 'actions.discardMyChange')}
+            {t(operation.lastSafeErrorCode === 'task_unavailable' ? 'actions.discardLocalChange' : 'actions.discardMyChange')}
           </Button>
         )}
       </View>

@@ -47,6 +47,7 @@ function fakeOp(overrides: Partial<OfflineOperation> = {}): OfflineOperation {
     clientGeneratedId: null,
     payload: { title: 'Buy milk' },
     expectedUpdatedAt: '2026-01-01T00:00:00.000Z',
+    reviewedVersion: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     attemptCount: 1,
     status: 'retry_wait',
@@ -105,14 +106,9 @@ describe('SyncIssuesScreen', () => {
     expect(screen.getByText('Cannot be synchronized')).toBeTruthy();
   });
 
-  it('shows a deleted-entity card', async () => {
-    await renderScreen([fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'entity_deleted' })]);
+  it('shows a "task unavailable" card (the one merged outcome for gone/foreign/no-longer-visible) with only Discard local change', async () => {
+    await renderScreen([fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'task_unavailable' })]);
     expect(screen.getByText('Task no longer available')).toBeTruthy();
-  });
-
-  it('shows an authorization-loss card with only Discard local change', async () => {
-    await renderScreen([fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'authorization_lost' })]);
-    expect(screen.getByText('Cannot be synchronized')).toBeTruthy();
     expect(screen.getByText('Discard local change')).toBeTruthy();
   });
 

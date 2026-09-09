@@ -10,6 +10,7 @@ function fakeOp(overrides: Partial<OfflineOperation> = {}): OfflineOperation {
     clientGeneratedId: null,
     payload: { title: 'Buy milk' },
     expectedUpdatedAt: '2026-01-01T00:00:00.000Z',
+    reviewedVersion: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     attemptCount: 1,
     status: 'retry_wait',
@@ -29,18 +30,15 @@ describe('getSyncIssueStatusLabel', () => {
     );
   });
 
-  it("maps a 'permanent_failure' with 'entity_deleted' to 'taskGone'", () => {
+  it("maps a 'permanent_failure' with 'task_unavailable' (the one merged outcome for gone/foreign/invisible) to 'taskGone'", () => {
     expect(
-      getSyncIssueStatusLabel(fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'entity_deleted' })),
+      getSyncIssueStatusLabel(fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'task_unavailable' })),
     ).toBe('taskGone');
   });
 
   it("maps every other 'permanent_failure' reason to 'cannotSync'", () => {
     expect(
       getSyncIssueStatusLabel(fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'permanent_validation' })),
-    ).toBe('cannotSync');
-    expect(
-      getSyncIssueStatusLabel(fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'authorization_lost' })),
     ).toBe('cannotSync');
     expect(getSyncIssueStatusLabel(fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'unknown' }))).toBe(
       'cannotSync',
@@ -71,14 +69,8 @@ describe('getAvailableActions', () => {
     expect(actions).not.toContain('retry');
   });
 
-  it('offers only Discard local change for authorization loss', () => {
-    expect(
-      getAvailableActions(fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'authorization_lost' })),
-    ).toEqual(['discardLocalChange']);
-  });
-
-  it('offers only Discard local change for a deleted entity — no "create as new" action', () => {
-    const actions = getAvailableActions(fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'entity_deleted' }));
+  it('offers only Discard local change for the merged "task unavailable" outcome (gone, foreign, or no longer visible — indistinguishable) — no "create as new" action', () => {
+    const actions = getAvailableActions(fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'task_unavailable' }));
     expect(actions).toEqual(['discardLocalChange']);
     expect(actions).not.toContain('reviewPendingChange');
   });

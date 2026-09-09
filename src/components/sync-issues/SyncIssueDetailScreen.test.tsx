@@ -56,6 +56,7 @@ function fakeOp(overrides: Partial<OfflineOperation> = {}): OfflineOperation {
     clientGeneratedId: null,
     payload: { title: 'Local title' },
     expectedUpdatedAt: '2026-01-01T00:00:00.000Z',
+    reviewedVersion: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     attemptCount: 1,
     status: 'conflict',
@@ -143,7 +144,7 @@ describe('SyncIssueDetailScreen', () => {
   it('shows the entity-gone message when the comparison resolves with no server task (deleted or no longer authorized)', async () => {
     mockGetConflictComparison.mockResolvedValue({ serverTask: null, fields: [] });
     await renderScreen(fakeOp());
-    await waitFor(() => expect(screen.getByText('This task no longer exists on the server.')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('This task is no longer available on the server.')).toBeTruthy());
   });
 
   it('marks the latest server version unavailable and disables Reload/Apply while offline — never claims a stale snapshot is current', async () => {
@@ -171,9 +172,9 @@ describe('SyncIssueDetailScreen', () => {
     expect(mockDiscardSyncIssue).not.toHaveBeenCalled();
   });
 
-  it('shows "Discard local change" (not "Keep server version") for an authorization-loss issue', async () => {
+  it('shows "Discard local change" (not "Keep server version") for a task_unavailable issue', async () => {
     await renderScreen(
-      fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'authorization_lost' }),
+      fakeOp({ status: 'permanent_failure', lastSafeErrorCode: 'task_unavailable' }),
     );
     expect(screen.getByText('Discard local change')).toBeTruthy();
     expect(screen.queryByText('Keep server version')).toBeNull();
@@ -200,6 +201,34 @@ describe('SyncIssueDetailScreen', () => {
     expect(mockBack).not.toHaveBeenCalled();
   });
 
+  it('shows a safe "changed again" notice and refreshes the comparison, never navigating away, when Apply finds the server changed since the last review', async () => {
+    mockApplyMyChange.mockResolvedValue({ result: 'stale_review' });
+    await renderScreen(fakeOp());
+    await waitFor(() => expect(screen.getByTestId('sync-issue-comparison-table')).toBeTruthy());
+    await fireEvent.press(screen.getByText('Apply my change'));
+    await fireEvent.press(screen.getByText('Confirm'));
+    await waitFor(() => expect(mockApplyMyChange).toHaveBeenCalledWith('op-1'));
+    expect(mockBack).not.toHaveBeenCalled();
+    expect(screen.getByTestId('sync-issue-stale-review-notice')).toBeTruthy();
+    expect(screen.getByText('This task changed again. Review the latest version.')).toBeTruthy();
+  });
+
+  it('requires an explicit second Apply after a "stale_review" outcome — the first refused attempt never mutates on its own', async () => {
+    mockApplyMyChange.mockResolvedValueOnce({ result: 'stale_review' }).mockResolvedValueOnce({ result: 'succeeded' });
+    await renderScreen(fakeOp());
+    await waitFor(() => expect(screen.getByTestId('sync-issue-comparison-table')).toBeTruthy());
+
+    await fireEvent.press(screen.getByText('Apply my change'));
+    await fireEvent.press(screen.getByText('Confirm'));
+    await waitFor(() => expect(mockApplyMyChange).toHaveBeenCalledTimes(1));
+    expect(mockBack).not.toHaveBeenCalled();
+
+    await fireEvent.press(screen.getByText('Apply my change'));
+    await fireEvent.press(screen.getByText('Confirm'));
+    await waitFor(() => expect(mockApplyMyChange).toHaveBeenCalledTimes(2));
+    expect(mockBack).toHaveBeenCalled();
+  });
+
   it('disables Apply my change while offline', async () => {
     mockIsConnected = false;
     await renderScreen(fakeOp());
@@ -217,5 +246,19 @@ describe('SyncIssueDetailScreen', () => {
   it('never offers Retry for a stale-write conflict', async () => {
     await renderScreen(fakeOp());
     expect(screen.queryByText('Retry')).toBeNull();
+  });
+
+  it('clears the "changed again" notice once Reload latest server version is pressed', async () => {
+    mockApplyMyChange.mockResolvedValue({ result: 'stale_review' });
+    mockReloadServerSnapshot.mockResolvedValue(CONFLICT_COMPARISON);
+    await renderScreen(fakeOp());
+    await waitFor(() => expect(screen.getByTestId('sync-issue-comparison-table')).toBeTruthy());
+
+    await fireEvent.press(screen.getByText('Apply my change'));
+    await fireEvent.press(screen.getByText('Confirm'));
+    await waitFor(() => expect(screen.getByTestId('sync-issue-stale-review-notice')).toBeTruthy());
+
+    await fireEvent.press(screen.getByText('Reload latest server version'));
+    expect(screen.queryByTestId('sync-issue-stale-review-notice')).toBeNull();
   });
 });

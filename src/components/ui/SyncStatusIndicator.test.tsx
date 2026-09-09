@@ -43,6 +43,7 @@ function fakeOp(overrides: Partial<OfflineOperation> = {}): OfflineOperation {
     clientGeneratedId: null,
     payload: {},
     expectedUpdatedAt: null,
+    reviewedVersion: null,
     createdAt: new Date().toISOString(),
     attemptCount: 0,
     status: 'pending',
@@ -190,7 +191,7 @@ describe('SyncStatusIndicator', () => {
         fakeOp({
           operationId: 'op-2',
           status: 'permanent_failure',
-          lastSafeErrorCode: 'entity_deleted',
+          lastSafeErrorCode: 'task_unavailable',
         }),
       ],
     });

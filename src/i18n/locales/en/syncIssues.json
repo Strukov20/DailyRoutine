@@ -24,8 +24,7 @@
   "reason": {
     "conflict": "This task changed on another device while you were offline.",
     "permanent_validation": "This change is no longer valid.",
-    "authorization_lost": "You no longer have access to this item.",
-    "entity_deleted": "This task no longer exists.",
+    "task_unavailable": "This task is no longer available.",
     "unknown": "We couldn't sync this change after several attempts."
   },
   "actions": {
@@ -62,10 +61,11 @@
       "timezone": "Time zone"
     },
     "emptyValue": "(none)",
-    "taskGone": "This task no longer exists on the server.",
+    "taskGone": "This task is no longer available on the server.",
     "offlineUnavailable": "Latest server version unavailable — you're offline.",
     "loading": "Loading the latest server version…",
-    "error": "Couldn't load the latest server version."
+    "error": "Couldn't load the latest server version.",
+    "staleReview": "This task changed again. Review the latest version."
   },
   "queuedAt": "Queued {{time}}",
   "notFound": {

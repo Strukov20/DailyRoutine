@@ -68,6 +68,7 @@ function fakeOp(overrides: Partial<OfflineOperation>): OfflineOperation {
     clientGeneratedId: null,
     payload: {},
     expectedUpdatedAt: null,
+    reviewedVersion: null,
     createdAt: new Date().toISOString(),
     attemptCount: 0,
     status: 'pending',
@@ -173,6 +174,7 @@ describe('offline queue — real local Supabase integration', () => {
         operationType: 'update_personal_task',
         entityId: taskId,
         expectedUpdatedAt: staleUpdatedAt,
+        reviewedVersion: null,
         payload: { title: 'My offline edit' },
       }),
     );
@@ -243,16 +245,19 @@ describe('offline queue — real local Supabase integration', () => {
   });
 
   /**
-   * Sync Issues completion pass, Section 12's own 14-step scenario — the
-   * production resolution flows (syncIssueResolution.ts) driven end-to-end
-   * against the real local stack: a stale-write conflict reviewed via a
-   * real server fetch, resolved once by "Keep server version" (never
-   * replays again) and once by "Apply my change" (only the original
-   * patch's own fields change server-side, and a second concurrent write
-   * before Apply leaves the conflict unresolved rather than silently
-   * overwriting it).
+   * Sync Issues completion pass, Section 12's own 14-step scenario, final
+   * security/concurrency pass — the production resolution flows
+   * (syncIssueResolution.ts) driven end-to-end against the real local
+   * stack: a stale-write conflict reviewed via a real server fetch,
+   * resolved once by "Keep server version" (never replays again) and once
+   * by "Apply my change" (only the original patch's own fields change
+   * server-side). Round 3 proves the "stale review" concurrency window
+   * specifically: a real concurrent write landing *after* the user's
+   * review but *before* they press Apply is refused (never silently
+   * merged into), the comparison is refreshed in place, and only an
+   * explicit second Apply — after that refresh — actually mutates the row.
    */
-  it('the full stale-write review/resolve cycle: keep-server-version, then apply-my-change, then a second concurrent write leaves the conflict unresolved', async () => {
+  it('the full stale-write review/resolve cycle: keep-server-version, then apply-my-change, then a write after review requires an explicit re-review before Apply', async () => {
     const owner = await createTestUser('reviewcycle');
     const profileId = await signIn(owner.email);
 
@@ -272,6 +277,7 @@ describe('offline queue — real local Supabase integration', () => {
         operationType: 'update_personal_task',
         entityId: taskId,
         expectedUpdatedAt: staleUpdatedAt,
+        reviewedVersion: null,
         payload: { title: 'My offline title' },
       }),
     );
@@ -319,6 +325,7 @@ describe('offline queue — real local Supabase integration', () => {
         operationType: 'update_personal_task',
         entityId: taskId2,
         expectedUpdatedAt: staleUpdatedAt2,
+        reviewedVersion: null,
         payload: { title: 'My second offline title' },
       }),
     );
@@ -327,6 +334,11 @@ describe('offline queue — real local Supabase integration', () => {
     await runOfflineQueueReplay();
     op = selectOperationById(useOfflineQueueStore.getState(), operationId2);
     expect(op?.status).toBe('conflict');
+
+    // Apply is only ever valid after an explicit review — final security/
+    // concurrency pass. Review first (records reviewedVersion), then apply
+    // with nothing else having changed in between.
+    await getConflictComparison(operationId2);
 
     // 9. Choose Apply my change.
     const applyOutcome = await applyMyChange(operationId2);
@@ -343,28 +355,12 @@ describe('offline queue — real local Supabase integration', () => {
     expect(useOfflineQueueStore.getState().operations).toHaveLength(0);
 
     // --- Round 3: a second concurrent write lands after review, before Apply ---
-    // 11. Set up a third conflict, then let *another* concurrent write
-    // land after this client reviewed but before it applies.
-    //
-    // NOTE on this implementation's actual concurrency semantics (worth
-    // surfacing, not silently assumed): applyMyChange() re-fetches the
-    // server's live row and uses *that* fresh value as the new
-    // expected-version precondition, right before replaying — see its own
-    // doc comment in syncIssueResolution.ts ("using the *just-fetched*
-    // server version as the new expected-version precondition"). That
-    // means a write that lands after the user reviewed the comparison but
-    // before they press Apply is picked up and merged into automatically
-    // (Apply always targets whatever is truly current at click time,
-    // never the possibly-stale reviewed snapshot) — it is NOT the
-    // reviewed version that would go stale again here; only a write
-    // landing in the sub-millisecond gap *inside* applyMyChange's own
-    // fetch-then-write pair could still trigger a renewed 'conflict',
-    // which is not deterministically reproducible from a single sequential
-    // test. What *is* provable end-to-end: Apply never blindly reapplies
-    // a stale/cached snapshot — it always merges the original patch's own
-    // fields into the row's real, live state, never overwriting a field
-    // outside that patch regardless of how many concurrent writes landed
-    // in between.
+    // Final security/concurrency pass — the "stale review" window
+    // (Section 5: "if currentVersion != reviewedVersion, do not mutate;
+    // refresh the comparison; remain in Needs review; require another
+    // explicit Apply after review"). Set up a third conflict, review it
+    // once, then let *another* concurrent write land before Apply is
+    // pressed.
     const taskId3 = await createPersonalTask({ title: 'Third original', description: 'Third description' });
     const { data: original3 } = await supabase.from('tasks').select('updated_at').eq('id', taskId3).single();
     const staleUpdatedAt3 = original3!.updated_at as string;
@@ -379,6 +375,7 @@ describe('offline queue — real local Supabase integration', () => {
         operationType: 'update_personal_task',
         entityId: taskId3,
         expectedUpdatedAt: staleUpdatedAt3,
+        reviewedVersion: null,
         payload: { title: 'My third offline title' },
       }),
     );
@@ -388,14 +385,29 @@ describe('offline queue — real local Supabase integration', () => {
     op = selectOperationById(useOfflineQueueStore.getState(), operationId3);
     expect(op?.status).toBe('conflict');
 
-    // Reviewed once (comparison fetched)...
+    // Reviewed once (comparison fetched, reviewedVersion recorded)...
     await getConflictComparison(operationId3);
-    // ...then a *second* concurrent write lands before Apply is pressed.
+    // ...then a *second* concurrent write lands before Apply is pressed —
+    // the exact scenario the reviewed version must protect against.
     await updatePersonalTask({ taskId: taskId3, title: 'Third: second concurrent change' });
 
-    // 12. Apply merges the original patch (title only) into the row's
-    // real, live state at click time — never the stale original snapshot,
-    // and never touching description, which neither side's patch named.
+    // 11/12. Apply refuses to mutate against a version the user never
+    // actually reviewed — the server row is untouched, the operation
+    // stays 'conflict', and the safe "changed again" outcome is returned
+    // rather than a silent last-write-wins merge.
+    const staleOutcome = await applyMyChange(operationId3);
+    expect(staleOutcome).toEqual({ result: 'stale_review' });
+    op = selectOperationById(useOfflineQueueStore.getState(), operationId3);
+    expect(op?.status).toBe('conflict');
+    const { data: afterStaleAttempt } = await supabase.from('tasks').select('title').eq('id', taskId3).single();
+    expect(afterStaleAttempt!.title).toBe('Third: second concurrent change');
+
+    // The stale check itself refreshed reviewedVersion to what it just
+    // fetched — the user must explicitly review the (now-current) result
+    // and press Apply again; with nothing else having changed since, this
+    // second explicit Apply succeeds and merges only the original patch's
+    // own field (title) into the row's real, live state — never touching
+    // description, which neither side's patch named.
     const secondApplyOutcome = await applyMyChange(operationId3);
     expect(secondApplyOutcome).toEqual({ result: 'succeeded' });
     op = selectOperationById(useOfflineQueueStore.getState(), operationId3);
@@ -413,12 +425,12 @@ describe('offline queue — real local Supabase integration', () => {
     const repeatApplyOutcome = await applyMyChange(operationId3);
     expect(repeatApplyOutcome).toEqual({ result: 'not_applicable' });
 
-    // 13. "Resolve" is already terminal from the successful Apply above —
+    // "Resolve" is already terminal from the successful Apply above —
     // discarding an already-resolved operation is a safe, idempotent no-op.
     await discardSyncIssue(operationId3);
 
-    // 14. Verify zero residue across the whole scenario — nothing left
-    // queued for this profile at all.
+    // Verify zero residue across the whole scenario — nothing left queued
+    // for this profile at all.
     expect(useOfflineQueueStore.getState().operations).toHaveLength(0);
   });
 });

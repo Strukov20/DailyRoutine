@@ -42,6 +42,10 @@ export default function SyncIssueDetailScreen() {
   const [busy, setBusy] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [confirmApply, setConfirmApply] = useState(false);
+  // Final security/concurrency pass — true right after Apply discovers the
+  // server row changed again since the user's last review (Section 5's
+  // "stale review" window). Cleared on the next reload/apply attempt.
+  const [staleReviewNotice, setStaleReviewNotice] = useState(false);
 
   const isConflict = operation?.status === 'conflict';
   const comparisonQuery = useQuery({
@@ -63,6 +67,7 @@ export default function SyncIssueDetailScreen() {
 
   async function handleReload() {
     if (!operationId) return;
+    setStaleReviewNotice(false);
     await reloadServerSnapshot(operationId);
     await queryClient.invalidateQueries({ queryKey: ['sync-issues', 'comparison', operationId] });
   }
@@ -70,13 +75,21 @@ export default function SyncIssueDetailScreen() {
   async function handleApply() {
     if (!operationId) return;
     setBusy(true);
+    setStaleReviewNotice(false);
     try {
       const outcome = await applyMyChange(operationId);
       if (outcome.result === 'succeeded') {
         router.back();
-      } else {
-        await queryClient.invalidateQueries({ queryKey: ['sync-issues', 'comparison', operationId] });
+        return;
       }
+      if (outcome.result === 'stale_review') {
+        setStaleReviewNotice(true);
+      }
+      // 'stale_review' and 'conflict' both leave the operation in
+      // 'conflict' with a freshly-reviewed comparison already recorded —
+      // refetch so the screen shows it instead of the version the user
+      // originally reviewed.
+      await queryClient.invalidateQueries({ queryKey: ['sync-issues', 'comparison', operationId] });
     } finally {
       setBusy(false);
       setConfirmApply(false);
@@ -114,6 +127,17 @@ export default function SyncIssueDetailScreen() {
       <ScrollView>
         <Text variant="titleMedium">{t(`status.${statusLabel}`)}</Text>
         {reasonText ? <Text variant="bodyMedium">{reasonText}</Text> : null}
+
+        {staleReviewNotice ? (
+          <Text
+            accessibilityRole="alert"
+            variant="bodySmall"
+            testID="sync-issue-stale-review-notice"
+            style={[styles.offlineNote, { color: theme.colors.danger }]}
+          >
+            {t('comparison.staleReview')}
+          </Text>
+        ) : null}
 
         {isOffline ? (
           <Text
@@ -164,7 +188,7 @@ export default function SyncIssueDetailScreen() {
           accessibilityState={{ disabled: busy, busy }}
           onPress={() => setConfirmDiscard(true)}
         >
-          {t(operation.lastSafeErrorCode === 'authorization_lost' ? 'actions.discardLocalChange' : 'actions.keepServerVersion')}
+          {t(operation.lastSafeErrorCode === 'task_unavailable' ? 'actions.discardLocalChange' : 'actions.keepServerVersion')}
         </Button>
       </View>
 
