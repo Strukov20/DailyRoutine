@@ -1199,3 +1199,47 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
   key question was resolved by grep (the client treats the key as an opaque string throughout —
   no code change needed either way), not by inspecting any actual key value.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-10T00:00:00Z — Phase 10B: EAS project initialization
+
+- **Operation type:** external configuration action (EAS project creation/linking), narrowly
+  authorized by the user — explicitly not a build, credential, or submission action.
+- **Source material:** [`knowledge/raw/sessions/
+  2026-09-10-phase10b-eas-initialization.md`](../raw/sessions/2026-09-10-phase10b-eas-initialization.md).
+- **Wiki pages updated:** `engineering/push-notifications.md` — a note distinguishing Phase
+  6.1's own historical "genuinely greenfield" starting point from the now-current state (EAS
+  project linked, Supabase staging linked, still no real push ever sent), without rewriting
+  the historical record itself.
+- **Canonical docs updated:** `docs/RELEASE_CHECKLIST.md` (EAS row marked linked with the
+  verified project ID; the account-name-typo story recorded; "Next Stage B step" rewritten to
+  the actual next item, iOS signing credentials), `docs/DEPLOYMENT.md` (EAS section 1 marked
+  done; a stale "no EAS project" Known-limitations line corrected), `docs/DECISIONS.md` (new
+  "Phase 10B EAS initialization" section).
+- **Decisions/contradictions recorded:** a real account-name mismatch — the user's first-given
+  Expo owner (`boombastiiic`) did not match the authenticated `eas whoami` result
+  (`bombastiiic`), confirmed at the byte level before being treated as real, not a rendering
+  artifact. Work stopped completely (no `eas init`, no `owner` field committed) and the exact
+  discrepancy was reported rather than guessed at; the user confirmed it was a typo in their
+  own message and the correct account is `bombastiiic` (personal, not the `bombastiiics-team`
+  org), and the same session then resumed and completed initialization.
+- **One real, expected CLI limitation encountered, not a bug**: `eas init` cannot auto-write
+  `extra.eas.projectId` into a dynamic (`app.config.ts`) config — it printed the exact value
+  and exited non-zero after successfully creating the project server-side. Added manually,
+  then verified two independent ways (`expo config`'s resolved output and `eas project:info`)
+  before treating it as done, since a typo in the manually-added ID would silently produce a
+  client linked to nothing real.
+- **One pre-existing, unrelated test bug found and fixed** while running `npm run verify` as
+  this session's own sanity check: `ConflictsScreen.test.tsx` computed its "today" fixture via
+  UTC (`toISOString()`) against a screen that buckets by local calendar date
+  (`todayDateString()`) — the same class of real-wall-clock test flakiness already documented
+  for Phases 4 and 8. Confirmed it predated this session (reproduced against `git stash`)
+  before fixing it, and committed separately from the EAS/config work.
+- **Verified:** `npm run verify` — 65 suites/576 tests, all clean. `npx expo config --type
+  public` and `npx eas-cli@latest project:info` independently agree on
+  `@bombastiiic/familyflow` / `de243f7f-c6ad-4537-a799-621d645baf31`. `npx expo-doctor` — 20/21
+  (pre-existing). `npx expo export --platform ios` — clean, re-confirmed via the established
+  client-bundle secret-string audit. `git diff --check` — clean. No build, credential
+  generation, App Store Connect application, TestFlight upload, or submission occurred.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

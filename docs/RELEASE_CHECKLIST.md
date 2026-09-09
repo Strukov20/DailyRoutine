@@ -37,8 +37,9 @@ explicitly marked done.
 | Hosted Supabase staging project | ✅ Linked, all 23 migrations deployed | Project ref `ocurkeddkqkeitjfbcbe`, region `eu-west-1`. Confirmed Local/Remote parity, including `20260912140100_fix_hosted_lint_warnings.sql` (the Phase 10B corrective pass — see [DECISIONS.md](DECISIONS.md)). |
 | Hosted schema lint | ✅ Clean | `supabase db lint --linked --level warning` reports "No schema errors found," after fixing two unused-variable warnings and a real `IMMUTABLE`-declared-but-`STABLE`-routed bug in `compute_next_occurrence_date` — see [DECISIONS.md](DECISIONS.md) for the full root-cause analysis. |
 | Auth Site URL / redirect URL allowlist | ⏳ Not configured | `supabase/config.toml` already declares the correct intended values (`site_url = "familyflow://"`, `additional_redirect_urls` including `familyflow://*`), but `supabase db push` never syncs `[auth]` settings — that needs a separate `supabase config push` or manual Dashboard entry, neither run this pass. See [DEPLOYMENT.md, "0a"](DEPLOYMENT.md) for the exact traced values. |
-| EAS project link / credentials | ⏳ Not created | Expo owner confirmed: `boombastiiic`. Still needed: `eas init`, iOS signing credential generation (Apple). Android deferred — see Platform target below. |
-| Real device push notifications | ⏳ Not verified | A linked EAS project and a physical iOS device — see [DEPLOYMENT.md, "4–11"](DEPLOYMENT.md). The hosted Supabase project itself is now in place. |
+| EAS project linked | ✅ Linked | `@bombastiiic/familyflow`, project ID `de243f7f-c6ad-4537-a799-621d645baf31` — created via `eas init --account bombastiiic --non-interactive`, `extra.eas.projectId` added manually to `app.config.ts` (a dynamic config, so the CLI can't auto-write it). **No build, no credential, no submission** — see [DECISIONS.md, "Phase 10B EAS initialization"](DECISIONS.md). |
+| iOS signing credentials | ⏳ Not created | Requires an active Apple Developer Program membership; `npx eas credentials`. Not attempted — explicitly out of scope for the initialization pass. Android deferred — see Platform target below. |
+| Real device push notifications | ⏳ Not verified | EAS project now linked. Still needed: iOS push credentials (`eas credentials`) and a physical iOS device — see [DEPLOYMENT.md, "4–11"](DEPLOYMENT.md). |
 | Native beta test matrix — **iOS physical** | ⏳ Not run | A physical iOS device; see [BETA_TESTING.md](BETA_TESTING.md) for the exact matrix. Android rows deferred by the platform-target decision below, not dropped. |
 | TestFlight build | ⏳ Not built | Apple Developer account, approved EAS Build/Submit. Play Internal Testing deferred (Android not in scope for the first beta round). |
 | Beta tag (`v0.1.0-beta.1` suggested) | ⏳ Not created | Explicit operator approval of the exact commit, after Stage B validation. |
@@ -54,19 +55,23 @@ Answered 2026-09-09:
 
 1. Final beta display name — not asked separately; no objection raised to the internal working
    name, treat "FamilyFlow" as the beta name unless told otherwise.
-2. Expo account/organization to build under — **confirmed: `boombastiiic`.** `eas init` itself
-   was not run this pass (out of scope for this Auth/deep-link/staging audit).
+2. Expo account/organization to build under — **confirmed: `bombastiiic`** (the personal
+   account — the first value given, `boombastiiic`, was a typo, caught by an exact-match
+   `eas whoami` check before anything was created; see
+   [DECISIONS.md, "Phase 10B EAS initialization"](DECISIONS.md)). `eas init --account
+   bombastiiic --non-interactive` has been run; the project is linked, see item 4 below and
+   the Stage B table above.
 3. Expo project slug, iOS bundle identifier, Android application ID, and URL scheme —
    **keep the current placeholders**: slug `familyflow`, bundle/application id
    `com.familyflow.app`, scheme `familyflow` (`src/config/app-info.json`). These are now
    confirmed, not placeholders pending change — do not alter them without asking again.
-4. Initial version number and build number — **confirmed: version `1.0.0`, iOS build number
-   `1`.** Not yet reflected in code: `app.config.ts` currently hardcodes `version: '0.1.0'` and
-   sets no `ios.buildNumber` at all — since `eas.json`'s `cli.appVersionSource` is `"local"`,
-   an EAS build reads these values straight from `app.config.ts`, so this needs a small code
-   change before any EAS build runs (not made this pass — this Auth/deep-link/staging audit
-   deliberately did not touch release-identity fields; see [DECISIONS.md](DECISIONS.md),
-   "Phase 10B Auth audit," for how this was found).
+4. Initial version number and build number — **confirmed and now in code**: `app.config.ts`
+   sets `version: '1.0.0'`, `owner: 'bombastiiic'`, and `ios.buildNumber: '1'`; `extra.eas.
+   projectId` is set to `de243f7f-c6ad-4537-a799-621d645baf31` (the linked
+   `@bombastiiic/familyflow` project — added manually since `app.config.ts` is a dynamic
+   config the EAS CLI can't auto-write). `eas.json`'s `cli.appVersionSource: "local"` means an
+   EAS build will read these values directly. See
+   [DECISIONS.md, "Phase 10B EAS initialization"](DECISIONS.md).
 5. Platform target — **iOS only for now**. Do not spend Stage B effort on an Android EAS
    build/credential/TestFlight-equivalent until iOS is through the matrix and the repo owner
    says to add Android.
@@ -75,31 +80,32 @@ Answered 2026-09-09:
    locally and is verified via `db push --dry-run` but **not yet pushed** — see "Next Stage B
    step," below.
 
-## Next Stage B step: push the corrective migration, then EAS
+## Next Stage B step: iOS signing credentials
 
-Not yet executed. The corrective migration
-(`20260912140100_fix_hosted_lint_warnings.sql`) is ready — `npx supabase db push --dry-run`
-confirms it as the only pending change and that local/remote are otherwise in parity — but the
-real `npx supabase db push` was deliberately not run this pass, per explicit instruction to
-stop after the dry run. Running the real push is a small, low-risk action (a function-body
-replacement, no schema/data change, no `DROP`), but it is still a write to the hosted database
-and therefore still requires the repo owner's go-ahead before it happens, consistent with every
-other Stage B action in this document.
+The corrective migration and EAS project linking are both done — see the Stage B table above.
+Not yet executed: iOS push/signing credentials, which is the next concrete action, and the
+biggest remaining prerequisite before any real build.
 
-- **What**: `npx supabase db push` (no `--dry-run`) against the linked staging project —
-  applies exactly the one migration listed above.
-- **Why**: keeps the hosted schema's lint-clean state in sync with what's already verified
-  locally; nothing downstream (EAS, real device testing) depends on this specifically, but
-  leaving hosted and local out of sync invites confusion later.
-- **Verification**: `npx supabase migration list` afterward shows Local/Remote parity again;
-  re-running `npx supabase db lint --local --level warning` (or the hosted equivalent) stays
-  clean.
-- **Rollback**: a new forward-only migration restoring the prior function bodies — never edit
-  or delete the applied migration file, per this repo's standing convention.
+- **What**: `npx eas credentials` (interactive) against the linked `@bombastiiic/familyflow`
+  project — generates or uploads an APNs key/certificate for push, and a distribution
+  certificate + provisioning profile for signing.
+- **Why**: no iOS build (`development-device`, `preview`, or `production` profile) can produce
+  an installable artifact without these; EAS can manage them interactively rather than
+  requiring manual Apple Developer portal work.
+- **Requires**: an active Apple Developer Program membership (paid, $99/year as of this
+  writing — confirm current pricing directly with Apple, this document is not the source of
+  truth for it) under whichever Apple account will own the app's identifiers.
+- **Verification**: `npx eas credentials` lists the stored credentials for the project;
+  `npx eas build --profile development-device` (not run this pass) would be the first real
+  consumer of them.
+- **Rollback**: credentials can be revoked/regenerated from the Apple Developer portal or via
+  `eas credentials` itself; nothing here is destructive to existing app data.
 
-After that, the next Stage B items are EAS project linking (needs the still-unanswered Expo
-account/org) and, once a physical iOS device is available, the native beta matrix in
-[BETA_TESTING.md](BETA_TESTING.md).
+This step was explicitly **not** performed — generating credentials, running a build, or any
+store/TestFlight action all remain gated on separate, explicit approval, per every pass so far
+in this phase. After credentials, the remaining Stage B items are an actual
+`development-device` build and, once a physical iOS device is available, the native beta
+matrix in [BETA_TESTING.md](BETA_TESTING.md).
 
 Once this project exists, the next steps are `supabase link`, comparing local vs. remote
 migrations, and deploying — all covered in [DEPLOYMENT.md](DEPLOYMENT.md), none of it run yet.

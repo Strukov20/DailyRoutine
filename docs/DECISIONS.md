@@ -2663,3 +2663,73 @@ above and in [DEPLOYMENT.md, "0a"/"0b"](DEPLOYMENT.md). No service-role key, dat
 password, access token, or `NOTIFICATION_WORKER_SECRET` was retrieved, printed, or logged; no
 CLI command that prints project API keys was run; no Dashboard setting was changed.
 
+## Phase 10B EAS initialization
+
+**Status**: `@bombastiiic/familyflow` created and linked; no build, credential, or submission
+action performed. Release identity in `app.config.ts` now matches the repo owner's confirmed
+values: `owner: 'bombastiiic'`, `version: '1.0.0'`, `ios.buildNumber: '1'`,
+`extra.eas.projectId: 'de243f7f-c6ad-4537-a799-621d645baf31'`.
+
+### A real account-name mismatch caught by an exact-match check, not assumed close enough
+
+The repo owner's first-given Expo account name, `boombastiiic`, was requested to be verified
+against `npx eas-cli@latest whoami` before anything was created — an explicit stop condition,
+not a formality. The authenticated account was `bombastiiic` (one fewer "o"), confirmed at the
+byte level (`xxd` on the raw command output, not just eyeballing terminal text) to rule out a
+rendering artifact before treating it as a real mismatch. Work stopped there — `eas init` was
+not run, `owner` was not written into `app.config.ts` speculatively — and the discrepancy was
+reported back rather than guessed at (e.g., assuming a typo in one direction or the other, or
+silently trying both). The repo owner confirmed it was a typo in their own original message and
+the correct value is `bombastiiic` — the same session then resumed and completed the
+initialization. This is the same discipline this phase has applied to every other identifier
+so far (project ref, region, bundle id): verify against ground truth before creating or linking
+anything with it, since an EAS project name is not casually renameable once real builds and
+store listings start referencing it.
+
+### `bombastiiic` (personal) vs. `bombastiiics-team` (org) — both valid logins, only one correct
+
+`whoami` listed two accounts available to the same login: `bombastiiic` (Role: Owner) and
+`bombastiiics-team` (Role: Owner). The repo owner's
+instructions were explicit that the personal account, not the team, should own this project —
+`eas init --account bombastiiic --non-interactive` was used specifically to disambiguate
+this rather than relying on `eas init`'s own default account selection, which could plausibly
+have picked either in a non-interactive context.
+
+### Dynamic config (`app.config.ts`) can't be auto-written by `eas init` — a real, expected CLI limitation
+
+`eas init --account bombastiiic --non-interactive` succeeded server-side (the project was
+created — confirmed via the printed dashboard URL and, independently, `eas project:info`
+afterward) but exited non-zero client-side, because `app.config.ts` is a dynamic
+(function-based) config the CLI cannot safely rewrite — it printed the exact JSON shape to add
+under `extra.eas.projectId` and stopped. This is expected, documented Expo CLI behavior for
+dynamic configs, not a bug encountered — added manually, then verified two independent ways
+before treating it as done: `npx expo config --type public`'s resolved output showing the
+matching `extra.eas.projectId`, and `npx eas-cli@latest project:info` showing the same ID from
+EAS's own side. Both needed to agree, since a typo in the manually-added ID would silently
+produce a client that thinks it's linked to a project it isn't.
+
+### A pre-existing, unrelated test bug found while running `npm run verify` as part of this pass's own verification
+
+`ConflictsScreen.test.tsx`'s "buckets today's conflict under Today" test computed its `today`
+fixture via `new Date().toISOString().slice(0, 10)` (UTC), while the screen under test
+(`app/conflicts.tsx`) buckets by `todayDateString()` — the device's *local* calendar date. The
+two diverge for part of every day in any timezone ahead of UTC (this repo's own dev machine
+included), which is exactly the "test reading real wall-clock time" flakiness class already
+documented in `docs/TEST_STRATEGY.md` for two earlier phases (4 and 8) — recognized
+immediately from that pattern rather than re-diagnosed from scratch. Confirmed it predated this
+pass's own changes (reproduced against `git stash`) before fixing it, so as not to conflate an
+unrelated pre-existing bug with this pass's own work. Fixed by using the same production util
+the screen itself uses, committed separately (`c07989b`) from the EAS/config changes.
+
+**Verification**: `npm run verify` (65 suites/576 tests, including the `ConflictsScreen.test.tsx`
+fix — all green), `npx expo config --type public` (owner/version/buildNumber/projectId all
+resolve correctly), `npx eas-cli@latest project:info` (`fullName: @bombastiiic/familyflow`,
+`ID: de243f7f-c6ad-4537-a799-621d645baf31` — matches the config exactly), `npx expo-doctor`
+(20/21, the same pre-existing, unrelated `expo`/`expo-router` patch-version drift noted since
+Phase 9), `npx expo export --platform ios` (clean; re-ran the established client-bundle secret
+audit against the fresh export — no `NOTIFICATION_WORKER_SECRET`/`SERVICE_ROLE`/`CLIENT_SECRET`
+match), `git diff --check` clean. No build was started, no Apple credential was generated or
+requested, no App Store Connect application was created, nothing was uploaded to TestFlight,
+and nothing was submitted or published — the project exists and is linked, and nothing beyond
+that.
+

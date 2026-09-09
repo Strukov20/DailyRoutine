@@ -187,14 +187,13 @@ both providers remain disabled (`supabase/config.toml`'s `[auth.external.*]` blo
 
 Required before a device can obtain a real `ExpoPushToken`:
 
-1. **Create or link an EAS project.** `npx eas login` (interactive — your own Expo account),
-   then `npx eas init` from the repo root. This writes `extra.eas.projectId` into the
-   resolved Expo config — `src/lib/notifications/notificationService.ts`'s
-   `getExpoProjectId()` already reads exactly this field
-   (`Constants.expoConfig?.extra?.eas?.projectId`), so no client code change is needed once
-   it's set. Until then, `registerForPushNotifications()` correctly throws a typed
-   `missing_project_id` error rather than attempting a request that would fail — this is
-   tested behavior (`notificationService.test.ts`), not a gap.
+1. **Create or link an EAS project — done (Phase 10B).** `@bombastiiic/familyflow`, project ID
+   `de243f7f-c6ad-4537-a799-621d645baf31`, created via `eas init --account bombastiiic
+   --non-interactive`. Since `app.config.ts` is a dynamic config, the CLI could not
+   auto-write `extra.eas.projectId` — it was added manually per the CLI's own printed
+   instructions. `src/lib/notifications/notificationService.ts`'s `getExpoProjectId()` reads
+   exactly this field (`Constants.expoConfig?.extra?.eas?.projectId`), so no further client
+   code change was needed. See [DECISIONS.md, "Phase 10B EAS initialization"](DECISIONS.md).
 2. **Push credentials.** `npx eas credentials` — Android needs an FCM server key (or EAS's
    own managed credentials); iOS needs an APNs key/cert, which requires an active Apple
    Developer Program membership. EAS can manage both for you interactively.
@@ -465,7 +464,9 @@ in the public config and is not a secret.
 
 ## Known limitations — what this phase did not and could not verify
 
-- **No EAS project has been created or linked.** `app.config.ts` has no `extra.eas.projectId`.
+- **An EAS project is now linked (Phase 10B)** — `@bombastiiic/familyflow`,
+  `extra.eas.projectId` set in `app.config.ts` — but no push credentials have been generated,
+  no build has been run, and no device has been registered.
 - **A hosted Staging Supabase project exists and is linked (Phase 10B)** — but its Auth Site
   URL/redirect allowlist has not been configured (see "0a," above), `dispatch-notifications`
   has never been deployed to it, and `NOTIFICATION_WORKER_SECRET` has never been set on it.
