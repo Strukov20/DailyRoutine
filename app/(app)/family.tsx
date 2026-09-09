@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { FlatList, StyleSheet, View } from 'react-native';
+import { Alert, FlatList, StyleSheet, View } from 'react-native';
 import { Button, Chip, Divider, List, Menu, SegmentedButtons, Text } from 'react-native-paper';
 import { useState } from 'react';
 
@@ -9,11 +9,21 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
-import { useActiveFamily, useFamilyInvitations, useFamilyMembers } from '@/domain/family/hooks';
+import {
+  useActiveFamily,
+  useDeleteFamily,
+  useFamilyInvitations,
+  useFamilyMembers,
+  useLeaveFamily,
+} from '@/domain/family/hooks';
 import type { FamilyMember } from '@/domain/family/types';
 import { useAuth } from '@/lib/auth/AuthProvider';
+import { FamilyServiceError } from '@/lib/family/familyService';
+import { createLogger } from '@/lib/logger/logger';
 import { useUIStore } from '@/store/uiStore';
 import { useAppTheme } from '@/theme';
+
+const logger = createLogger('family-screen');
 
 /**
  * The Family Space screen: family switcher (a user may belong to several
@@ -30,10 +40,13 @@ export default function FamilyScreen() {
   const setActiveFamilyId = useUIStore((state) => state.setActiveFamilyId);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [view, setView] = useState<'members' | 'tasks'>('members');
+  const [settingsError, setSettingsError] = useState<string | null>(null);
 
   const { families, activeFamily, isLoading, isError } = useActiveFamily();
   const membersQuery = useFamilyMembers(activeFamily?.id ?? null);
   const invitationsQuery = useFamilyInvitations(activeFamily?.id ?? null);
+  const leaveFamily = useLeaveFamily();
+  const deleteFamily = useDeleteFamily();
 
   if (isLoading) {
     return (
@@ -71,6 +84,44 @@ export default function FamilyScreen() {
   const caller = members.find((m) => m.profileId === profile?.id);
   const callerIsOwner = caller?.role === 'owner';
   const invitations = (invitationsQuery.data ?? []).filter((inv) => inv.status === 'pending');
+
+  const onLeaveFamily = () => {
+    setSettingsError(null);
+    Alert.alert(t('family:settings.leaveConfirm.title'), t('family:settings.leaveConfirm.message'), [
+      { text: t('common:actions.cancel'), style: 'cancel' },
+      {
+        text: t('family:settings.leave'),
+        style: 'destructive',
+        onPress: () => {
+          void leaveFamily.mutateAsync(activeFamily.id).catch((error: unknown) => {
+            logger.warn('leave family failed', {
+              code: error instanceof FamilyServiceError ? error.code : 'unknown',
+            });
+            setSettingsError(t('family:settings.leaveFailed'));
+          });
+        },
+      },
+    ]);
+  };
+
+  const onDeleteFamily = () => {
+    setSettingsError(null);
+    Alert.alert(t('family:settings.deleteConfirm.title'), t('family:settings.deleteConfirm.message'), [
+      { text: t('common:actions.cancel'), style: 'cancel' },
+      {
+        text: t('family:settings.delete'),
+        style: 'destructive',
+        onPress: () => {
+          void deleteFamily.mutateAsync(activeFamily.id).catch((error: unknown) => {
+            logger.warn('delete family failed', {
+              code: error instanceof FamilyServiceError ? error.code : 'unknown',
+            });
+            setSettingsError(t('family:settings.deleteFailed'));
+          });
+        },
+      },
+    ]);
+  };
 
   const renderMember = ({ item }: { item: FamilyMember }) => (
     <List.Item
@@ -191,6 +242,40 @@ export default function FamilyScreen() {
           keyExtractor={(item) => item.id}
           renderItem={renderMember}
           contentContainerStyle={{ paddingHorizontal: theme.spacing.md }}
+          ListFooterComponent={
+            <View style={styles.dangerZone}>
+              <Divider style={styles.divider} />
+              <List.Subheader style={styles.subheader}>{t('family:settings.title')}</List.Subheader>
+              {settingsError ? (
+                <Text variant="bodySmall" style={{ color: theme.colors.danger, marginBottom: 8 }}>
+                  {settingsError}
+                </Text>
+              ) : null}
+              {callerIsOwner ? (
+                <Button
+                  testID="family-delete-button"
+                  mode="outlined"
+                  textColor={theme.colors.danger}
+                  onPress={onDeleteFamily}
+                  loading={deleteFamily.isPending}
+                  disabled={deleteFamily.isPending}
+                >
+                  {t('family:settings.delete')}
+                </Button>
+              ) : (
+                <Button
+                  testID="family-leave-button"
+                  mode="outlined"
+                  textColor={theme.colors.danger}
+                  onPress={onLeaveFamily}
+                  loading={leaveFamily.isPending}
+                  disabled={leaveFamily.isPending}
+                >
+                  {t('family:settings.leave')}
+                </Button>
+              )}
+            </View>
+          }
         />
       ) : (
         <FamilyTaskBoard familyId={activeFamily.id} members={members} />
@@ -211,6 +296,10 @@ const styles = StyleSheet.create({
   },
   viewToggle: {
     marginBottom: 8,
+  },
+  dangerZone: {
+    paddingHorizontal: 0,
+    paddingBottom: 24,
   },
   actions: {
     flexDirection: 'row',

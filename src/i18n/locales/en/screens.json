@@ -22,6 +22,17 @@
     "appearanceSystem": "System",
     "appearanceLight": "Light",
     "appearanceDark": "Dark",
-    "about": "About {{appName}}"
+    "about": "About {{appName}}",
+    "deleteAccount": {
+      "action": "Delete account",
+      "title": "Delete your account?",
+      "message": "This permanently removes your personal information and private tasks/events. Content still shared with a family (assigned tasks, shared events) is kept so other members aren't affected. This cannot be undone.",
+      "confirmPhraseLabel": "Type DELETE to confirm",
+      "confirmPhrase": "DELETE",
+      "confirm": "Delete my account",
+      "cancel": "Cancel",
+      "stillOwnsAFamily": "You still own a family. Transfer ownership or delete it from Family settings before deleting your account.",
+      "genericError": "Couldn't delete your account. Please try again."
+    }
   }
 }

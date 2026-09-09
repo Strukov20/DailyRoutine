@@ -90,7 +90,29 @@
     "removeConfirm": {
       "title": "Remove this member?",
       "message": "They will lose access to this family's shared schedule."
-    }
+    },
+    "makeOwner": "Make family owner",
+    "makeOwnerConfirm": {
+      "title": "Transfer ownership to {{name}}?",
+      "message": "You will become a regular adult member. {{name}} will gain full control of the family, including the ability to remove members or delete it."
+    },
+    "makeOwnerFailed": "Couldn't transfer ownership. Please try again."
+  },
+  "settings": {
+    "title": "Family settings",
+    "leave": "Leave family",
+    "leaveConfirm": {
+      "title": "Leave this family?",
+      "message": "You will lose access to its shared schedule and tasks."
+    },
+    "leaveOwnerBlocked": "As the family owner, you must transfer ownership or delete the family before you can leave.",
+    "leaveFailed": "Couldn't leave the family. Please try again.",
+    "delete": "Delete family",
+    "deleteConfirm": {
+      "title": "Delete this family?",
+      "message": "Every member will immediately lose access. Tasks, events, and responsibilities are kept as historical records, but nobody will be able to see or use them again. This cannot be undone."
+    },
+    "deleteFailed": "Couldn't delete the family. Please try again."
   },
   "errors": {
     "forbidden": "You don't have permission to do that.",
