@@ -365,16 +365,19 @@ select lives_ok(
   'archiving an already-archived task is a safe no-op (idempotent)'
 );
 
+-- Phase 9 completion pass ("Sync Issues" — see docs/DECISIONS.md): a
+-- soft-deleted task is now distinguished as P0002 (gone), not the generic
+-- 42501 (not yours) it used to collapse into.
 select throws_ok(
   format($$ select public.complete_personal_task(%L) $$, :'inbox_task_id'),
-  '42501',
+  'P0002',
   null,
   'an archived task is treated as gone by every other RPC (cannot complete it)'
 );
 
 select throws_ok(
   format($$ select public.update_personal_task(%L, 'Nope') $$, :'inbox_task_id'),
-  '42501',
+  'P0002',
   null,
   'an archived task cannot be updated either'
 );
