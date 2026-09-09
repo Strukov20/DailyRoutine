@@ -20,7 +20,10 @@
     "synced": "Synced",
     "syncing": "Syncing…",
     "offline": "Offline",
-    "syncIssue": "Sync issue",
+    "syncIssues_one": "{{count}} sync issue",
+    "syncIssues_other": "{{count}} sync issues",
+    "needsReview_one": "{{count}} needs review",
+    "needsReview_other": "{{count}} need review",
     "pendingChanges_one": "{{count}} change pending",
     "pendingChanges_other": "{{count}} changes pending"
   },

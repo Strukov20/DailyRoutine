@@ -11,6 +11,7 @@ import enFamily from './locales/en/family.json';
 import enNavigation from './locales/en/navigation.json';
 import enNotifications from './locales/en/notifications.json';
 import enScreens from './locales/en/screens.json';
+import enSyncIssues from './locales/en/syncIssues.json';
 import enTasks from './locales/en/tasks.json';
 import ukAuth from './locales/uk/auth.json';
 import ukCalendar from './locales/uk/calendar.json';
@@ -21,6 +22,7 @@ import ukFamily from './locales/uk/family.json';
 import ukNavigation from './locales/uk/navigation.json';
 import ukNotifications from './locales/uk/notifications.json';
 import ukScreens from './locales/uk/screens.json';
+import ukSyncIssues from './locales/uk/syncIssues.json';
 import ukTasks from './locales/uk/tasks.json';
 
 export const SUPPORTED_LANGUAGES = ['en', 'uk'] as const;
@@ -41,6 +43,7 @@ export const resources = {
     notifications: enNotifications,
     calendar: enCalendar,
     conflicts: enConflicts,
+    syncIssues: enSyncIssues,
   },
   uk: {
     common: ukCommon,
@@ -53,6 +56,7 @@ export const resources = {
     notifications: ukNotifications,
     calendar: ukCalendar,
     conflicts: ukConflicts,
+    syncIssues: ukSyncIssues,
   },
 } as const;
 

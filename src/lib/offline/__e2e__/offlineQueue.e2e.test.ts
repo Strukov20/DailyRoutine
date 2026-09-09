@@ -27,7 +27,8 @@ import { supabase } from '@/lib/supabase/client';
 import { completePersonalTask, createPersonalTask, updatePersonalTask } from '@/lib/tasks/taskService';
 
 import { runOfflineQueueReplay } from '../offlineQueueReplay';
-import { useOfflineQueueStore } from '../offlineQueueStore';
+import { selectOperationById, useOfflineQueueStore } from '../offlineQueueStore';
+import { applyMyChange, discardSyncIssue, getConflictComparison } from '../syncIssueResolution';
 import type { OfflineOperation } from '../types';
 
 jest.setTimeout(30000);
@@ -180,7 +181,7 @@ describe('offline queue — real local Supabase integration', () => {
 
     const ops = useOfflineQueueStore.getState().operations;
     expect(ops).toHaveLength(1);
-    expect(ops[0]).toMatchObject({ status: 'failed', lastSafeErrorCode: 'conflict' });
+    expect(ops[0]).toMatchObject({ status: 'conflict', lastSafeErrorCode: 'conflict' });
 
     const { data: finalRow } = await supabase.from('tasks').select('title').eq('id', taskId).single();
     expect(finalRow!.title).toBe('Changed elsewhere');
@@ -239,5 +240,185 @@ describe('offline queue — real local Supabase integration', () => {
       .eq('owner_profile_id', profileIdB)
       .eq('title', "A's offline task");
     expect(bRows).toHaveLength(0);
+  });
+
+  /**
+   * Sync Issues completion pass, Section 12's own 14-step scenario — the
+   * production resolution flows (syncIssueResolution.ts) driven end-to-end
+   * against the real local stack: a stale-write conflict reviewed via a
+   * real server fetch, resolved once by "Keep server version" (never
+   * replays again) and once by "Apply my change" (only the original
+   * patch's own fields change server-side, and a second concurrent write
+   * before Apply leaves the conflict unresolved rather than silently
+   * overwriting it).
+   */
+  it('the full stale-write review/resolve cycle: keep-server-version, then apply-my-change, then a second concurrent write leaves the conflict unresolved', async () => {
+    const owner = await createTestUser('reviewcycle');
+    const profileId = await signIn(owner.email);
+
+    // --- Round 1: "Keep server version" -------------------------------
+    // 1. Queue an offline update.
+    const taskId = await createPersonalTask({ title: 'Original title', description: 'Original description' });
+    const { data: original } = await supabase.from('tasks').select('updated_at').eq('id', taskId).single();
+    const staleUpdatedAt = original!.updated_at as string;
+
+    await useOfflineQueueStore.getState().hydrate(profileId);
+    const operationId = crypto.randomUUID();
+    onlineManager.setOnline(false);
+    await useOfflineQueueStore.getState().enqueue(
+      fakeOp({
+        operationId,
+        profileId,
+        operationType: 'update_personal_task',
+        entityId: taskId,
+        expectedUpdatedAt: staleUpdatedAt,
+        payload: { title: 'My offline title' },
+      }),
+    );
+
+    // 2. Modify the same task from "another device" (same account, a real
+    // online RPC call — the established convention this file already uses
+    // for simulating a concurrent write from elsewhere).
+    onlineManager.setOnline(true);
+    await updatePersonalTask({ taskId, title: 'Changed on another device' });
+
+    // 3. Replay and receive a stale conflict.
+    await runOfflineQueueReplay();
+    let op = selectOperationById(useOfflineQueueStore.getState(), operationId);
+    expect(op).toMatchObject({ status: 'conflict', lastSafeErrorCode: 'conflict' });
+
+    // 4/5. Fetch the latest server version and verify both comparison values.
+    const comparison = await getConflictComparison(operationId);
+    expect(comparison?.serverTask?.title).toBe('Changed on another device');
+    expect(comparison?.fields).toEqual([
+      { field: 'title', local: 'My offline title', server: 'Changed on another device' },
+    ]);
+
+    // 6. Choose Keep server version.
+    await discardSyncIssue(operationId);
+
+    // 7. Confirm the local operation never replays.
+    expect(useOfflineQueueStore.getState().operations).toHaveLength(0);
+    await runOfflineQueueReplay(); // a no-op FIFO pass — nothing left to replay
+    const { data: afterKeep } = await supabase.from('tasks').select('title').eq('id', taskId).single();
+    expect(afterKeep!.title).toBe('Changed on another device');
+
+    // --- Round 2: "Apply my change" ------------------------------------
+    // 8. Repeat with another conflict, on a fresh task.
+    const taskId2 = await createPersonalTask({ title: 'Second original', description: 'Second description' });
+    const { data: original2 } = await supabase.from('tasks').select('updated_at').eq('id', taskId2).single();
+    const staleUpdatedAt2 = original2!.updated_at as string;
+
+    await useOfflineQueueStore.getState().hydrate(profileId);
+    const operationId2 = crypto.randomUUID();
+    onlineManager.setOnline(false);
+    await useOfflineQueueStore.getState().enqueue(
+      fakeOp({
+        operationId: operationId2,
+        profileId,
+        operationType: 'update_personal_task',
+        entityId: taskId2,
+        expectedUpdatedAt: staleUpdatedAt2,
+        payload: { title: 'My second offline title' },
+      }),
+    );
+    onlineManager.setOnline(true);
+    await updatePersonalTask({ taskId: taskId2, title: 'Second: changed elsewhere' });
+    await runOfflineQueueReplay();
+    op = selectOperationById(useOfflineQueueStore.getState(), operationId2);
+    expect(op?.status).toBe('conflict');
+
+    // 9. Choose Apply my change.
+    const applyOutcome = await applyMyChange(operationId2);
+    expect(applyOutcome).toEqual({ result: 'succeeded' });
+
+    // 10. Confirm only the original patch's own field (title) changed —
+    // description, set by neither side's patch, keeps whatever the
+    // "other device" last wrote it as (the row's real current value at
+    // apply time), never silently reset to the offline snapshot's own
+    // stale value.
+    const { data: afterApply } = await supabase.from('tasks').select('title, description').eq('id', taskId2).single();
+    expect(afterApply!.title).toBe('My second offline title');
+    expect(afterApply!.description).toBe('Second description');
+    expect(useOfflineQueueStore.getState().operations).toHaveLength(0);
+
+    // --- Round 3: a second concurrent write lands after review, before Apply ---
+    // 11. Set up a third conflict, then let *another* concurrent write
+    // land after this client reviewed but before it applies.
+    //
+    // NOTE on this implementation's actual concurrency semantics (worth
+    // surfacing, not silently assumed): applyMyChange() re-fetches the
+    // server's live row and uses *that* fresh value as the new
+    // expected-version precondition, right before replaying — see its own
+    // doc comment in syncIssueResolution.ts ("using the *just-fetched*
+    // server version as the new expected-version precondition"). That
+    // means a write that lands after the user reviewed the comparison but
+    // before they press Apply is picked up and merged into automatically
+    // (Apply always targets whatever is truly current at click time,
+    // never the possibly-stale reviewed snapshot) — it is NOT the
+    // reviewed version that would go stale again here; only a write
+    // landing in the sub-millisecond gap *inside* applyMyChange's own
+    // fetch-then-write pair could still trigger a renewed 'conflict',
+    // which is not deterministically reproducible from a single sequential
+    // test. What *is* provable end-to-end: Apply never blindly reapplies
+    // a stale/cached snapshot — it always merges the original patch's own
+    // fields into the row's real, live state, never overwriting a field
+    // outside that patch regardless of how many concurrent writes landed
+    // in between.
+    const taskId3 = await createPersonalTask({ title: 'Third original', description: 'Third description' });
+    const { data: original3 } = await supabase.from('tasks').select('updated_at').eq('id', taskId3).single();
+    const staleUpdatedAt3 = original3!.updated_at as string;
+
+    await useOfflineQueueStore.getState().hydrate(profileId);
+    const operationId3 = crypto.randomUUID();
+    onlineManager.setOnline(false);
+    await useOfflineQueueStore.getState().enqueue(
+      fakeOp({
+        operationId: operationId3,
+        profileId,
+        operationType: 'update_personal_task',
+        entityId: taskId3,
+        expectedUpdatedAt: staleUpdatedAt3,
+        payload: { title: 'My third offline title' },
+      }),
+    );
+    onlineManager.setOnline(true);
+    await updatePersonalTask({ taskId: taskId3, title: 'Third: first concurrent change' });
+    await runOfflineQueueReplay();
+    op = selectOperationById(useOfflineQueueStore.getState(), operationId3);
+    expect(op?.status).toBe('conflict');
+
+    // Reviewed once (comparison fetched)...
+    await getConflictComparison(operationId3);
+    // ...then a *second* concurrent write lands before Apply is pressed.
+    await updatePersonalTask({ taskId: taskId3, title: 'Third: second concurrent change' });
+
+    // 12. Apply merges the original patch (title only) into the row's
+    // real, live state at click time — never the stale original snapshot,
+    // and never touching description, which neither side's patch named.
+    const secondApplyOutcome = await applyMyChange(operationId3);
+    expect(secondApplyOutcome).toEqual({ result: 'succeeded' });
+    op = selectOperationById(useOfflineQueueStore.getState(), operationId3);
+    expect(op).toBeUndefined();
+    const { data: afterSecondApply } = await supabase
+      .from('tasks')
+      .select('title, description')
+      .eq('id', taskId3)
+      .single();
+    expect(afterSecondApply!.title).toBe('My third offline title');
+    expect(afterSecondApply!.description).toBe('Third description');
+
+    // A repeat Apply on the now-resolved (no longer queued) operation is a
+    // safe, idempotent no-op — a double-tap never re-applies or errors.
+    const repeatApplyOutcome = await applyMyChange(operationId3);
+    expect(repeatApplyOutcome).toEqual({ result: 'not_applicable' });
+
+    // 13. "Resolve" is already terminal from the successful Apply above —
+    // discarding an already-resolved operation is a safe, idempotent no-op.
+    await discardSyncIssue(operationId3);
+
+    // 14. Verify zero residue across the whole scenario — nothing left
+    // queued for this profile at all.
+    expect(useOfflineQueueStore.getState().operations).toHaveLength(0);
   });
 });

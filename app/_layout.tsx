@@ -44,6 +44,7 @@ export default function RootLayout() {
 function RootNavigator() {
   const theme = useAppTheme();
   const { t } = useTranslation('conflicts');
+  const { t: tSyncIssues } = useTranslation('syncIssues');
   const { status } = useAuth();
   const pendingInviteToken = useUIStore((state) => state.pendingInviteToken);
   const setPendingInviteToken = useUIStore((state) => state.setPendingInviteToken);
@@ -143,6 +144,11 @@ function RootNavigator() {
           <Stack.Screen name="event/[id]" options={{ headerShown: true }} />
           <Stack.Screen name="event/[id]/edit" options={{ presentation: 'modal', headerShown: true }} />
           <Stack.Screen name="conflicts" options={{ title: t('title'), headerShown: true }} />
+          <Stack.Screen name="sync-issues/index" options={{ title: tSyncIssues('title'), headerShown: true }} />
+          <Stack.Screen
+            name="sync-issues/[operationId]"
+            options={{ title: tSyncIssues('comparison.title'), headerShown: true }}
+          />
         </Stack.Protected>
         <Stack.Screen name="index" />
         <Stack.Screen name="reset-password" />
