@@ -1158,3 +1158,44 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
   The real `supabase db push` was never run this pass, per explicit instruction; the Supabase
   CLI (2.116.0) was not updated.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-10T00:00:00Z — Phase 10B: Auth, deep-link, and staging-environment audit
+
+- **Operation type:** read-only configuration audit — no code, migration, or Dashboard change.
+  Scoped narrowly by the user to Auth/deep-link/staging-environment tracing only, with explicit
+  "do not guess, do not retrieve secrets, do not touch the Dashboard" constraints.
+- **Source material:** [`knowledge/raw/sessions/
+  2026-09-10-phase10b-auth-audit.md`](../raw/sessions/2026-09-10-phase10b-auth-audit.md).
+- **Wiki pages updated:** `engineering/authentication.md` — new section tracing every redirect
+  URL to its source, the EAS-build-uses-the-same-scheme finding (confirmed from
+  `expo-linking`'s own installed source, not general knowledge), and the `supabase db push`
+  vs. `config push` gap.
+- **Canonical docs updated:** `docs/DEPLOYMENT.md` (two stale claims corrected — "only Local
+  exists" and "No hosted Supabase project is connected" were both true when written and are
+  now false, since Staging is linked; two new sections, "0a" and "0b," with the full traced
+  Auth Site URL/redirect allowlist/staging-env-var matrix), `docs/DECISIONS.md` (new "Phase
+  10B Auth audit" section, the full writeup), `docs/RELEASE_CHECKLIST.md` (Expo owner and
+  version/build-number confirmed values recorded; a new Auth-config row added to the Stage B
+  table; the migration-deployment row updated to reflect all 23 migrations now deployed).
+- **Decisions/contradictions recorded:** a version/build-number mismatch —
+  `app.config.ts` hardcodes `version: '0.1.0'` with no `ios.buildNumber`, but the operator has
+  now confirmed `1.0.0`/build `1`. Reported, not fixed — release-identity fields were outside
+  this pass's explicit scope.
+- **One real, load-bearing gap found**: `supabase db push` (already run, all 23 migrations
+  deployed) does not sync `supabase/config.toml`'s `[auth]` section to a hosted project —
+  confirmed via `supabase config --help`, which shows `config push` as a distinct command.
+  The Staging project therefore has zero working Auth Site URL/redirect configuration despite
+  every migration being deployed and the hosted lint being clean. Not fixed this pass (would
+  require touching hosted project settings, explicitly out of scope) — documented as the
+  concrete next Stage B step.
+- **Verified without retrieving or printing any secret**: the project URL pattern
+  (`https://<ref>.supabase.co`) was cross-checked against `supabase/.temp/linked-project.json`/
+  `project-ref`/`pooler-url` (pre-existing local CLI cache files, no secrets) rather than
+  fetched or guessed — the resulting literal URL was deliberately not written into any
+  committed file, per the explicit "do not insert until verified" instruction; the operator is
+  directed to copy it from the Dashboard's own API page instead. The anon-key-vs-publishable-
+  key question was resolved by grep (the client treats the key as an opaque string throughout —
+  no code change needed either way), not by inspecting any actual key value.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

@@ -1,14 +1,16 @@
 ---
 title: Authentication
 status: current
-updated: 2026-09-03
+updated: 2026-09-10
 sources:
   - ../../../docs/ARCHITECTURE.md
   - ../../../docs/DECISIONS.md
+  - ../../../docs/DEPLOYMENT.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
   - ../../raw/sessions/2026-09-02-phase2-docker-resolved.md
   - ../../raw/sessions/2026-09-03-phase3-family-space.md
-tags: [engineering, auth, supabase]
+  - ../../raw/sessions/2026-09-10-phase10b-auth-audit.md
+tags: [engineering, auth, supabase, phase10]
 ---
 
 ## Confirmed / implemented / verified end to end
@@ -76,6 +78,39 @@ write-up: [DECISIONS.md](../../../docs/DECISIONS.md).
   App Store guidelines over a browser redirect for this specific provider) is a documented
   future enhancement, not built — the current Apple flow reuses the same browser-OAuth path
   as Google.
+
+## Staging deep-link/redirect configuration (Phase 10B audit)
+
+Every redirect URL the app generates traces to `src/lib/supabase/authRedirect.ts`'s
+`makeAuthRedirectUri()`: `familyflow://confirm?code=...` (sign-up confirmation),
+`familyflow://reset-password?code=...` (password recovery), `familyflow://auth-callback`
+(OAuth safety net — the normal path never actually navigates here, `expo-web-browser`
+intercepts the redirect directly). The invitation link
+(`familyflow://invite/<token>`, `src/lib/family/inviteLink.ts`) is a **separate, purely
+app-internal mechanism** — Supabase Auth never generates or redirects to it, so it must not be
+added to Supabase's own redirect allowlist. Notification tap routing generates no URL at all —
+it resolves straight to an in-app route and navigates via Expo Router's `router.push()`.
+
+**An EAS build (any profile, including production) uses the exact same `familyflow://` scheme
+as a plain build — there is no separate "EAS callback."** Confirmed by reading
+`expo-linking`'s own source (`createURL.ts`): only Expo Go specifically resolves to
+`exp://host:port/--/path` instead; a development build, an EAS build, or production all
+resolve to `<scheme>://path`.
+
+**A real gap found auditing the newly-linked Staging project**: `supabase db push` (which
+deploys migrations) does **not** sync `supabase/config.toml`'s `[auth]` section (Site URL,
+redirect allowlist) to a hosted project — that's the separate `supabase config push` command,
+or manual Dashboard entry, confirmed via `supabase config --help` rather than assumed. A
+project can have every migration deployed and still have zero working Auth redirects. See
+[DEPLOYMENT.md, "0a"](../../../docs/DEPLOYMENT.md) for the exact traced Site URL/redirect
+matrix, and [DECISIONS.md, "Phase 10B Auth audit"](../../../docs/DECISIONS.md) for the full
+writeup — neither the Dashboard nor `supabase config push` were touched during that audit; it
+was read-only.
+
+**The anon-key-vs-publishable-key question is already resolved, not open**: `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+is validated as an opaque `z.string().min(1)` and passed straight through to `createClient()` —
+no code anywhere decodes it as a JWT or assumes its shape, so either key format works with zero
+code change.
 
 ## See also
 

@@ -2553,3 +2553,113 @@ staging project — reports exactly one pending migration
 intact. The real `supabase db push` was never run this pass, per explicit instruction — the
 migration exists locally and is ready to deploy whenever the repo owner approves that step.
 
+## Phase 10B Auth audit (Auth, deep-link, and staging-environment configuration)
+
+**Status**: audit only, no configuration performed. By the start of this pass, the repo owner
+had already linked the Staging project (ref `ocurkeddkqkeitjfbcbe`, `eu-west-1`), deployed all
+23 migrations (including the Phase 10B corrective pass above), confirmed a clean hosted
+`supabase db lint`, and confirmed the Expo owner (`boombastiiic`), app slug (`familyflow`), iOS
+bundle identifier (`com.familyflow.app`), version (`1.0.0`), build number (`1`), and platform
+target (iOS first). This pass audited every Auth/deep-link/environment value the app generates
+or expects, produced the operator configuration matrix now in
+[DEPLOYMENT.md, "0a"/"0b"](DEPLOYMENT.md), and deliberately performed zero external
+configuration — no Dashboard change, no `supabase config push`, no key retrieval.
+
+### Every URL traced to its actual source, not assumed
+
+`src/lib/supabase/authRedirect.ts`'s `makeAuthRedirectUri()` is the single source for every
+Supabase-facing redirect URL in the app; each of its three callers
+(`authService.ts`'s `signUpWithPassword`/`requestPasswordReset`, `oauth.ts`'s
+`signInWithProvider`) and each corresponding landing route
+(`app/(auth)/confirm.tsx`, `app/reset-password.tsx`, `app/auth-callback.tsx`) was read
+directly to confirm the exact resulting URL and query-param shape
+(`familyflow://confirm?code=...`, `familyflow://reset-password?code=...`,
+`familyflow://auth-callback`). The invitation deep link
+(`src/lib/family/inviteLink.ts` → `familyflow://invite/<token>`) was confirmed to be a
+purely app-internal mechanism — Supabase Auth is never involved in generating or redirecting
+to it, so it does not belong in Supabase's own redirect allowlist, a distinction easy to get
+wrong by pattern-matching on "it's a deep link" alone. Notification tap routing
+(`notificationResponseRouter.ts`) was confirmed to generate no URL at all — a tapped
+notification resolves straight to an in-app route string and navigates via Expo Router's
+`router.push()`, entirely in-process; there is nothing to register anywhere for it.
+
+### EAS builds don't need a different redirect URL — confirmed from `expo-linking`'s own source, not assumed
+
+A genuine open question going in: does an EAS-built app (dev-client or production) produce a
+different deep-link URL shape than a plain Metro/local build, the way Expo Go's `exp://`
+scheme differs? Read `node_modules/expo-linking/src/createURL.ts` directly rather than relying
+on general Expo knowledge that could be stale for the installed version: its own doc comment
+states plainly that "development and production builds" both resolve to `<scheme>://path`,
+and only Expo Go resolves to `exp://host:port/--/path` — gated internally by `isExpoHosted()`,
+which checks for Expo's own hosting domains or `Constants.expoGoConfig`, neither of which is
+true for a standalone dev-client or production build. **Conclusion: there is no separate
+"EAS-build callback"** — `familyflow://*` covers every non-Expo-Go build, including every EAS
+profile. `supabase/config.toml`'s own comment ("the exp:// entries support Expo Go / dev-client
+testing") is imprecise on this specific point (dev-client behaves like production for URL-scheme
+purposes, not like Expo Go) — noted here since it doesn't cause any actual misconfiguration
+(having the `exp://` entries present is harmless, just unnecessary for dev-client specifically),
+so the comment itself was left alone rather than treated as a correction target.
+
+### `supabase db push` does not sync Auth settings — a real, load-bearing gap
+
+Checked directly (`npx supabase config --help`) rather than assumed: `supabase config push` is
+a distinct subcommand from `db push`, and pushes the *whole* `config.toml` (not just `[auth]`)
+to the linked project. This means the Staging project's Auth Site URL and redirect allowlist
+are **not yet applied**, despite `config.toml` already declaring the correct values and despite
+every migration already being deployed — deploying migrations and configuring Auth are two
+independent actions in this CLI, not one. This is the single most important finding of this
+pass: without it, an operator could reasonably assume "migrations are deployed, so the project
+is ready" and then have every Staging sign-up/password-reset/OAuth redirect silently fail.
+Running `supabase config push` (or the equivalent Dashboard entry) was not performed — it
+changes hosted project settings, which this pass was instructed not to touch.
+
+### Confirming the project URL pattern without fetching or printing a key
+
+Section 7 of this pass's brief asked whether `https://ocurkeddkqkeitjfbcbe.supabase.co` is the
+correct project URL, but explicitly not to insert it until verified. Verified two ways, both
+read-only and neither touching a secret: `supabase/.temp/linked-project.json` and
+`supabase/.temp/project-ref` (local CLI cache files, already on disk from the operator's own
+prior `supabase link`) confirm the exact project ref; `supabase/.temp/pooler-url` confirms the
+region (`aws-1-eu-west-1...`) matches the confirmed `eu-west-1`. Neither file contains a
+password, token, or key. The literal URL is deliberately **not** written into any committed
+file this pass (see [DEPLOYMENT.md, "0b"](DEPLOYMENT.md)) — the operator is directed to copy it
+from the Dashboard's own API settings page, the authoritative source, rather than trust a
+pattern derived from local cache files alone.
+
+### Anon key vs. publishable key: already compatible, confirmed by exhaustive grep
+
+`src/lib/env.ts` validates `EXPO_PUBLIC_SUPABASE_ANON_KEY` as `z.string().min(1)` — no format
+assumption. `src/lib/supabase/client.ts` passes it straight through to `createClient()` as an
+opaque string. A grep across `src/` for every reference to this variable found only the two
+sites above plus test/e2e setup files doing the same pass-through — nothing decodes it as a
+JWT or inspects its shape. Combined with `@supabase/supabase-js` being pinned to `^2.113.0`
+(well past the version that added the new key format), the conclusion is that **no code change
+is needed regardless of which key format the Staging project's Dashboard shows** — confirming
+this phase's own standing instruction (`DEPLOYMENT.md`, "0. Environments") not to perform a
+speculative key-model migration.
+
+### Two stale claims found and corrected in `DEPLOYMENT.md`, both now proven wrong by the confirmed hosted state
+
+"Currently: only Local exists — no Staging or Production Supabase project has been created or
+linked" and "No hosted Supabase project is connected to this repository" (in "Known
+limitations") were both accurate when written (Phase 6.1/Phase 10) and are now false, since the
+Staging project is linked. Corrected in place, preserving what remains true nearby
+(`dispatch-notifications` still never deployed to it, `NOTIFICATION_WORKER_SECRET` still never
+set on it, no EAS project yet) rather than deleting the surrounding accurate context.
+
+### A version/build-number contradiction found, not fixed this pass
+
+`app.config.ts` hardcodes `version: '0.1.0'` and sets no `ios.buildNumber` at all — but the
+repo owner has now confirmed `1.0.0`/build `1`, and `eas.json`'s `cli.appVersionSource: "local"`
+means an EAS build will read these fields straight from `app.config.ts`. This needs a small
+code change before any EAS build, but release-identity fields were outside this pass's explicit
+scope (an Auth/deep-link/staging-environment audit) — flagged in
+[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) rather than changed here.
+
+**Verification**: read-only this pass — no migration, RPC, or client code changed; no test
+suite affected. `npm run verify`/`supabase test db` were not re-run since nothing they cover
+changed. Every URL/value in the resulting matrix traces to a specific file and line, listed
+above and in [DEPLOYMENT.md, "0a"/"0b"](DEPLOYMENT.md). No service-role key, database
+password, access token, or `NOTIFICATION_WORKER_SECRET` was retrieved, printed, or logged; no
+CLI command that prints project API keys was run; no Dashboard setting was changed.
+

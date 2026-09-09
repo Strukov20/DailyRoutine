@@ -43,13 +43,13 @@ Three environments, never conflated:
 | Staging/Beta | Hosted integration testing and beta-device validation, synthetic accounts only | A dedicated hosted Supabase project, never shared with production | `staging` |
 | Production   | Future public release | A separate hosted Supabase project | `production` |
 
-**Currently**: only Local exists — no Staging or Production Supabase project has been created
-or linked (see "Known limitations" below and each section's own status line). This table
-documents the target shape so the moment an operator creates a staging project, the client-
-side plumbing (`src/lib/env.ts`'s `EXPO_PUBLIC_APP_ENV` — already a validated enum,
-`'local' | 'staging' | 'production'`, defaulting to `'local'` and throwing at startup on an
-invalid value — "fail closed," never silently falling back to some other environment) needs
-no code change, only new `.env` values.
+**Currently**: Staging exists and is linked (project ref `ocurkeddkqkeitjfbcbe`, `eu-west-1` —
+see "0a. Auth Site URL and redirect URL allowlist" below for what its Auth settings still need)
+— Production has not been created (see "Known limitations" below and each section's own status
+line). The client-side plumbing needed no code change to support this: `src/lib/env.ts`'s
+`EXPO_PUBLIC_APP_ENV` was already a validated enum, `'local' | 'staging' | 'production'`,
+defaulting to `'local'` and throwing at startup on an invalid value — "fail closed," never
+silently falling back to some other environment — before Staging existed.
 
 **Rules, all already true of this repository and to be preserved as staging/production come
 online:**
@@ -77,9 +77,10 @@ online:**
   (`src/lib/supabase/client.ts`) — do not perform a speculative rename/migration of the key
   variable names ahead of an actual project needing it.
 
-**Safety gates required of any future hosted smoke-test script** (none exists yet — no hosted
-project exists to smoke-test — this is the checklist the first one must satisfy, modeled on
-`scripts/e2e-backend.sh`'s existing local-only conventions):
+**Safety gates required of any future hosted smoke-test script** (none exists yet — a hosted
+Staging project now exists, but nothing has been written to smoke-test it — this is the
+checklist the first one must satisfy, modeled on `scripts/e2e-backend.sh`'s existing
+local-only conventions):
 
 - Requires an explicit, operator-supplied project reference and environment name as arguments
   or required env vars — never a default that could silently target the wrong project.
@@ -92,6 +93,95 @@ project exists to smoke-test — this is the checklist the first one must satisf
 - A cleanup trap (`trap cleanup EXIT`) that deletes every synthetic account/row it created,
   even on failure — no broad `DELETE FROM` without a `WHERE` scoped to that run's own marker.
 - Never logs a token, secret, or access/refresh JWT, even at debug verbosity.
+
+## 0a. Auth Site URL and redirect URL allowlist (Phase 10B audit)
+
+Every value below is traced directly to code or to `supabase/config.toml` — none is guessed.
+**Not yet applied to the Staging project** — `supabase db push` (already run) only deploys
+migrations; it does not sync `config.toml`'s `[auth]` section. That is a separate step
+(`supabase config push`, or the equivalent Dashboard fields), which is an external
+configuration action and was out of scope for this audit to perform.
+
+**Where every URL comes from**: `src/lib/supabase/authRedirect.ts`'s `makeAuthRedirectUri()`
+wraps `expo-linking`'s `createURL()`. Per that library's own documentation (confirmed by
+reading its installed source, `node_modules/expo-linking/src/createURL.ts`): a development
+build, an EAS build (any profile), or a production build all resolve to `<scheme>://path` —
+only Expo Go specifically resolves to `exp://host:port/--/path` instead. **There is no
+separate "EAS-build callback" — an EAS build uses the exact same `familyflow://` scheme as
+production.**
+
+| Purpose | Exact value | Source |
+| --- | --- | --- |
+| App URL scheme | `familyflow` | `src/config/app-info.json` → `app.config.ts`'s `scheme` |
+| Email-confirmation callback | `familyflow://confirm` (arrives as `familyflow://confirm?code=...`) | `authService.ts`'s `signUpWithPassword` → `makeAuthRedirectUri('confirm')`; consumed by `app/(auth)/confirm.tsx` |
+| Password-reset callback | `familyflow://reset-password` (arrives as `familyflow://reset-password?code=...`) | `authService.ts`'s `requestPasswordReset` → `makeAuthRedirectUri('reset-password')`; consumed by `app/reset-password.tsx` |
+| OAuth callback (Google/Apple — currently disabled) | `familyflow://auth-callback` | `oauth.ts`'s `signInWithProvider` → `makeAuthRedirectUri('auth-callback')`. In the normal path `expo-web-browser`'s `openAuthSessionAsync` intercepts this URL directly and the OS never navigates to `app/auth-callback.tsx` — that route is only a safety net for a dismissed/reopened browser session. |
+| Family invitation deep link | `familyflow://invite/<token>` | `src/lib/family/inviteLink.ts`'s `makeInviteLink()`; consumed by `app/invite/[token].tsx`. **Not a Supabase Auth redirect at all** — Supabase Auth never generates or redirects to this URL, so it does not belong in the Supabase redirect allowlist. |
+| Notification tap routing | *(no URL — internal navigation only)* | `notificationResponseRouter.ts` resolves a tapped notification straight to an in-app route (e.g. `/task/<id>/edit`) via Expo Router's `router.push()`, entirely in-process. No deep link is generated, parsed, or registered anywhere for this. |
+| Development-only callback (local Expo Go / Metro) | `exp://127.0.0.1:8081` and `exp://127.0.0.1:8081/--/*` | `supabase/config.toml`'s `auth.additional_redirect_urls` — **local-stack only**, already configured, not applicable to the Staging project's own Auth settings under the confirmed iOS-first/device-build testing plan (a dev-client or TestFlight build uses `familyflow://`, not `exp://` — see above). |
+
+**Supabase Auth Site URL** (`auth.site_url` in `config.toml`, currently applied to the local
+stack only): `familyflow://` — not a hosted web URL, because this app has no web frontend (see
+`docs/ARCHITECTURE.md`). This is the value the Staging project's Dashboard **Authentication →
+URL Configuration → Site URL** field needs, once that configuration step is actually performed.
+
+**Supabase Auth redirect URL allowlist** the Staging project needs (per `config.toml`'s own
+`additional_redirect_urls`, adapted — the `exp://` entries are local-dev-only, see the table
+above):
+
+```text
+familyflow://*
+```
+
+A single `familyflow://*` wildcard covers `confirm`, `reset-password`, and `auth-callback` —
+matching exactly what `config.toml` already declares for local. `familyflow://invite/*` does
+not need to be added (it's never a Supabase-generated redirect, per the table above).
+
+## 0b. Staging environment variables and the anon/publishable key question
+
+**Exact variable names a staging `.env` needs** (names only — no value belongs in this repo;
+see `.env.example` for the canonical list this mirrors):
+
+```text
+EXPO_PUBLIC_SUPABASE_URL=
+EXPO_PUBLIC_SUPABASE_ANON_KEY=
+EXPO_PUBLIC_APP_ENV=staging
+EXPO_PUBLIC_AUTH_GOOGLE_ENABLED=false
+EXPO_PUBLIC_AUTH_APPLE_ENABLED=false
+```
+
+`EXPO_PUBLIC_SUPABASE_URL`: the Staging project's API URL. Every Supabase hosted project uses
+the fixed pattern `https://<project-ref>.supabase.co`, where `<project-ref>` matches this
+repo's own local link state (`supabase/.temp/linked-project.json`, `supabase/.temp/project-ref`
+— read directly, not guessed) and whose region (`aws-1-eu-west-1...`) recorded in
+`supabase/.temp/pooler-url` is consistent with the confirmed `eu-west-1`. This document
+deliberately does not spell out the resulting literal URL — **the operator should copy the
+exact value from the Dashboard's own API settings page**, the authoritative source, rather than
+trust a pattern derived from local CLI cache files; retrieving it programmatically here would
+also risk exposing the adjacent secret/service-role key shown on that same Dashboard page,
+which must never be retrieved or logged (see the "Never" list in
+`docs/RELEASE_CHECKLIST.md`).
+
+`EXPO_PUBLIC_SUPABASE_ANON_KEY`: **the client works with either the legacy JWT-format `anon`
+key or the newer `sb_publishable_...` key — no code change either way.** Traced directly:
+`src/lib/env.ts` validates this variable as `z.string().min(1)` (no format/shape assumption at
+all); `src/lib/supabase/client.ts` passes it straight through to `createClient(url, key,
+options)` as an opaque string; nothing in this codebase decodes it as a JWT or inspects its
+shape (confirmed by grep — the only other references are test/e2e setup files that pass the
+same value through unchanged). `@supabase/supabase-js` is pinned to `^2.113.0`, well past the
+version that added support for the new key format. **Copy whichever key the Dashboard's own
+API settings page currently labels as the public-facing key for this project** (older UI:
+"anon / public"; current UI: "Publishable key") — do not perform a speculative migration
+between formats, and do not copy the secret/service-role key into this variable under any
+circumstance.
+
+`EXPO_PUBLIC_APP_ENV=staging`: already a validated enum value (`src/lib/env.ts`); no code
+change needed.
+
+`EXPO_PUBLIC_AUTH_GOOGLE_ENABLED`/`EXPO_PUBLIC_AUTH_APPLE_ENABLED`: stay `false` for Staging —
+both providers remain disabled (`supabase/config.toml`'s `[auth.external.*]` blocks are
+`enabled = false`); flipping either requires the manual provider-console setup in
+[DECISIONS.md, "Google/Apple auth"](DECISIONS.md), not attempted this pass.
 
 ## 1. EAS / Expo Push infrastructure
 
@@ -376,8 +466,9 @@ in the public config and is not a secret.
 ## Known limitations — what this phase did not and could not verify
 
 - **No EAS project has been created or linked.** `app.config.ts` has no `extra.eas.projectId`.
-- **No hosted Supabase project is connected to this repository.** `dispatch-notifications` has
-  never been deployed anywhere; `NOTIFICATION_WORKER_SECRET` has never been set anywhere.
+- **A hosted Staging Supabase project exists and is linked (Phase 10B)** — but its Auth Site
+  URL/redirect allowlist has not been configured (see "0a," above), `dispatch-notifications`
+  has never been deployed to it, and `NOTIFICATION_WORKER_SECRET` has never been set on it.
 - **No Database Webhook or `pg_cron` schedule has been configured** — there is nothing hosted
   for either to call yet.
 - **No physical device has received a real push notification** through this pipeline. Every

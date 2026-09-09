@@ -34,9 +34,10 @@ explicitly marked done.
 
 | Area | Status | What's needed |
 | --- | --- | --- |
-| Hosted Supabase staging project | ✅ Linked | Project ref `ocurkeddkqkeitjfbcbe`, region `eu-west-1`. All 22 prior migrations deployed with confirmed Local/Remote parity; one further migration (`20260912140100_fix_hosted_lint_warnings.sql`, a narrow corrective pass — see [DECISIONS.md, "Phase 10B corrective pass"](DECISIONS.md)) exists locally, verified via `db push --dry-run`, and is ready to deploy but **has not been pushed** — the real `supabase db push` was deliberately not run this pass. |
-| Hosted schema lint | ✅ Clean | `supabase db lint --local --level warning` (which reproduces the hosted linter's findings) now reports zero issues, after fixing two unused-variable warnings and a real `IMMUTABLE`-declared-but-`STABLE`-routed bug in `compute_next_occurrence_date` — see [DECISIONS.md](DECISIONS.md) for the full root-cause analysis. |
-| EAS project link / credentials | ⏳ Not created | Expo account/org still needed (unanswered); `eas init`, iOS signing credential generation (Apple). Android deferred — see Platform target below. |
+| Hosted Supabase staging project | ✅ Linked, all 23 migrations deployed | Project ref `ocurkeddkqkeitjfbcbe`, region `eu-west-1`. Confirmed Local/Remote parity, including `20260912140100_fix_hosted_lint_warnings.sql` (the Phase 10B corrective pass — see [DECISIONS.md](DECISIONS.md)). |
+| Hosted schema lint | ✅ Clean | `supabase db lint --linked --level warning` reports "No schema errors found," after fixing two unused-variable warnings and a real `IMMUTABLE`-declared-but-`STABLE`-routed bug in `compute_next_occurrence_date` — see [DECISIONS.md](DECISIONS.md) for the full root-cause analysis. |
+| Auth Site URL / redirect URL allowlist | ⏳ Not configured | `supabase/config.toml` already declares the correct intended values (`site_url = "familyflow://"`, `additional_redirect_urls` including `familyflow://*`), but `supabase db push` never syncs `[auth]` settings — that needs a separate `supabase config push` or manual Dashboard entry, neither run this pass. See [DEPLOYMENT.md, "0a"](DEPLOYMENT.md) for the exact traced values. |
+| EAS project link / credentials | ⏳ Not created | Expo owner confirmed: `boombastiiic`. Still needed: `eas init`, iOS signing credential generation (Apple). Android deferred — see Platform target below. |
 | Real device push notifications | ⏳ Not verified | A linked EAS project and a physical iOS device — see [DEPLOYMENT.md, "4–11"](DEPLOYMENT.md). The hosted Supabase project itself is now in place. |
 | Native beta test matrix — **iOS physical** | ⏳ Not run | A physical iOS device; see [BETA_TESTING.md](BETA_TESTING.md) for the exact matrix. Android rows deferred by the platform-target decision below, not dropped. |
 | TestFlight build | ⏳ Not built | Apple Developer account, approved EAS Build/Submit. Play Internal Testing deferred (Android not in scope for the first beta round). |
@@ -53,14 +54,19 @@ Answered 2026-09-09:
 
 1. Final beta display name — not asked separately; no objection raised to the internal working
    name, treat "FamilyFlow" as the beta name unless told otherwise.
-2. Expo account/organization to build under — **not yet answered**, still needed before `eas
-   init`.
+2. Expo account/organization to build under — **confirmed: `boombastiiic`.** `eas init` itself
+   was not run this pass (out of scope for this Auth/deep-link/staging audit).
 3. Expo project slug, iOS bundle identifier, Android application ID, and URL scheme —
    **keep the current placeholders**: slug `familyflow`, bundle/application id
    `com.familyflow.app`, scheme `familyflow` (`src/config/app-info.json`). These are now
    confirmed, not placeholders pending change — do not alter them without asking again.
-4. Initial version number and build number — not yet answered; `0.1.0` remains the recommended
-   default, unconfirmed.
+4. Initial version number and build number — **confirmed: version `1.0.0`, iOS build number
+   `1`.** Not yet reflected in code: `app.config.ts` currently hardcodes `version: '0.1.0'` and
+   sets no `ios.buildNumber` at all — since `eas.json`'s `cli.appVersionSource` is `"local"`,
+   an EAS build reads these values straight from `app.config.ts`, so this needs a small code
+   change before any EAS build runs (not made this pass — this Auth/deep-link/staging audit
+   deliberately did not touch release-identity fields; see [DECISIONS.md](DECISIONS.md),
+   "Phase 10B Auth audit," for how this was found).
 5. Platform target — **iOS only for now**. Do not spend Stage B effort on an Android EAS
    build/credential/TestFlight-equivalent until iOS is through the matrix and the repo owner
    says to add Android.
