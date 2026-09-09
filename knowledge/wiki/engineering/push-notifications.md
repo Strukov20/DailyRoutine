@@ -12,6 +12,7 @@ sources:
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
   - ../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md
   - ../../raw/sessions/2026-09-10-phase10b-eas-initialization.md
+  - ../../raw/sessions/2026-09-10-phase10b-eas-prebuild-readiness.md
 tags: [engineering, notifications, edge-functions, phase6, phase6.1, phase10]
 ---
 
@@ -48,6 +49,18 @@ no real push has ever been sent or received** — no push credentials exist yet,
 been run, and no physical device has registered a token. The "genuinely greenfield" framing
 above describes Phase 6.1's own starting point accurately as history; it is no longer the
 current state.
+
+**Phase 10B pre-build readiness**: each `eas.json` profile now declares an explicit
+`"environment": "development" | "preview" | "production"` — this scopes which set of
+EAS-hosted variables (`eas env:*`, none created yet) a build under that profile would pull in;
+without it there'd be nothing for a future `eas env:set` to attach to unambiguously. Verified
+correct via `eas config -p ios -e <profile>` (read-only) for all four profiles. First
+recommended build is `development-simulator` (buildable today, no Apple credential needed,
+but can't validate push — `Device.isDevice` is `false` on Simulator), then
+`development-device` once `eas credentials` has been run — see
+[DECISIONS.md, "Phase 10B EAS pre-build readiness"](../../../docs/DECISIONS.md) and
+[RELEASE_CHECKLIST.md](../../../docs/RELEASE_CHECKLIST.md) for the full variable/visibility
+matrix.
 
 ## Durable transactional outbox — why not a direct send
 

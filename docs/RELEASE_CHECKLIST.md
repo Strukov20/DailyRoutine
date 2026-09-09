@@ -21,7 +21,7 @@ what's pending, and why — never claims a layer was verified when it wasn't.
 | `eas.json` build profiles | ✅ Configured, not linked | Four profiles (`development-simulator`, `development-device`, `preview`, `production`). No EAS project linked. |
 | Security audit (DB + client + deps) | ✅ Done, this pass | See "Security audit results" below. |
 | Automated test suite | ✅ Green | 65 Jest suites / 576 tests; 19 pgTAP files / 602 assertions; 11/11 Deno; 4 backend e2e suites (32+24+28+23); offline (5) and realtime (28) e2e suites each run twice consecutively with zero residue. |
-| Native local build checks | ✅ Green | `expo config --type public`, `expo export --platform ios`, `expo export --platform android`, `expo-doctor` (20/21, pre-existing unrelated patch drift), `git diff --check`. |
+| Native local build checks | ✅ Green | `expo config --type public`, `expo export --platform ios`, `expo export --platform android`, `expo-doctor` (21/21 — see "Dependencies" below), `git diff --check`. |
 | Documentation + LLM Wiki | ✅ Updated, this pass | See each doc's own Phase 10 section; wiki update recorded in `knowledge/wiki/log.md`. |
 
 ## Stage B — Operator-Assisted Deployment and Device Validation: in progress
@@ -79,6 +79,59 @@ Answered 2026-09-09:
    `eu-west-1`); 22 migrations deployed; a 23rd (corrective, not new functionality) exists
    locally and is verified via `db push --dry-run` but **not yet pushed** — see "Next Stage B
    step," below.
+
+## EAS build profile readiness (Phase 10B)
+
+No build was run this pass — this is a local-only readiness check, verified via `eas config`
+(a read-only display command, not a build).
+
+**Profile → EAS environment mapping** (`eas.json`), confirmed correct via `eas config -p ios
+-e <profile>` for all four, which echoes back which environment each profile resolved to:
+
+| Profile | EAS environment | Distribution | Target |
+| --- | --- | --- | --- |
+| `development-simulator` | `development` | internal | iOS Simulator |
+| `development-device` | `development` | internal | physical device |
+| `preview` | `preview` | internal | physical device |
+| `production` | `production` | store | physical device |
+
+**Recommended first build — two stages, since Apple credentials don't exist yet:**
+
+1. **`development-simulator` first** — the only profile buildable today with zero Apple
+   Developer account dependency (Simulator builds need no distribution certificate). Useful
+   purely as a build-pipeline sanity check (does the app actually compile and boot under EAS's
+   build environment) — it cannot validate push notifications, since `Device.isDevice` is
+   `false` on Simulator (see [DEPLOYMENT.md](DEPLOYMENT.md), "1. EAS / Expo Push
+   infrastructure").
+2. **`development-device` next**, once `npx eas credentials` has been run (see "Next Stage B
+   step," below) and a physical iOS device is available — this is the profile that actually
+   matters for this beta's validation goals (real push tokens, real Realtime sync across
+   devices, the native beta matrix in [BETA_TESTING.md](BETA_TESTING.md)).
+
+`preview`/`production` remain later-stage profiles (internal beta distribution and eventual
+store submission respectively) — not the first build under any circumstance.
+
+**EAS environment variables — five required, none created this pass** (creating them was
+explicitly out of scope): `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`,
+`EXPO_PUBLIC_APP_ENV`, `EXPO_PUBLIC_AUTH_GOOGLE_ENABLED`, `EXPO_PUBLIC_AUTH_APPLE_ENABLED` —
+same five traced in [DEPLOYMENT.md, "0b"](DEPLOYMENT.md). Recommended `eas env:set`
+`--visibility` (confirmed exact values via `eas env:set --help`: `plaintext | sensitive |
+secret`):
+
+| Variable | Recommended visibility | Why |
+| --- | --- | --- |
+| `EXPO_PUBLIC_SUPABASE_URL` | `plaintext` | Fully public by design — every `EXPO_PUBLIC_*` value ships in the built client bundle regardless of how it's stored server-side (confirmed via the client-bundle `strings` audit this repo already runs). No confidentiality is gained by hiding it in the EAS dashboard. |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | `plaintext` (or `sensitive` as a low-cost, non-functional convention) | Supabase's own anon/publishable key is explicitly designed to be public — RLS, not key secrecy, is the real security boundary (see [SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md)). `sensitive` merely avoids it appearing in a dashboard screenshot or CI log verbatim; it changes nothing about the built app. Never `secret` — that tier is write-only (can't be read back), which is actively unhelpful for a value a developer may legitimately need to re-copy. |
+| `EXPO_PUBLIC_APP_ENV` | `plaintext` | A label (`"staging"`), not sensitive in any sense. |
+| `EXPO_PUBLIC_AUTH_GOOGLE_ENABLED` | `plaintext` | A boolean flag, currently `false`. |
+| `EXPO_PUBLIC_AUTH_APPLE_ENABLED` | `plaintext` | A boolean flag, currently `false`. |
+
+`secret` visibility should be reserved for values that are genuinely never supposed to reach
+the client — this project has none of those among `EXPO_PUBLIC_*` names by construction (see
+[DEPLOYMENT.md, "0. Environments"](DEPLOYMENT.md)'s rule that a secret must never carry that
+prefix); `NOTIFICATION_WORKER_SECRET` and any future service-role value are set via `supabase
+secrets set` against the Supabase project, not as an EAS build variable, and stay entirely out
+of this matrix.
 
 ## Next Stage B step: iOS signing credentials
 
@@ -141,10 +194,12 @@ migrations, and deploying — all covered in [DEPLOYMENT.md](DEPLOYMENT.md), non
   `uiStore.test.ts`.
 
 **Dependencies**
-- No dependency changes were made this phase beyond what Phase 10's own code required (none) —
-  no blind `npm audit fix`, no major upgrades. `expo-doctor`'s one failing check
-  (`expo`/`expo-router` patch-version drift) is pre-existing and unrelated to this phase's
-  changes; tracked as a build-tool-only finding, not a release blocker.
+- `expo-doctor`'s one failing check (20/21, `expo`/`expo-router` patch-version drift, present
+  since Phase 5) is now resolved: `npx expo install --fix` bumped `expo` (`~57.0.20` →
+  `~57.0.21`) and `expo-router` (`~57.0.19` → `~57.0.20`) — the exact two packages the check
+  named, both within their existing `~57.0.x` SemVer range, nothing else. `expo-doctor` now
+  reports 21/21. No blind `npm audit fix`, no major upgrades — see
+  [DECISIONS.md, "Phase 10B EAS pre-build readiness"](DECISIONS.md) for the full before/after.
 
 ## Data lifecycle (account and family deletion)
 

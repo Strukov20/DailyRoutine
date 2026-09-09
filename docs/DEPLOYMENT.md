@@ -204,7 +204,13 @@ Required before a device can obtain a real `ExpoPushToken`:
    for exactly this kind of manual push validation), `preview` (internal distribution —
    TestFlight/Play Internal Testing, see "Beta distribution" below), and `production` (store
    submission, auto-incrementing build number). `npx eas build --profile development-device`
-   for real push-token validation on a physical device.
+   for real push-token validation on a physical device. Each profile carries an explicit
+   `"environment": "development" | "preview" | "production"` (Phase 10B) — this is what
+   determines which set of EAS-hosted environment variables (`eas env:set`, not yet run — see
+   [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the recommended five-variable matrix and
+   visibility) gets injected into a build under that profile; confirmed via `eas config -p ios
+   -e <profile>` (a read-only display command) that all four profiles resolve to the intended
+   environment.
 4. **Never commit credentials.** `eas credentials` stores what it needs on Expo's servers, not
    in this repo. The EAS project ID itself is not a secret (it's already read from the public
    Expo config on every device) and is safe to commit to `app.config.ts`/`eas.json` once

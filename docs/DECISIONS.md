@@ -2733,3 +2733,59 @@ requested, no App Store Connect application was created, nothing was uploaded to
 and nothing was submitted or published — the project exists and is linked, and nothing beyond
 that.
 
+## Phase 10B EAS pre-build readiness
+
+**Status**: local-only readiness pass, no build run. `eas.json` profiles now carry an explicit
+EAS environment mapping; the pre-existing `expo-doctor` patch-drift finding is resolved.
+
+### `eas.json`: an explicit `"environment"` field per profile, not left implicit
+
+EAS's "Environments" feature (`eas env:*`) scopes hosted environment variables to one of three
+names — confirmed directly from the installed CLI's own help text (`eas env:list --help`:
+"Default environments are 'production', 'preview', and 'development'"), not assumed from
+general Expo knowledge. `eas.json` had four build profiles but no profile declared which of
+these three environments it belongs to, meaning a future `eas env:set` would have nothing to
+attach a build to unambiguously. Added `"environment": "development"` to both
+`development-simulator`/`development-device`, `"preview"` to `preview`, `"production"` to
+`production` — verified correct (not just syntactically valid) via `eas config -p ios -e
+<profile>` for all four, a read-only display command that echoes back which environment's
+variables it would look up; each resolved to exactly the intended one. No EAS environment
+variable was created — this is wiring for variables that don't exist yet, exactly per the
+brief's own scope boundary (create the attachment point, not the values).
+
+### First build recommendation: `development-simulator`, then `development-device` — not `preview`/`production`
+
+No Apple Developer credential exists yet (confirmed — `npx eas credentials` has never been
+run, see "Phase 10B EAS initialization," above). `development-simulator` is the only profile
+buildable today without one, since Simulator builds carry no distribution
+certificate/provisioning-profile requirement — recommended purely as a build-pipeline sanity
+check, since it structurally cannot validate push (`Device.isDevice` is `false` on Simulator).
+`development-device` is the profile that actually matters for this beta's stated goals (real
+push tokens, cross-device Realtime, the native matrix in `docs/BETA_TESTING.md`), but needs
+`eas credentials` run first. `preview`/`production` are later-stage profiles by design (internal
+beta distribution and store submission respectively) and were never in contention for "first."
+
+### `expo-doctor` 20/21: root cause confirmed via the CLI's own diagnostic output, fixed via Expo's own resolver
+
+Root cause, stated plainly by `expo-doctor` itself, not inferred: `expo@57.0.20` (SDK expects
+`~57.0.21`) and `expo-router@57.0.19` (SDK expects `~57.0.20`) — both within their own
+package.json `~57.0.x` SemVer ranges (lockfile-frozen at an earlier patch within that range,
+the same class of drift already resolved once before, for a different package set, in Phase 5
+— see that phase's own entry above). `npx expo install --check` (non-mutating) confirmed the
+same two packages and nothing more before any change was made. `npx expo install --fix`
+(Expo's own SDK-compatibility-aware resolver — never `npm update`/`npm audit fix`, which don't
+understand Expo's cross-package version-matrix constraints) bumped exactly those two in
+`package.json` (`~57.0.20`→`~57.0.21`, `~57.0.19`→`~57.0.20`); `package-lock.json`'s resulting
+diff also shows a transitive bump of `expo-modules-jsi` to `57.1.0`, pulled in by `expo`'s own
+updated dependency tree, not chosen directly — checked and confirmed to still be "SDK 57
+compatible" as a set by `expo-doctor` itself reporting 21/21 afterward, the authoritative
+signal for that claim, not just the individual version number looking reasonable.
+
+**Verification**: `npm run verify` (65 suites/576 tests, unaffected — no client/RPC code
+changed this pass), `npx expo-doctor` (21/21, was 20/21), `npx expo config --type public`
+(resolves correctly, `extra.eas.projectId` intact), `npx expo export --platform ios` and
+`--platform android` (both clean), the established client-bundle/public-config secret audit
+re-run against both fresh exports (no `NOTIFICATION_WORKER_SECRET`/`SERVICE_ROLE`/
+`CLIENT_SECRET` match), `git diff --check` clean. `.env.local` was never read, printed, or
+copied. No EAS environment variable was created or modified. No build was started.
+

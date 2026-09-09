@@ -1243,3 +1243,38 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
   client-bundle secret-string audit. `git diff --check` — clean. No build, credential
   generation, App Store Connect application, TestFlight upload, or submission occurred.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-10T00:00:00Z — Phase 10B: EAS pre-build readiness pass
+
+- **Operation type:** local-only configuration audit and a minimal, tool-recommended
+  dependency patch — no build, no credentials, no EAS environment variable created.
+- **Source material:** [`knowledge/raw/sessions/
+  2026-09-10-phase10b-eas-prebuild-readiness.md`](../raw/sessions/2026-09-10-phase10b-eas-prebuild-readiness.md).
+- **Wiki pages updated:** `engineering/push-notifications.md` — a further Phase 10B note on
+  the `eas.json` environment mapping and the first-build-profile recommendation.
+- **Canonical docs updated:** `docs/RELEASE_CHECKLIST.md` (new "EAS build profile readiness"
+  section — the full profile/environment table, the two-stage first-build recommendation, and
+  the five-variable EAS visibility matrix; `expo-doctor` status updated to 21/21),
+  `docs/DEPLOYMENT.md` (EAS section 1 notes the new environment field), `docs/DECISIONS.md`
+  (new "Phase 10B EAS pre-build readiness" section).
+- **Decisions/contradictions recorded:** none new.
+- **One real gap closed**: none of `eas.json`'s four build profiles declared an EAS
+  `"environment"` — confirmed via the installed CLI's own help text that this is a distinct
+  concept from profile names, scoping which hosted variable set a build pulls in. Added and
+  verified correct (via the read-only `eas config -p ios -e <profile>`, not just JSON
+  validity) for all four profiles.
+- **One pre-existing dependency-drift finding resolved**: `expo-doctor`'s 20/21
+  (`expo`/`expo-router` patch versions behind the SDK's expected range, present since Phase 5)
+  fixed via `npx expo install --fix` — Expo's own SDK-compatibility resolver, not a blind
+  `npm update`. Exactly the two packages the tool named were bumped in `package.json`; a
+  transitive `expo-modules-jsi` bump to `57.1.0` came along via `expo`'s own updated tree, not
+  chosen directly, and was confirmed still SDK-57-compatible by `expo-doctor` itself reporting
+  21/21 afterward.
+- **Verified:** `npm run verify` — 65/576, clean. `npx expo-doctor` — 21/21 (was 20/21). `npx
+  expo config --type public`, `npx expo export --platform ios`/`--platform android` — all
+  clean; the established client-bundle/public-config secret audit re-run against both fresh
+  exports found no matches. `git diff --check` — clean. `.env.local` was never read. No EAS
+  environment variable was created or modified. No build was started.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
