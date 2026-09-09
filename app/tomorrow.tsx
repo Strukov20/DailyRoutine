@@ -9,6 +9,7 @@ import { TaskSectionList } from '@/components/tasks/TaskSectionList';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { OfflineBanner } from '@/components/ui/OfflineBanner';
+import { SyncStatusIndicator } from '@/components/ui/SyncStatusIndicator';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { useCategories } from '@/domain/categories/hooks';
 import { useCompleteOccurrence, useRestoreOccurrence, useSkipOccurrence } from '@/domain/recurrence/hooks';
@@ -86,6 +87,7 @@ export default function TomorrowScreen() {
       <Stack.Screen options={{ title: t('screens:tomorrow.title'), headerShown: true }} />
       <View style={styles.header}>
         <OfflineBanner />
+        <SyncStatusIndicator />
         <QuickAddInput date={tomorrow} screenId="tomorrow" />
       </View>
 

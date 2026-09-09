@@ -7,7 +7,7 @@ import { create } from 'zustand';
  * query/mutation instead. See docs/DECISIONS.md, "State-management
  * boundaries".
  */
-interface UIState {
+export interface UIState {
   /** Manual light/dark override; 'system' follows the OS setting. */
   colorSchemeOverride: 'system' | 'light' | 'dark';
   setColorSchemeOverride: (value: UIState['colorSchemeOverride']) => void;

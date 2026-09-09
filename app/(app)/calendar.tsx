@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { OfflineBanner } from '@/components/ui/OfflineBanner';
+import { SyncStatusIndicator } from '@/components/ui/SyncStatusIndicator';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import {
   useAcceptEventResponsibility,
@@ -114,6 +115,7 @@ export default function CalendarScreen() {
   return (
     <ScreenContainer>
       <OfflineBanner />
+      <SyncStatusIndicator />
       <View style={styles.header}>
         <IconButton
           icon="chevron-left"

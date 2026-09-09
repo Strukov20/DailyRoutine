@@ -16,6 +16,14 @@
     "offline": "Ви офлайн. Показано останні синхронізовані дані.",
     "somethingWentWrong": "Щось пішло не так."
   },
+  "sync": {
+    "synced": "Синхронізовано",
+    "syncing": "Синхронізація…",
+    "offline": "Офлайн",
+    "syncIssue": "Помилка синхронізації",
+    "pendingChanges_one": "{{count}} зміна очікує",
+    "pendingChanges_other": "{{count}} змін очікує"
+  },
   "priority": {
     "normal": "Звичайний",
     "important": "Важливий",

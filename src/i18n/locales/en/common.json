@@ -16,6 +16,14 @@
     "offline": "You're offline. Showing the last synced data.",
     "somethingWentWrong": "Something went wrong."
   },
+  "sync": {
+    "synced": "Synced",
+    "syncing": "Syncing…",
+    "offline": "Offline",
+    "syncIssue": "Sync issue",
+    "pendingChanges_one": "{{count}} change pending",
+    "pendingChanges_other": "{{count}} changes pending"
+  },
   "priority": {
     "normal": "Normal",
     "important": "Important",

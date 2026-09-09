@@ -18,6 +18,14 @@ import CalendarScreen from '../../../app/(app)/calendar';
 
 initI18n();
 
+// Phase 9 — the screen now also renders SyncStatusIndicator, which pulls
+// in the offline queue store and therefore AsyncStorage; same convention
+// as persistedQueryClient.test.ts.
+jest.mock('@react-native-async-storage/async-storage', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
+
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
