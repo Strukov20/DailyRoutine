@@ -33,6 +33,66 @@ turns the fake transport into the real one (`_shared/expoTransport.ts`'s
 `dispatch-notifications/index.ts`'s `Deno.serve` handler — no code change is needed to go
 from "tested with a fake" to "running for real," only configuration).
 
+## 0. Environments (Phase 10)
+
+Three environments, never conflated:
+
+| Environment  | Purpose                                       | Supabase project | `EXPO_PUBLIC_APP_ENV` |
+| ------------ | ---------------------------------------------- | ----------------- | ---------------------- |
+| Local        | Development, `npm run verify`, all destructive/automated tests (`supabase db reset`, pgTAP, the `e2e:*` scripts) | The local Docker stack (`npm run supabase:start`) — never a hosted project | `local` (the default) |
+| Staging/Beta | Hosted integration testing and beta-device validation, synthetic accounts only | A dedicated hosted Supabase project, never shared with production | `staging` |
+| Production   | Future public release | A separate hosted Supabase project | `production` |
+
+**Currently**: only Local exists — no Staging or Production Supabase project has been created
+or linked (see "Known limitations" below and each section's own status line). This table
+documents the target shape so the moment an operator creates a staging project, the client-
+side plumbing (`src/lib/env.ts`'s `EXPO_PUBLIC_APP_ENV` — already a validated enum,
+`'local' | 'staging' | 'production'`, defaulting to `'local'` and throwing at startup on an
+invalid value — "fail closed," never silently falling back to some other environment) needs
+no code change, only new `.env` values.
+
+**Rules, all already true of this repository and to be preserved as staging/production come
+online:**
+
+- Automated tests never run against a hosted project. `supabase db reset`/`supabase test db`/
+  the `e2e:*` scripts all target `127.0.0.1:54321` by construction (the local stack's fixed
+  address) — there is no environment variable that could accidentally redirect them at a
+  hosted URL.
+- No secret value is ever committed. `.env` is git-ignored (`.gitignore`); `.env.example`
+  documents every variable name with no real value (verified: `git ls-files | grep '^\.env'`
+  returns only `.env.example`).
+- `EXPO_PUBLIC_*` variables are the only ones readable at runtime by the shipped app (Metro
+  inlines them into the bundle — anything with that prefix must be treated as visible to
+  anyone who can inspect the client, per `.env.example`'s own header comment) — a
+  `service_role`/`SUPABASE_SECRET`/`NOTIFICATION_WORKER_SECRET` value must never carry that
+  prefix. Confirmed by grep (Phase 10 audit): every `service_role`/secret-key reference in
+  `src/`, `app/`, or `app.config.ts` is confined to `src/lib/offline/__e2e__/` (Node-only
+  Jest test setup, reading from local `supabase status` output — never bundled into the app)
+  or is absent entirely; every other reference lives in `supabase/functions/` (server-side
+  Deno) or `supabase/migrations/`/`supabase/config.toml` (SQL/CLI config, never shipped to a
+  device).
+- A future hosted Supabase project should use the currently recommended publishable/secret
+  client-key model if the installed `@supabase/supabase-js` version supports it, while keeping
+  compatibility with this repository's existing `createClient(url, anonKey)` call
+  (`src/lib/supabase/client.ts`) — do not perform a speculative rename/migration of the key
+  variable names ahead of an actual project needing it.
+
+**Safety gates required of any future hosted smoke-test script** (none exists yet — no hosted
+project exists to smoke-test — this is the checklist the first one must satisfy, modeled on
+`scripts/e2e-backend.sh`'s existing local-only conventions):
+
+- Requires an explicit, operator-supplied project reference and environment name as arguments
+  or required env vars — never a default that could silently target the wrong project.
+- Rejects any Supabase URL that doesn't match the expected project reference.
+- Refuses to run against `production` unless a second, deliberate override flag is also
+  supplied (e.g. `--i-understand-this-is-production`) — the default must be "refuse."
+- Every synthetic account it creates uses a unique, clearly-marked namespace (this
+  repository's own convention: `e2e-<script>-<label>-<timestamp>-<random>@example.com`, see
+  any `scripts/e2e-*.sh` for the exact pattern) — never a real-looking email address.
+- A cleanup trap (`trap cleanup EXIT`) that deletes every synthetic account/row it created,
+  even on failure — no broad `DELETE FROM` without a `WHERE` scoped to that run's own marker.
+- Never logs a token, secret, or access/refresh JWT, even at debug verbosity.
+
 ## 1. EAS / Expo Push infrastructure
 
 Required before a device can obtain a real `ExpoPushToken`:
