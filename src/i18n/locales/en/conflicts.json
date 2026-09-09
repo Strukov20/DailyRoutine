@@ -1,0 +1,26 @@
+{
+  "title": "Conflicts",
+  "badgeAccessibilityLabel_one": "{{count}} schedule conflict",
+  "badgeAccessibilityLabel_other": "{{count}} schedule conflicts",
+  "sections": {
+    "today": "Today",
+    "upcoming": "Upcoming"
+  },
+  "severity": {
+    "warning": "Warning",
+    "critical": "Needs attention"
+  },
+  "empty": "No schedule conflicts right now.",
+  "offlineStale": "You're offline — this list may be out of date.",
+  "unknownMember": "Someone",
+  "actions": {
+    "review": "Review"
+  },
+  "event_event": "{{name}} has two overlapping events at {{time}}",
+  "task_event": "{{name}} has a task overlapping an event at {{time}}",
+  "task_task": "{{name}} has two overlapping tasks at {{time}}",
+  "responsibility_busy": "{{name}} is already busy at {{time}}",
+  "responsibility_responsibility": "{{name}} is needed for two responsibilities at {{time}}",
+  "unassigned_dropoff_pickup": "A drop-off/pick-up at {{time}} still needs someone assigned",
+  "no_available_adult": "No available adult for the {{time}} drop-off/pick-up"
+}

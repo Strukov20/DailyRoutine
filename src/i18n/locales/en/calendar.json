@@ -13,6 +13,8 @@
   "busy": "Busy",
   "warningsTitle": "Warnings",
   "conflictGeneric": "{{name}} is busy at this time",
+  "conflictsBadge_one": "{{count}} conflict",
+  "conflictsBadge_other": "{{count}} conflicts",
   "dropOff": "Drop off",
   "pickUp": "Pick up",
   "supervise": "Supervise",

@@ -1,6 +1,7 @@
 import { Stack, router, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -42,6 +43,7 @@ export default function RootLayout() {
 
 function RootNavigator() {
   const theme = useAppTheme();
+  const { t } = useTranslation('conflicts');
   const { status } = useAuth();
   const pendingInviteToken = useUIStore((state) => state.pendingInviteToken);
   const setPendingInviteToken = useUIStore((state) => state.setPendingInviteToken);
@@ -140,6 +142,7 @@ function RootNavigator() {
           <Stack.Screen name="event/new" options={{ presentation: 'modal', headerShown: true }} />
           <Stack.Screen name="event/[id]" options={{ headerShown: true }} />
           <Stack.Screen name="event/[id]/edit" options={{ presentation: 'modal', headerShown: true }} />
+          <Stack.Screen name="conflicts" options={{ title: t('title'), headerShown: true }} />
         </Stack.Protected>
         <Stack.Screen name="index" />
         <Stack.Screen name="reset-password" />

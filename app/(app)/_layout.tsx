@@ -2,8 +2,14 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
+import { addLocalDays, dayBoundsUtcFor } from '@/domain/calendar/dateUtils';
+import { useFamilyConflicts } from '@/domain/conflicts/hooks';
+import { useActiveFamily } from '@/domain/family/hooks';
 import { usePendingAssignments } from '@/domain/tasks/hooks';
 import { useAppTheme } from '@/theme';
+
+/** Section 15's own "bounded range" for the badge, matching the Conflict Center screen's own window — a tab badge that disagreed with what tapping it shows would be worse than no badge. */
+const CONFLICT_BADGE_WINDOW_DAYS = 7;
 
 type IconName = keyof typeof MaterialCommunityIcons.glyphMap;
 
@@ -33,6 +39,16 @@ export default function AppTabsLayout() {
   const pendingAssignmentsQuery = usePendingAssignments();
   const pendingCount = pendingAssignmentsQuery.data?.length ?? 0;
 
+  // Conflict Center entry-point badge (Section 15) — same bounded
+  // today..+7-day window the Conflict Center screen itself queries, so the
+  // badge count never disagrees with what tapping through actually shows.
+  const activeFamilyQuery = useActiveFamily();
+  const familyId = activeFamilyQuery.activeFamily?.id ?? null;
+  const todayBounds = dayBoundsUtcFor(new Date());
+  const upcomingBounds = dayBoundsUtcFor(addLocalDays(new Date(), CONFLICT_BADGE_WINDOW_DAYS));
+  const conflictsQuery = useFamilyConflicts(familyId, todayBounds.startUtc, upcomingBounds.endUtc);
+  const conflictCount = conflictsQuery.data?.length ?? 0;
+
   return (
     <Tabs
       screenOptions={({ route }) => ({
@@ -55,7 +71,11 @@ export default function AppTabsLayout() {
       <Tabs.Screen name="today" options={{ title: t('today'), tabBarButtonTestID: 'tab-today' }} />
       <Tabs.Screen
         name="calendar"
-        options={{ title: t('calendar'), tabBarButtonTestID: 'tab-calendar' }}
+        options={{
+          title: t('calendar'),
+          tabBarBadge: conflictCount > 0 ? conflictCount : undefined,
+          tabBarButtonTestID: 'tab-calendar',
+        }}
       />
       <Tabs.Screen name="inbox" options={{ title: t('inbox'), tabBarButtonTestID: 'tab-inbox' }} />
       <Tabs.Screen

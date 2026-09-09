@@ -5,6 +5,7 @@ import { initReactI18next } from 'react-i18next';
 import enAuth from './locales/en/auth.json';
 import enCalendar from './locales/en/calendar.json';
 import enCommon from './locales/en/common.json';
+import enConflicts from './locales/en/conflicts.json';
 import enErrors from './locales/en/errors.json';
 import enFamily from './locales/en/family.json';
 import enNavigation from './locales/en/navigation.json';
@@ -14,6 +15,7 @@ import enTasks from './locales/en/tasks.json';
 import ukAuth from './locales/uk/auth.json';
 import ukCalendar from './locales/uk/calendar.json';
 import ukCommon from './locales/uk/common.json';
+import ukConflicts from './locales/uk/conflicts.json';
 import ukErrors from './locales/uk/errors.json';
 import ukFamily from './locales/uk/family.json';
 import ukNavigation from './locales/uk/navigation.json';
@@ -38,6 +40,7 @@ export const resources = {
     family: enFamily,
     notifications: enNotifications,
     calendar: enCalendar,
+    conflicts: enConflicts,
   },
   uk: {
     common: ukCommon,
@@ -49,6 +52,7 @@ export const resources = {
     family: ukFamily,
     notifications: ukNotifications,
     calendar: ukCalendar,
+    conflicts: ukConflicts,
   },
 } as const;
 

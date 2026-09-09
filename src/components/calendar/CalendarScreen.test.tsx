@@ -75,6 +75,14 @@ jest.mock('@/domain/family/hooks', () => ({
   useFamilyMembers: () => ({ data: MEMBERS }),
 }));
 
+// Phase 9 — the screen now also sources its Conflict Center entry-point
+// badge from this hook; a static empty result keeps this file focused on
+// the calendar behavior it actually tests (see ConflictsScreen.test.tsx
+// for Conflict-Center-specific coverage).
+jest.mock('@/domain/conflicts/hooks', () => ({
+  useFamilyConflicts: () => ({ data: [], isLoading: false, isError: false, isFetching: false, refetch: jest.fn() }),
+}));
+
 const mockOwnEventsState = {
   data: [] as unknown[],
   isLoading: false,

@@ -1,0 +1,26 @@
+{
+  "title": "Конфлікти",
+  "badgeAccessibilityLabel_one": "{{count}} конфлікт розкладу",
+  "badgeAccessibilityLabel_other": "{{count}} конфліктів розкладу",
+  "sections": {
+    "today": "Сьогодні",
+    "upcoming": "Найближчим часом"
+  },
+  "severity": {
+    "warning": "Попередження",
+    "critical": "Потребує уваги"
+  },
+  "empty": "Наразі конфліктів розкладу немає.",
+  "offlineStale": "Ви офлайн — цей список може бути застарілим.",
+  "unknownMember": "Хтось",
+  "actions": {
+    "review": "Переглянути"
+  },
+  "event_event": "У {{name}} два події перетинаються о {{time}}",
+  "task_event": "У {{name}} завдання перетинається з подією о {{time}}",
+  "task_task": "У {{name}} два завдання перетинаються о {{time}}",
+  "responsibility_busy": "{{name}} вже зайнятий(-а) о {{time}}",
+  "responsibility_responsibility": "{{name}} потрібен(-на) для двох обов'язків одночасно о {{time}}",
+  "unassigned_dropoff_pickup": "Забирання/привезення о {{time}} все ще потребує відповідального",
+  "no_available_adult": "Немає доступного дорослого для забирання/привезення о {{time}}"
+}
