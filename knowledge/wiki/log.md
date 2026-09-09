@@ -984,3 +984,54 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
   `expo-doctor` 20/21 — one pre-existing, unrelated patch-version drift (`expo`/`expo-router`),
   reported per this codebase's dependency-pinning precedent rather than bumped.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+## 2026-09-11T12:00:00Z — Phase 9 final security/concurrency pass
+
+- **Operation type:** security fix + migration + test + docs. User-directed: a detailed 5-part
+  brief identifying two specific defects in the immediately prior session's own Sync Issues
+  work (a task-existence oracle, and a gap in Apply my change's review semantics) and
+  requesting both be fixed, plus resolution of a stray `deno.lock`.
+- **Wiki pages updated:**
+  [`engineering/realtime-sync-and-offline.md`](engineering/realtime-sync-and-offline.md) —
+  "Done and verified" gained a bullet documenting the existence-oracle fix and rewrote the
+  Sync Issues resolution bullet; the former "A concurrency nuance worth knowing before
+  touching Apply my change" section (which had flagged the review-semantics gap as an open
+  question) is replaced with "Apply my change's two concurrency windows," documenting the fix
+  now that it exists instead of the gap that used to exist there.
+- **Canonical docs updated:** `docs/DECISIONS.md` (new "Final security/concurrency pass"
+  subsection under Phase 9 — added below the prior "Sync Issues resolution UX" entry, which
+  was not edited, per this project's "add to a record, don't overwrite it" convention),
+  `docs/SECURITY_AND_PRIVACY.md` (new bullet for the existence-oracle fix, updated bullet for
+  the merged `OfflineSafeErrorCode` count), `docs/ARCHITECTURE.md` (Apply-my-change paragraph
+  rewritten from "flagged for confirmation" to the actual fixed two-window behavior),
+  `docs/TEST_STRATEGY.md` (pgTAP count 528→530, `160_...` file's own count 20→22, e2e:offline
+  description corrected to describe the real fixed behavior instead of the pre-fix one).
+- **Decisions/contradictions recorded:** none new — this session *resolved* the one open
+  question the prior session's own entries had explicitly flagged (Apply's two brief
+  instructions being in tension), rather than discovering a new one. The resolution: `reviewedVersion`
+  decouples the review-time fetch from the apply-time fetch, so both of the brief's
+  instructions are now literally true at once.
+- **Two real defects found and fixed, both originating in the immediately prior session's own
+  work** (not part of this session's own new code until the fix): (1) the P0002/42501 split
+  (commit `47df0e7`) was a cross-user task-existence oracle — any authenticated caller could
+  learn whether a task UUID exists anywhere in the system, for any user; removed via a new
+  additive migration, proven fixed by literally capturing and comparing the exact error output
+  for a random UUID vs. another profile's real UUID. (2) `applyMyChange` re-fetched the server
+  row and used that same fetch as both the staleness check and the write precondition, so a
+  write between a real user review and a real Apply press was silently absorbed rather than
+  re-surfaced — fixed by decoupling review-time and apply-time fetches via
+  `OfflineOperation.reviewedVersion`.
+- **Verified:** `npm run verify` — 60 suites / 550 tests, lint/typecheck/wiki:lint all clean.
+  `supabase db reset && supabase test db` — 16 files / 530 pgTAP assertions (`160_sync_issues_
+  resolution_test.sql` rewritten, 20→22 assertions, now proving indistinguishability directly
+  via a `pg_temp` capture helper rather than only checking both cases raise 42501).
+  `deno test` for `dispatch-notifications` — 11/11, run from the documented `supabase/
+  functions` directory (confirmed this does not regenerate the stray root `deno.lock`).
+  `e2e:backend` 32/32, `e2e:notifications` 24/24, `e2e:calendar` 28/28, `e2e:recurrence` 23/23
+  all re-confirmed. `e2e:offline` (extended with the real "stale review" concurrency window)
+  run twice consecutively without a DB reset, both green. `e2e:realtime` run twice, both green
+  (28/28). `expo config --type public`, both `expo export` platforms, `git diff --check` all
+  clean. `expo-doctor` unchanged at 20/21 (same pre-existing, unrelated patch-version drift).
+  Stray root-level `deno.lock` deleted; `/deno.lock` added to `.gitignore` (root-anchored only
+  — does not affect the real, already-tracked `supabase/functions/deno.lock`).
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

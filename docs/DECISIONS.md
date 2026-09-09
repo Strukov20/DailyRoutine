@@ -2210,3 +2210,83 @@ drift (`expo` `57.0.20`→`57.0.21`, `expo-router` `57.0.19`→`57.0.20`), not b
 codebase's TypeScript/ESLint-pinning precedent of not chasing "latest" without a deliberate
 compatibility check first; reported rather than silently fixed or silently ignored.
 
+### Final security/concurrency pass — removing a task-existence oracle, fixing Apply's review semantics
+
+A follow-up security review of the Sync Issues completion pass above found two real defects in
+its own work, both fixed in this same phase rather than carried forward. Recorded here as a
+correction, not by editing the entries above — see `docs/DECISIONS.md`'s own convention of
+adding to a record rather than overwriting it.
+
+**1. The P0002/42501 split (commit `47df0e7`) was a cross-user task-existence oracle.**
+Distinguishing "the row doesn't exist" from "the row exists but isn't yours" sounds like a
+harmless UX nicety, but the caller is an *authenticated* user who can pass any UUID to these
+RPCs, not only their own tasks' ids. A caller who gets a different, distinguishable error for
+"exists (not yours)" versus "doesn't exist" now has a working oracle: probe any UUID and learn
+whether a task with that id exists anywhere in the system, for any user, regardless of
+ownership. That is real information leakage, not a cosmetic detail — enumerable at scale
+against `tasks.id` (a `uuid`, so not practically guessable end-to-end, but the *mechanism*
+itself is the defect regardless of how hard the ids are to guess; the fix doesn't rely on that
+being true). Fixed in `supabase/migrations/20260911120000_remove_task_existence_oracle.sql` —
+a new, additive `create or replace` migration (the P0002 migration itself is never edited in
+place; migrations in this codebase are forward-only, same convention every other phase's fix
+has followed) collapsing "doesn't exist," "belongs to another profile," and "no longer visible
+to the caller" (soft-deleted) back into one outcome — errcode `42501`, one sanitized message
+per function ("task unavailable" / "occurrence unavailable"), byte-for-byte identical for a
+random UUID and another profile's real task/occurrence id.
+`160_sync_issues_resolution_test.sql` proves this directly (not just "both happen to be
+42501," which alone wouldn't rule out a distinguishing message) — a `pg_temp` helper function
+captures the exact `sqlstate || '|' || sqlerrm` for each probe and asserts equality. 42501
+stays reserved for "the caller has no standing on this row at all"; a transition-specific rule
+the caller *is* authorized to know about (e.g. `schedule_personal_task`'s `p_date is
+required`, 22023) is unaffected — it only ever runs once the existence+ownership check has
+already passed. Client-side: `TaskErrorCode`/`RecurrenceErrorCode` drop `'not_found'` entirely
+(both now normalize `42501` to the existing `'forbidden'`), and
+`OfflineSafeErrorCode`'s `'authorization_lost'`/`'entity_deleted'` merge into one
+`'task_unavailable'` — the Sync Issues UI has no way to show these as different outcomes, by
+design, since the server itself never distinguishes them.
+
+**2. `applyMyChange` didn't actually enforce "review before apply."** The completion pass's
+own implementation re-fetched the server row and used *that same fresh fetch* as both the
+version check and the write precondition, in one step — so "review" (opening the comparison
+screen) and "apply" (pressing the button) were only nominally two steps; a write landing in
+the gap between them was silently picked up as the new base without ever being shown to the
+user. This technically satisfied the brief's literal "refetch latest authorized server
+version" instruction but defeated its other instruction in the same section: "if another
+update happened between review and application, remain in Needs review." Fixed by adding
+`OfflineOperation.reviewedVersion` — written only by an actual review action
+(`getConflictComparison`/`reloadServerSnapshot`), never by `applyMyChange` itself. Apply now:
+fetches the current row, and if its `updated_at` doesn't match `reviewedVersion`, refuses to
+mutate, updates `reviewedVersion` to what it just saw (so the *next* explicit Apply has a
+correct baseline), and returns a new `'stale_review'` outcome — the UI shows "This task
+changed again. Review the latest version." and stays on the comparison screen. Only when the
+fetched version *does* match `reviewedVersion` does Apply proceed to replay, at which point
+the RPC's own `40001` precondition check remains the backstop for the one genuinely
+sub-millisecond race that can't be closed any other way (a write landing between Apply's own
+confirming fetch and its own write) — that case returns the existing `'conflict'` outcome,
+distinct from `'stale_review'`. Both are proven independently:
+`syncIssueResolution.test.ts` proves the fetch-to-write race by mocking the RPC call itself to
+reject with `'conflict'` despite the version check having just passed (the standard way to
+test a TOCTOU race deterministically — real concurrent timing can't be reproduced from
+sequential test code); `e2e:offline`'s 14-step scenario proves the stale-review window for
+real, end-to-end, against the real local stack (a second real concurrent write lands after a
+real review, Apply refuses and refreshes, a second real Apply then succeeds). A `pg`
+(node-postgres) raw-transaction-lock trick could in principle force the sub-millisecond race
+deterministically end-to-end too, but `pg` isn't a dependency of this project and adding one
+solely for this one test's exotic timing isn't worth the footprint — same reasoning this
+codebase already applied to the Maestro network-disconnection decision (Phase 9, "Maestro
+policy").
+
+**Verification (this pass)**: `npm run verify` (60 suites/550 tests — 6 new); `supabase db
+reset && supabase test db` (16 files, 530 pgTAP assertions —
+`160_sync_issues_resolution_test.sql` rewritten to 22 assertions proving indistinguishability
+directly); `deno test` for `dispatch-notifications` (11/11, run from
+`supabase/functions` per the documented invocation); `e2e:backend`
+(32/32)/`e2e:notifications` (24/24)/`e2e:calendar` (28/28)/`e2e:recurrence` (23/23) all
+re-confirmed; `e2e:offline` (both concurrency windows) run twice consecutively without a
+database reset, both green; `e2e:realtime` run twice, both green (28/28); `expo config`, both
+`expo export` platforms, `git diff --check` all clean; `expo-doctor` unchanged at 20/21 (same
+pre-existing, unrelated patch-version drift). A stray root-level `deno.lock` (generated by
+running `deno test` from the repo root instead of `supabase/functions` earlier in this same
+session — the real, canonical lockfile is `supabase/functions/deno.lock`, already tracked
+since Phase 6) was deleted and `/deno.lock` added to `.gitignore` to prevent recurrence.
+

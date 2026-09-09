@@ -1,7 +1,7 @@
 ---
 title: Realtime sync and offline resilience
 status: current
-updated: 2026-09-10
+updated: 2026-09-11
 sources:
   - ../../../docs/ARCHITECTURE.md
   - ../../../docs/SECURITY_AND_PRIVACY.md
@@ -12,7 +12,8 @@ sources:
   - ../../raw/sessions/2026-09-09-phase9-realtime-offline-partial.md
   - ../../raw/sessions/2026-09-09-phase9-conflict-center-and-integration-tests.md
   - ../../raw/sessions/2026-09-10-phase9-sync-issues-completion.md
-tags: [engineering, realtime, offline, sync, conflicts, sync-issues, phase9]
+  - ../../raw/sessions/2026-09-11-phase9-final-security-pass.md
+tags: [engineering, realtime, offline, sync, conflicts, sync-issues, security, phase9]
 ---
 
 ## Status: Phase 9, complete
@@ -53,25 +54,40 @@ manual release checklist. Full design/rationale for every decision below:
   `OfflineOperationStatus = 'pending' | 'syncing' | 'retry_wait' | 'conflict' |
   'permanent_failure' | 'discarded'` — see `src/lib/offline/types.ts`'s own doc comment for
   the full transition table.
-- **Sync Issues resolution UX** (completion pass) — `app/sync-issues/index.tsx` (list, oldest
-  first),  `app/sync-issues/[operationId].tsx` (field-level comparison + resolution),
-  `src/lib/offline/syncIssueResolution.ts`/`syncIssueDisplay.ts`. A **separate domain from the
-  Conflict Center**: that screen is schedule conflicts (server-detected,
-  `list_family_conflicts()`); this one is offline-queue synchronization failures (client-side
-  queue state) — never sharing a badge, route, or data source. Four statuses (Waiting to
-  retry / Needs review / Cannot be synchronized / Task no longer available), the brief's exact
-  per-status action set (a stale-write conflict never offers a bare Retry — only Review
-  changes / Reload latest server version), and four resolution flows: **Retry** (reuses the
-  same operationId, joins the existing FIFO worker's singleton guard — never a duplicate
-  concurrent attempt), **Keep server version / Discard** (terminal — the operation is removed,
-  never replays again), **Apply my change** (re-fetches the live server row, reapplies only
-  the original patch's own fields against it as the new `expectedUpdatedAt`, never a derived
-  payload — see "A concurrency nuance" below). `P0002` (no_data_found) was added alongside the
-  existing `40001` convention to distinguish "the row is gone" from `42501` "not yours" across
-  all six affected RPCs — no new server-side "operations" table needed, same reasoning as the
-  queue itself (client-side persisted state; only idempotency/concurrency needs server
-  support). See [DECISIONS.md, "Phase 9" → "Sync Issues resolution UX"](../../../docs/DECISIONS.md)
-  for the full state-machine and resolution-semantics writeup.
+- **Sync Issues resolution UX** (completion pass, then a final security/concurrency pass) —
+  `app/sync-issues/index.tsx` (list, oldest first), `app/sync-issues/[operationId].tsx`
+  (field-level comparison + resolution), `src/lib/offline/syncIssueResolution.ts`/
+  `syncIssueDisplay.ts`. A **separate domain from the Conflict Center**: that screen is
+  schedule conflicts (server-detected, `list_family_conflicts()`); this one is offline-queue
+  synchronization failures (client-side queue state) — never sharing a badge, route, or data
+  source. Four statuses (Waiting to retry / Needs review / Cannot be synchronized / Task no
+  longer available), the brief's exact per-status action set (a stale-write conflict never
+  offers a bare Retry — only Review changes / Reload latest server version), and four
+  resolution flows: **Retry** (reuses the same operationId, joins the existing FIFO worker's
+  singleton guard — never a duplicate concurrent attempt), **Keep server version / Discard**
+  (terminal — the operation is removed, never replays again), **Apply my change** —
+  concurrency-safe against two distinct windows via `OfflineOperation.reviewedVersion` (written
+  only by a review action, never by Apply itself — see "Apply my change's two concurrency
+  windows" below), never touching a field outside the original patch. No new server-side
+  "operations" table needed — the queue itself is client-side persisted state; only
+  idempotency/concurrency needs server support. See
+  [DECISIONS.md, "Phase 9" → "Sync Issues resolution UX" and "Final security/concurrency
+  pass"](../../../docs/DECISIONS.md) for the full state-machine and resolution-semantics
+  writeup.
+- **Final security/concurrency pass — a task-existence oracle found and removed.** A first
+  version of the "task unavailable" work (commit `47df0e7`) distinguished "the row doesn't
+  exist" (a new `P0002` code) from "the row exists but isn't yours" (`42501`) — but an
+  *authenticated* caller can pass any UUID to these RPCs, not only their own, so that
+  distinction let a caller learn whether a task with any given id exists anywhere in the
+  system, for any user, regardless of ownership. A real cross-user information leak, not a
+  cosmetic detail. Fixed (`supabase/migrations/20260911120000_remove_task_existence_oracle.sql`)
+  by collapsing "doesn't exist," "belongs to another profile," and "no longer visible"
+  (soft-deleted) into one outcome — `42501`, one sanitized message, byte-for-byte identical for
+  a random UUID and another profile's real task/occurrence id — proven directly in
+  `160_sync_issues_resolution_test.sql` via a `pg_temp` helper that captures and compares the
+  exact `sqlstate || '|' || sqlerrm` each probe raises. Client-side, `OfflineSafeErrorCode`'s
+  `'authorization_lost'`/`'entity_deleted'` merged into one `'task_unavailable'` to match — the
+  Sync Issues UI has no way to show these as different outcomes, by design.
 - **Sync-status UI** — `src/components/ui/SyncStatusIndicator.tsx`, Synced/Syncing/Pending
   changes: N/Sync issue (+ Retry), mounted next to `OfflineBanner` on
   Today/Tomorrow/Inbox/Calendar. `resolveSyncDisplayState` is the pure precedence function;
@@ -93,11 +109,16 @@ manual release checklist. Full design/rationale for every decision below:
 - **Offline queue integration test** — `src/lib/offline/__e2e__/offlineQueue.e2e.test.ts`
   (`npm run e2e:offline`), driving the production queue against real local RPCs (idempotent
   create-replay, a real stale-write conflict that never overwrites the real row, real
-  cross-account isolation, and — completion pass — a 14-step review/resolve scenario driving
-  the real `syncIssueResolution.ts` functions: stale conflict → server fetch/compare → Keep
-  server version → never replays → a second conflict → Apply my change → only the patched
-  fields change → a further concurrent write → Apply again merges into the live row → a
-  repeat Apply is a safe no-op → zero residue), run twice consecutively, zero residue.
+  cross-account isolation, and a 14-step review/resolve scenario driving the real
+  `syncIssueResolution.ts` functions: stale conflict → server fetch/compare (records
+  `reviewedVersion`) → Keep server version → never replays → a second conflict → review →
+  Apply my change → only the patched fields change → a third conflict → review → a further
+  real concurrent write lands → Apply refuses to mutate ('stale_review', comparison refreshed
+  in place) → an explicit second Apply, nothing else having changed, succeeds → a repeat Apply
+  is a safe no-op → zero residue), run twice consecutively, zero residue. The tighter
+  fetch-to-write race window (a write landing *inside* Apply's own fetch-then-write pair) is
+  proven separately at the unit level — real concurrent timing at that granularity can't be
+  reproduced from sequential test code.
 - **Re-confirmed e2e:backend (32/32) / e2e:notifications (24/24) / e2e:calendar (28/28) /
   e2e:recurrence (23/23, twice)** all still pass after the full client-side Phase 9 change
   set — a real, pre-existing, date-hardcoded bug in `e2e-recurrence.sh` (unrelated to this
@@ -134,20 +155,35 @@ manual release checklist. Full design/rationale for every decision below:
   native-verification bullet above for exactly what was and wasn't attempted; explicitly
   deferred to a Phase 10 manual release checklist by the completion pass's own brief.
 
-## A concurrency nuance worth knowing before touching Apply my change
+## Apply my change's two concurrency windows
 
-The completion brief says both "refetch latest authorized server version" (literally Apply's
-first step) *and* "if another update happened between review and application, remain in Needs
-review — never silently fall back to last-write-wins." As implemented
-(`syncIssueResolution.ts`'s `applyMyChange`), Apply always re-fetches the server row
-immediately before reapplying, using that just-fetched value as the new precondition — so a
-write landing *during* Apply's own fetch-then-write pair is still caught by the RPC's `40001`
-check, but a write landing during the human review window *before* the user presses Apply is
-transparently picked up as the new base rather than re-surfaced for a second review. This was
-a deliberate reading of the brief's own literal step order, documented rather than silently
-picked either way — see [DECISIONS.md](../../../docs/DECISIONS.md) for the full reasoning. If
-a future session decides Apply should instead pin to the exact reviewed version, that's a real
-behavior change, not a bug fix.
+`OfflineOperation.reviewedVersion` (final security/concurrency pass) is written only by a
+review action — `getConflictComparison`/`reloadServerSnapshot` — and read only by
+`applyMyChange`, never written by it except as described below. Two distinct windows, both
+refuse to mutate silently:
+
+1. **Stale review** — a write lands *after* the user's last review, *before* they press
+   Apply. `applyMyChange` fetches the live row, finds its `updated_at` no longer matches
+   `reviewedVersion`, refuses to mutate, updates `reviewedVersion` to what it just fetched (so
+   the *next* Apply has a correct baseline), and returns `{ result: 'stale_review' }` — the UI
+   shows "This task changed again. Review the latest version." and stays on the comparison
+   screen. Fully deterministic and covered end-to-end by `e2e:offline`'s 14-step scenario
+   (a real second concurrent write between a real review and a real Apply attempt).
+2. **Fetch-to-write race** — a write lands *inside* Apply's own fetch-then-write pair (the
+   freshly-fetched version matched `reviewedVersion`, so Apply proceeded to replay, but
+   another write commits before this one does). Caught by the RPC's own `40001` precondition
+   check — `applyMyChange` returns `{ result: 'conflict' }`, distinct from `'stale_review'`.
+   Not reproducible from sequential test code (the window is sub-millisecond, inside a single
+   function call) — proven instead at the unit level in `syncIssueResolution.test.ts` by
+   mocking the RPC call to reject with `'conflict'` despite the version check having just
+   passed, the standard way to test a TOCTOU race deterministically.
+
+Neither window ever falls back to last-write-wins, and Apply only ever sends the fields the
+*original* local patch touched, regardless of which window (if either) fired. See
+[DECISIONS.md](../../../docs/DECISIONS.md), "Final security/concurrency pass," for the full
+writeup, including why an earlier version of this same completion pass didn't actually enforce
+"review before apply" (it re-fetched and used that same fetch as both the check and the write
+precondition, collapsing review and apply into one step).
 
 ## Genuinely non-obvious testing gotchas worth knowing before touching this code
 

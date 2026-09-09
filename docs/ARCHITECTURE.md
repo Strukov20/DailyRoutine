@@ -501,14 +501,22 @@ both under `src/lib/query/` and `src/lib/offline/`, neither reachable from a scr
   non-overlapping and `docs/DATA_MODEL.md`'s note on the operation state machine for the exact
   transitions. Resolution actions (Retry / Keep server version / Apply my change / Discard) go
   through `syncIssueResolution.ts`, which always reuses the operation's own `operationId` —
-  never creates a replacement operation — and, for Apply, re-fetches the live server row
-  immediately before reapplying the original patch as the new `expectedUpdatedAt` precondition
-  (see that file's own doc comment on `applyMyChange` for the resulting concurrency semantics:
-  a write landing *during* the fetch-then-write pair is still caught by the RPC's own
-  `40001` check; a write landing during the human review window beforehand is transparently
-  picked up as the new base rather than re-surfaced for a second review — a deliberate reading
-  of "refetch latest authorized server version" from the brief, flagged for confirmation
-  rather than silently assumed correct).
+  never creates a replacement operation. Apply my change is concurrency-safe against two
+  distinct windows (final security/concurrency pass, `OfflineOperation.reviewedVersion`,
+  written only by a review action — `getConflictComparison`/`reloadServerSnapshot` — never by
+  Apply itself): (1) a write landing *after* the user's last review and *before* they press
+  Apply — Apply re-fetches the live row, finds it no longer matches `reviewedVersion`, refuses
+  to mutate, refreshes the comparison in place, and returns the app to Needs review, requiring
+  an explicit second Apply; (2) a write landing in the split-second *between* that same
+  confirming fetch and Apply's own write — caught by the RPC's own `40001` precondition check,
+  same outcome as any other renewed conflict. Neither window ever falls back to
+  last-write-wins, and Apply only ever sends the fields the *original* local patch touched.
+
+- Every RPC the offline queue replays against is one of the six affected by the "task
+  unavailable" fix below — `taskService.ts`/`recurrenceService.ts` map all of them to a single
+  `forbidden` code, and `offlineQueueReplay.ts`'s `toSafeErrorCode` maps that to
+  `OfflineSafeErrorCode`'s `'task_unavailable'` — the Sync Issues UI has no way to show "this
+  task no longer exists" separately from "you no longer have access," by design.
 
 `queryClient.ts`'s conservative retry defaults (`retry: 1` for queries, `retry: 0` for
 mutations) are unchanged and still apply to the *online* mutation path — the offline queue

@@ -299,12 +299,25 @@ database logs) must follow the same rule once they exist: log row ids, not row c
 - ✅ **Implemented, Phase 9 completion pass**: the Sync Issues screens (`app/sync-issues/`)
   never render a raw Postgres error, SQLSTATE, stack trace, RPC payload, or internal SQL
   identifier — every failure is mapped, at the transport layer
-  (`offlineQueueReplay.ts`'s `toSafeErrorCode`), to one of five generic
+  (`offlineQueueReplay.ts`'s `toSafeErrorCode`), to one of four generic
   `OfflineSafeErrorCode` values before it ever reaches a component, and the comparison screen
   fetches the server side of a stale-write conflict through the same authenticated,
   RLS-governed `getTask()` read every online screen uses — never a cached/trusted snapshot.
   Covered by a dedicated Jest assertion (`SyncIssueCard.test.tsx`, `SyncIssuesScreen.test.tsx`)
   that greps the rendered tree for PostgREST/SQLSTATE-shaped strings and asserts none appear.
+- ✅ **Fixed, Phase 9 final security pass**: `update_personal_task`, `schedule_personal_task`,
+  `complete_personal_task`, `restore_personal_task`, `complete_task_occurrence`, and
+  `restore_task_occurrence` deliberately raise the exact same errcode (`42501`) and message
+  for "this task/occurrence id doesn't exist," "it exists but belongs to another profile,"
+  and "it exists but is no longer visible to the caller" (soft-deleted) — an *authenticated*
+  caller can pass any UUID, not just their own tasks' ids, so distinguishing these (as an
+  earlier completion-pass commit briefly did via a separate `P0002` code) let that caller
+  learn, for any UUID, whether a task with that id exists anywhere in the system at all — a
+  genuine cross-user task-existence oracle, not a cosmetic detail. `160_sync_issues_
+  resolution_test.sql` proves indistinguishability directly: it captures the exact
+  SQLSTATE+message a random (never-existed) UUID and another profile's real task UUID each
+  raise and asserts they are byte-for-byte identical, for every affected RPC. See
+  [DECISIONS.md, "Phase 9"](DECISIONS.md) for the full writeup.
 - ✅ **Implemented in Phase 6, extended in Phase 7**: shared family task and event-
   responsibility assignment notifications (Mechanism 4) — content-free push payloads (ids
   only), server-derived recipients inside the same transaction as the mutation, the
