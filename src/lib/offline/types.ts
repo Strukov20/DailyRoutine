@@ -13,7 +13,14 @@ export type OfflineOperationType =
   | 'schedule_personal_task'
   | 'complete_personal_task'
   | 'restore_personal_task'
-  | 'delete_personal_task';
+  | 'delete_personal_task'
+  // Section 9's own list also names these two — unlike the one-off-task
+  // ops above, complete_task_occurrence/restore_task_occurrence are
+  // already idempotent by construction server-side (a WHERE status = ...
+  // guard, no client_operation_id or expected_updated_at needed — see
+  // docs/DECISIONS.md, "Phase 9").
+  | 'complete_task_occurrence'
+  | 'restore_task_occurrence';
 
 /**
  * Section 10 — every queued op's identity/idempotency fields. Never store

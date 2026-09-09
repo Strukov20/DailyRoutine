@@ -37,15 +37,17 @@ Section 28 final report has been delivered. Full design/rationale for every deci
   `PersistQueryClientProvider`/`createAsyncStoragePersister` pattern. Allowlisted (tasks,
   calendar, families, conflicts, categories only), cleared on real sign-out, never on token
   refresh. See [ARCHITECTURE.md, "Offline & caching (Phase 9)"](../../../docs/ARCHITECTURE.md).
-- **Bounded offline mutation queue** — `src/lib/offline/`, exactly six safe personal-task
+- **Bounded offline mutation queue** — `src/lib/offline/`, the six safe personal-task
   operations (create Inbox task, update/schedule/complete/restore/delete an existing one-off
-  task). Idempotent by design: `client_operation_id` for create-replay,
-  `expected_updated_at` precondition (errcode `40001`) for update/schedule, an op left
-  `'in-flight'` by a crash is retried (not lost or assumed done) on next hydrate, and
-  `remapClientGeneratedId` handles the one real ordering dependency (completing a task
-  created earlier in the same offline session). Wired into
-  `src/domain/tasks/hooks.ts`'s six mutation hooks — offline, each enqueues and applies the
-  same optimistic cache update the online path already used.
+  task) plus recurring-occurrence complete/restore. Idempotent by design: `client_operation_id`
+  for create-replay, `expected_updated_at` precondition (errcode `40001`) for update/schedule,
+  an op left `'in-flight'` by a crash is retried (not lost or assumed done) on next hydrate,
+  and `remapClientGeneratedId` handles the one real ordering dependency (completing a task
+  created earlier in the same offline session). `complete_task_occurrence`/
+  `restore_task_occurrence` needed no new RPC parameters at all — both are already idempotent
+  server-side via a plain `WHERE status = ...` guard. Wired into `src/domain/tasks/hooks.ts`'s
+  six mutation hooks and `src/domain/recurrence/hooks.ts`'s occurrence hooks — offline, each
+  enqueues and applies the same behavior the online path already used.
 - **Sync-status UI** — `src/components/ui/SyncStatusIndicator.tsx`, Synced/Syncing/Pending
   changes: N/Sync issue (+ Retry), mounted next to `OfflineBanner` on
   Today/Tomorrow/Inbox/Calendar. `resolveSyncDisplayState` is the pure precedence function;
@@ -104,9 +106,6 @@ Section 28 final report has been delivered. Full design/rationale for every deci
   today surfaces only as the generic sync-status "Sync issue" + Retry — never a silent
   overwrite, but not yet the brief's dedicated "Sync conflict — this task changed on another
   device" flow with Reload/Review/Discard/Retry actions.
-- **Recurring-occurrence complete/restore in the offline queue.** The brief's Section 9 list
-  named this alongside the six one-off-task operations that are implemented; it was not
-  wired in this pass.
 - **Native network-disconnection testing, account-switch-no-flash, and Android** — see the
   native-verification bullet above for exactly what was and wasn't attempted.
 

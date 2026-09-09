@@ -2094,3 +2094,22 @@ limitation above) without adding coverage beyond what already exists. Deferred, 
 forgotten — if a future phase finds a reliable way to script connectivity loss on this
 Simulator/CI setup, revisit.
 
+### Recurring-occurrence complete/restore joins the offline queue
+
+Closes the one remaining gap in Section 9's own operation list. Unlike the six one-off-task
+operations, `complete_task_occurrence`/`restore_task_occurrence` needed no new RPC parameters
+and no migration change at all — both were already idempotent by construction
+(`update ... where id = ... and status = 'scheduled'|'completed'`, see the Phase 8 migration),
+so a blind retry after a crash or a duplicate delivery was already safe. The queue's
+`OfflineOperationType` union gained two members, `offlineQueueReplay.ts`'s switch gained two
+cases (and its error classification now also recognizes `RecurrenceServiceError`, not only
+`TaskServiceError`), and `src/domain/recurrence/hooks.ts`'s `useCompleteOccurrence`/
+`useRestoreOccurrence` gained the same offline branch the personal-task hooks already have —
+no optimistic UI patch was added here, matching those hooks' own pre-existing "deliberately not
+optimistic" rule (an occurrence's task id repeats across every occurrence of the same series,
+so a client-side guess risks touching the wrong occurrence in another mounted list — see that
+file's own comment). Invalidation after a successful occurrence replay uses the `'recurrence'`
+entity (not `'tasks'`), which already covers `recurrenceKeys.pendingReminders`/
+`scheduledOccurrences` too, so reminder reconciliation re-runs through the same existing
+mechanism without any new wiring.
+

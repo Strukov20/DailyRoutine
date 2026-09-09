@@ -3,6 +3,7 @@ import { onlineManager } from '@tanstack/react-query';
 import { createLogger } from '@/lib/logger/logger';
 import { queryClient } from '@/lib/query/queryClient';
 import { queryKeyPrefixesForEntity } from '@/lib/realtime/invalidationMap';
+import { completeOccurrence, restoreOccurrence, RecurrenceServiceError } from '@/lib/recurrence/recurrenceService';
 import {
   completePersonalTask,
   createPersonalTask,
@@ -80,16 +81,31 @@ async function replayOperation(operation: OfflineOperation): Promise<ReplayOutco
         await deleteOrArchivePersonalTask(operation.entityId);
         break;
       }
+      case 'complete_task_occurrence': {
+        if (!operation.entityId) throw new TaskServiceError('invalid_input', 'missing entityId');
+        await completeOccurrence(operation.entityId);
+        break;
+      }
+      case 'restore_task_occurrence': {
+        if (!operation.entityId) throw new TaskServiceError('invalid_input', 'missing entityId');
+        await restoreOccurrence(operation.entityId);
+        break;
+      }
     }
     return { result: 'succeeded' };
   } catch (error) {
-    const code = error instanceof TaskServiceError ? error.code : 'unknown';
+    const code =
+      error instanceof TaskServiceError || error instanceof RecurrenceServiceError ? error.code : 'unknown';
     return { result: 'failed', code };
   }
 }
 
-function invalidateTaskRelatedQueries(): void {
-  for (const prefix of queryKeyPrefixesForEntity('tasks')) {
+/** 'recurrence' covers occurrence-scoped ops too (tasks/calendar/recurrence/conflicts — see invalidationMap.ts); everything else only ever needs the narrower 'tasks' set. */
+function invalidateAfterReplay(operationType: OfflineOperation['operationType']): void {
+  const entity = operationType === 'complete_task_occurrence' || operationType === 'restore_task_occurrence'
+    ? 'recurrence'
+    : 'tasks';
+  for (const prefix of queryKeyPrefixesForEntity(entity)) {
     void queryClient.invalidateQueries({ queryKey: prefix as unknown[] });
   }
 }
@@ -132,7 +148,7 @@ export function runOfflineQueueReplay(): Promise<void> {
               .remapClientGeneratedId(next.clientGeneratedId, outcome.createdEntityId);
           }
           await useOfflineQueueStore.getState().removeOperation(next.operationId);
-          invalidateTaskRelatedQueries();
+          invalidateAfterReplay(next.operationType);
           continue;
         }
 

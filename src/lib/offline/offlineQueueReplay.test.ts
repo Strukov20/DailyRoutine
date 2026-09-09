@@ -32,6 +32,18 @@ jest.mock('@/lib/tasks/taskService', () => {
   };
 });
 
+const mockCompleteOccurrence = jest.fn();
+const mockRestoreOccurrence = jest.fn();
+
+jest.mock('@/lib/recurrence/recurrenceService', () => {
+  const actual = jest.requireActual('@/lib/recurrence/recurrenceService');
+  return {
+    ...actual,
+    completeOccurrence: (...args: unknown[]) => mockCompleteOccurrence(...args),
+    restoreOccurrence: (...args: unknown[]) => mockRestoreOccurrence(...args),
+  };
+});
+
 function fakeOp(overrides: Partial<OfflineOperation> = {}): OfflineOperation {
   return {
     operationId: 'op-1',
@@ -203,5 +215,44 @@ describe('runOfflineQueueReplay', () => {
     await Promise.all([first, second]);
 
     expect(mockCreatePersonalTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('replays a queued recurring-occurrence completion against the real occurrence RPC', async () => {
+    mockCompleteOccurrence.mockResolvedValue(undefined);
+    await useOfflineQueueStore
+      .getState()
+      .enqueue(fakeOp({ operationType: 'complete_task_occurrence', entityId: 'occ-1' }));
+
+    await runOfflineQueueReplay();
+
+    expect(mockCompleteOccurrence).toHaveBeenCalledWith('occ-1');
+    expect(useOfflineQueueStore.getState().operations).toHaveLength(0);
+  });
+
+  it('replays a queued recurring-occurrence restore against the real occurrence RPC', async () => {
+    mockRestoreOccurrence.mockResolvedValue(undefined);
+    await useOfflineQueueStore
+      .getState()
+      .enqueue(fakeOp({ operationType: 'restore_task_occurrence', entityId: 'occ-1' }));
+
+    await runOfflineQueueReplay();
+
+    expect(mockRestoreOccurrence).toHaveBeenCalledWith('occ-1');
+    expect(useOfflineQueueStore.getState().operations).toHaveLength(0);
+  });
+
+  it('classifies a RecurrenceServiceError the same way a TaskServiceError is classified (permanent vs. retry)', async () => {
+    const { RecurrenceServiceError } = jest.requireActual('@/lib/recurrence/recurrenceService');
+    mockCompleteOccurrence.mockRejectedValue(new RecurrenceServiceError('forbidden', 'nope'));
+    await useOfflineQueueStore
+      .getState()
+      .enqueue(fakeOp({ operationType: 'complete_task_occurrence', entityId: 'occ-1' }));
+
+    await runOfflineQueueReplay();
+
+    expect(useOfflineQueueStore.getState().operations[0]).toMatchObject({
+      status: 'failed',
+      lastSafeErrorCode: 'forbidden',
+    });
   });
 });

@@ -909,3 +909,26 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     itself explains why network-disconnection specifically was deferred to `e2e:offline`
     rather than attempted via Maestro.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-09T15:00:00Z — Phase 9 continued: recurring-occurrence complete/restore joins the offline queue
+
+- **Operation type:** feature (closes a previously tracked gap) + test + wiki update.
+  Autonomous-loop tick — continuing this same session's own explicitly-tracked "Not done yet"
+  list, not new/invented scope.
+- **Wiki pages updated:**
+  [`engineering/realtime-sync-and-offline.md`](engineering/realtime-sync-and-offline.md) —
+  the offline-queue "Done" bullet extended to cover occurrence complete/restore; the matching
+  "Not done yet" item removed.
+- **Canonical docs updated:** `docs/DECISIONS.md` — new subsection under the Phase 9 entry
+  explaining why this needed no migration/RPC change at all (the occurrence RPCs were already
+  idempotent by construction) and why no optimistic UI patch was added (matches the existing
+  "deliberately not optimistic" rule for occurrence mutations, which predates Phase 9).
+- **Decisions/contradictions recorded:** none — this closes a gap this same session had
+  already identified and recorded, without discovering a new contradiction.
+- **Verified:** `npm run verify` — 55 suites, 463 tests (7 new: 3 in
+  `offlineQueueReplay.test.ts` covering the two new replay cases plus `RecurrenceServiceError`
+  classification, 4 in a new `src/domain/recurrence/hooks.test.tsx` covering the offline/online
+  branch and the bounded-queue error case), lint/typecheck/wiki:lint all clean.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

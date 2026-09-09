@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/lib/auth/AuthProvider';
+import { useOfflineQueueStore } from '@/lib/offline/offlineQueueStore';
+import type { OfflineOperation, OfflineOperationType } from '@/lib/offline/types';
+import { useIsOffline } from '@/lib/query/useIsOffline';
 import {
   completeOccurrence,
   createRecurringTask,
@@ -10,6 +13,7 @@ import {
   listAllPendingReminders,
   listAllScheduledOccurrences,
   listTaskReminders,
+  RecurrenceServiceError,
   rescheduleOccurrence,
   restoreOccurrence,
   skipOccurrence,
@@ -42,6 +46,35 @@ export const recurrenceKeys = {
   pendingReminders: (profileId: string) => ['recurrence', 'pending-reminders', profileId] as const,
   scheduledOccurrences: (profileId: string) => ['recurrence', 'scheduled-occurrences', profileId] as const,
 };
+
+/**
+ * Phase 9, Section 9 — enqueues an offline occurrence operation. Simpler
+ * than the one-off-task queue helper in src/domain/tasks/hooks.ts:
+ * complete/restore_task_occurrence are already idempotent server-side (a
+ * WHERE status = ... guard), so no clientGeneratedId or
+ * expectedUpdatedAt precondition is needed here.
+ */
+async function enqueueOfflineOccurrenceOperation(
+  profileId: string,
+  operationType: OfflineOperationType,
+  occurrenceId: string,
+): Promise<boolean> {
+  const operation: OfflineOperation = {
+    operationId: crypto.randomUUID(),
+    profileId,
+    operationType,
+    entityId: occurrenceId,
+    clientGeneratedId: null,
+    payload: {},
+    expectedUpdatedAt: null,
+    createdAt: new Date().toISOString(),
+    attemptCount: 0,
+    status: 'pending',
+    lastSafeErrorCode: null,
+  };
+  const result = await useOfflineQueueStore.getState().enqueue(operation);
+  return result.ok;
+}
 
 function invalidateTaskAndRecurrenceLists(queryClient: ReturnType<typeof useQueryClient>, profileId?: string): void {
   void queryClient.invalidateQueries({ queryKey: ['tasks'] });
@@ -78,11 +111,22 @@ export function useStopRecurringSeries() {
   });
 }
 
+const OFFLINE_QUEUE_FULL_MESSAGE =
+  'Too many changes are waiting to sync — connect to the internet to catch up before making more.';
+
 export function useCompleteOccurrence() {
   const queryClient = useQueryClient();
   const { profile } = useAuth();
+  const isOffline = useIsOffline();
   return useMutation({
-    mutationFn: (occurrenceId: string) => completeOccurrence(occurrenceId),
+    mutationFn: async (occurrenceId: string) => {
+      if (isOffline && profile) {
+        const accepted = await enqueueOfflineOccurrenceOperation(profile.id, 'complete_task_occurrence', occurrenceId);
+        if (!accepted) throw new RecurrenceServiceError('unknown', OFFLINE_QUEUE_FULL_MESSAGE);
+        return;
+      }
+      return completeOccurrence(occurrenceId);
+    },
     onSuccess: () => invalidateTaskAndRecurrenceLists(queryClient, profile?.id),
   });
 }
@@ -90,8 +134,16 @@ export function useCompleteOccurrence() {
 export function useRestoreOccurrence() {
   const queryClient = useQueryClient();
   const { profile } = useAuth();
+  const isOffline = useIsOffline();
   return useMutation({
-    mutationFn: (occurrenceId: string) => restoreOccurrence(occurrenceId),
+    mutationFn: async (occurrenceId: string) => {
+      if (isOffline && profile) {
+        const accepted = await enqueueOfflineOccurrenceOperation(profile.id, 'restore_task_occurrence', occurrenceId);
+        if (!accepted) throw new RecurrenceServiceError('unknown', OFFLINE_QUEUE_FULL_MESSAGE);
+        return;
+      }
+      return restoreOccurrence(occurrenceId);
+    },
     onSuccess: () => invalidateTaskAndRecurrenceLists(queryClient, profile?.id),
   });
 }
