@@ -16,7 +16,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   name: APP_INFO.productName,
   slug: APP_INFO.slug,
   scheme: APP_INFO.scheme,
-  version: '0.1.0',
+  // Expo/EAS account this project builds under — confirmed by the repo
+  // owner (Phase 10B; personal account, not the bombastiiics-team org).
+  // Explicit rather than left to whichever account happens to be logged
+  // in locally, since @bombastiiic/familyflow must resolve unambiguously
+  // for `eas init`/`eas build`.
+  owner: 'bombastiiic',
+  version: '1.0.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
@@ -27,6 +33,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     ...config.ios,
     supportsTablet: true,
     bundleIdentifier: APP_INFO.bundleIdentifier,
+    // Confirmed by the repo owner (Phase 10B) as the initial beta build
+    // number, matching version 1.0.0 above. `eas.json`'s production
+    // profile has autoIncrement:true, so this is only the starting point.
+    buildNumber: '1',
   },
   android: {
     ...config.android,
@@ -76,5 +86,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   extra: {
     ...config.extra,
+    // Set by `eas init --account bombastiiic` (Phase 10B) — could not be
+    // auto-written since this is a dynamic (app.config.ts) config; added
+    // manually per the CLI's own printed instructions. Read at runtime by
+    // src/lib/notifications/notificationService.ts's getExpoProjectId().
+    eas: {
+      projectId: 'de243f7f-c6ad-4537-a799-621d645baf31',
+    },
   },
 });
