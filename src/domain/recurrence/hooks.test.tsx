@@ -126,6 +126,7 @@ describe('Phase 9 — offline queueing for recurring occurrences', () => {
         clientGeneratedId: null,
         payload: {},
         expectedUpdatedAt: null,
+        reviewedVersion: null,
         createdAt: new Date().toISOString(),
         attemptCount: 0,
         status: 'pending' as const,

@@ -91,7 +91,6 @@
   },
   "errors": {
     "forbidden": "You don't have permission to do that.",
-    "notFound": "This task no longer exists.",
     "invalidInput": "That's not a valid value for this task.",
     "conflict": "This task's assignment just changed — pull to refresh and try again.",
     "generic": "Something went wrong. Please try again."

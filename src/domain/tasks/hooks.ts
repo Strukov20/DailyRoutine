@@ -166,6 +166,7 @@ async function enqueueOfflineOperation(
     clientGeneratedId,
     payload,
     expectedUpdatedAt,
+    reviewedVersion: null,
     createdAt: new Date().toISOString(),
     attemptCount: 0,
     status: 'pending',

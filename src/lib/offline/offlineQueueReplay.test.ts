@@ -53,6 +53,7 @@ function fakeOp(overrides: Partial<OfflineOperation> = {}): OfflineOperation {
     clientGeneratedId: 'client-1',
     payload: { title: 'Buy milk' },
     expectedUpdatedAt: null,
+    reviewedVersion: null,
     createdAt: new Date().toISOString(),
     attemptCount: 0,
     status: 'pending',
@@ -136,7 +137,7 @@ describe('runOfflineQueueReplay', () => {
     expect(ops[0]).toMatchObject({
       operationId: 'op-1',
       status: 'permanent_failure',
-      lastSafeErrorCode: 'authorization_lost',
+      lastSafeErrorCode: 'task_unavailable',
     });
     expect(mockRestorePersonalTask).toHaveBeenCalledWith('task-2');
   });
@@ -161,8 +162,8 @@ describe('runOfflineQueueReplay', () => {
     expect(mockUpdatePersonalTask).toHaveBeenCalledTimes(1);
   });
 
-  it('marks a not-found failure as "entity_deleted"', async () => {
-    mockUpdatePersonalTask.mockRejectedValue(new TaskServiceError('not_found', 'gone'));
+  it('marks a "not found" (forbidden — never a distinct not_found code) failure as "task_unavailable", indistinguishable from any other forbidden cause', async () => {
+    mockUpdatePersonalTask.mockRejectedValue(new TaskServiceError('forbidden', 'task unavailable'));
     await useOfflineQueueStore
       .getState()
       .enqueue(fakeOp({ operationType: 'update_personal_task', entityId: 'task-1' }));
@@ -171,7 +172,7 @@ describe('runOfflineQueueReplay', () => {
 
     expect(useOfflineQueueStore.getState().operations[0]).toMatchObject({
       status: 'permanent_failure',
-      lastSafeErrorCode: 'entity_deleted',
+      lastSafeErrorCode: 'task_unavailable',
     });
   });
 
@@ -270,7 +271,7 @@ describe('runOfflineQueueReplay', () => {
 
     expect(useOfflineQueueStore.getState().operations[0]).toMatchObject({
       status: 'permanent_failure',
-      lastSafeErrorCode: 'authorization_lost',
+      lastSafeErrorCode: 'task_unavailable',
     });
   });
 });

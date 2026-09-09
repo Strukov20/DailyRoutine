@@ -58,18 +58,16 @@ export type OfflineOperationStatus =
 /**
  * A safe (never-raw-Postgres) classification of *why* an operation needs
  * attention — set only once status is 'conflict' or 'permanent_failure'.
- * Maps 1:1 to the brief's five "issue types": 'conflict' -> stale-write
- * conflict, 'permanent_validation' -> permanent validation failure,
- * 'authorization_lost' -> authorization loss, 'entity_deleted' -> deleted
- * entity, 'unknown' -> a transient-looking failure that exhausted its
- * retry budget (Section 3's "Transient failure," once retries run out).
+ * 'conflict' -> stale-write conflict, 'permanent_validation' -> permanent
+ * validation failure, 'task_unavailable' -> the task no longer exists,
+ * belongs to another profile, or is no longer visible to this caller
+ * (deliberately one merged outcome — the RPC layer itself never
+ * distinguishes these to avoid a cross-user task-existence oracle; see
+ * docs/DECISIONS.md, "Phase 9," final security pass), 'unknown' -> a
+ * transient-looking failure that exhausted its retry budget (Section 3's
+ * "Transient failure," once retries run out).
  */
-export type OfflineSafeErrorCode =
-  | 'conflict'
-  | 'permanent_validation'
-  | 'authorization_lost'
-  | 'entity_deleted'
-  | 'unknown';
+export type OfflineSafeErrorCode = 'conflict' | 'permanent_validation' | 'task_unavailable' | 'unknown';
 
 /**
  * Section 10 — every queued op's identity/idempotency fields. Never store
@@ -86,8 +84,22 @@ export interface OfflineOperation<TPayload = unknown> {
   /** Stable id an offline-created task is optimistically rendered under before the server assigns entityId. */
   clientGeneratedId: string | null;
   payload: TPayload;
-  /** Optimistic-concurrency precondition for update/schedule — the task's updated_at as last read by this client. Refreshed in place by "Apply my change" (Section 5) — never a new operation. */
+  /** Optimistic-concurrency precondition for update/schedule — the task's updated_at as last read by this client. Never mutated by a review/comparison fetch — only a *successful* replay (first attempt or an Apply that actually wrote) moves this forward, always to the exact server value that attempt used. */
   expectedUpdatedAt: string | null;
+  /**
+   * The server row's `updated_at` as it was when the user last *viewed* the
+   * comparison screen for this conflict (set by `getConflictComparison`/
+   * `reloadServerSnapshot`, never by `applyMyChange` itself) — final
+   * security/concurrency pass. "Apply my change" is only ever allowed to
+   * proceed when a fresh fetch's version still matches this value; a
+   * mismatch means the row changed again after the user's last review and
+   * before they pressed Apply, so Apply refuses to mutate and the user
+   * must explicitly review the newer version before trying again. `null`
+   * whenever the operation isn't a reviewed conflict (never set for a
+   * transient/permanent-validation issue, and cleared once the conflict
+   * resolves).
+   */
+  reviewedVersion: string | null;
   createdAt: string;
   attemptCount: number;
   status: OfflineOperationStatus;
@@ -101,8 +113,7 @@ export const MAX_OFFLINE_QUEUE_SIZE = 200;
 /** A permanent failure (never retried automatically again) vs. one worth retrying. */
 export const PERMANENT_FAILURE_CODES: ReadonlySet<OfflineSafeErrorCode> = new Set([
   'permanent_validation',
-  'authorization_lost',
-  'entity_deleted',
+  'task_unavailable',
   'conflict',
 ]);
 

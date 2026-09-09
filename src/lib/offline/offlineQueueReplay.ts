@@ -37,15 +37,22 @@ export type ReplayOutcome =
   | { result: 'succeeded'; createdEntityId?: string }
   | { result: 'failed'; code: OfflineSafeErrorCode };
 
-/** Maps the transport layer's own error taxonomy onto the queue's safe, user-facing vocabulary (Sync Issues completion pass). */
+/**
+ * Maps the transport layer's own error taxonomy onto the queue's safe,
+ * user-facing vocabulary (Sync Issues completion pass). 'forbidden' covers
+ * every one of the RPC layer's deliberately-merged "task unavailable"
+ * cases (doesn't exist / belongs to someone else / no longer visible) —
+ * see docs/DECISIONS.md, "Phase 9," final security pass, for why the RPCs
+ * themselves never distinguish these (a distinct code would let an
+ * offline replay's error surface the same cross-user existence oracle the
+ * server-side fix removed).
+ */
 function toSafeErrorCode(code: TaskErrorCode | RecurrenceErrorCode): OfflineSafeErrorCode {
   switch (code) {
     case 'conflict':
       return 'conflict';
-    case 'not_found':
-      return 'entity_deleted';
     case 'forbidden':
-      return 'authorization_lost';
+      return 'task_unavailable';
     case 'invalid_input':
       return 'permanent_validation';
     case 'unknown':

@@ -67,6 +67,7 @@ async function enqueueOfflineOccurrenceOperation(
     clientGeneratedId: null,
     payload: {},
     expectedUpdatedAt: null,
+    reviewedVersion: null,
     createdAt: new Date().toISOString(),
     attemptCount: 0,
     status: 'pending',

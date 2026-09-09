@@ -17,6 +17,7 @@ function fakeOp(operationId: string, profileId: string): OfflineOperation {
     clientGeneratedId: 'client-1',
     payload: { title: 'Buy milk' },
     expectedUpdatedAt: null,
+    reviewedVersion: null,
     createdAt: new Date().toISOString(),
     attemptCount: 0,
     status: 'pending',
