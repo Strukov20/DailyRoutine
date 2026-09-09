@@ -2454,3 +2454,102 @@ theming," above — and passed). `expo-doctor` unchanged at 20/21 (the same pre-
 `expo`/`expo-router` patch-version drift noted in Phase 9, not introduced this phase).
 `git diff --check` clean.
 
+## Phase 10B corrective pass (hosted lint findings)
+
+**Status**: complete. Staging (project ref `ocurkeddkqkeitjfbcbe`, `eu-west-1`) was linked and
+all 22 prior migrations deployed to it before this pass began — this section covers only the
+narrow fix that followed a `supabase db lint` run against that hosted project. No other Stage
+B work (Auth, Edge Functions, EAS) was touched.
+
+### Root cause: an IMMUTABLE function silently routing through two STABLE overloads
+
+`compute_next_occurrence_date` (Phase 8) was declared `immutable` and, on the local instance
+used throughout Phase 8/9/10A, behaved that way in every test written against it. The hosted
+linter (and, reproduced locally via `supabase db lint --local --level warning`, the identical
+finding) flagged two expressions inside it as `STABLE`. Both were real, verified directly
+against a local Postgres instance, not assumed from the warning text:
+
+- **Daily branch**: `(p_interval || ' days')::interval` concatenates a computed string and
+  casts it to `interval` at runtime — that cast invokes `interval_in`, which
+  `pg_proc.provolatile` shows is `STABLE`, not `IMMUTABLE`. The monthly/yearly branches'
+  `interval '1 month - 1 day'` *typed literal* syntax was never flagged, because Postgres
+  parses that form into a `Const` at parse time — no runtime function call at all, so
+  `interval_in`'s classification never enters into it. That asymmetry (identical-looking
+  interval usage, only one form flagged) is what made this non-obvious from reading the
+  function alone.
+- **Weekly branch**: `date_trunc('week', v_candidate)`, where `v_candidate` is `date`. No
+  `date_trunc(text, date)` overload exists in Postgres; both `date → timestamp` and
+  `date → timestamptz` are implicit casts (`pg_cast.castcontext = 'i'`), so the call is
+  ambiguous between the `IMMUTABLE` `date_trunc(text, timestamp)` overload and the `STABLE`
+  `date_trunc(text, timestamptz)` one. Postgres's overload resolver breaks the tie by
+  preferring the *preferred type* of the shared type category (`pg_type.typispreferred` —
+  confirmed directly: `timestamptz` is preferred in the datetime category, `timestamp` is
+  not), so the call silently resolved to the `STABLE`, session-timezone-dependent overload.
+
+Both were checked for *actual* behavioral impact, not just classification, by running the
+exact same calls under three session timezones (UTC, `Pacific/Kiritimati` at UTC+14, `Etc/
+GMT+12` at UTC−12 — the two most extreme real IANA offsets) before writing any fix: the
+computed *values* were already timezone-invariant in every case, because the round-trip
+through a session timezone is self-consistent for whole-day arithmetic with no time-of-day
+component. That is exactly why this had never been caught by any prior test — nothing was
+observably wrong. But "happens to be timezone-invariant today, unprovably" is not the same
+guarantee as "genuinely immutable," and Postgres's own documentation is explicit that calling
+a `STABLE` function from a routine declared `IMMUTABLE` is the programmer's responsibility, not
+something the planner checks — a future caller relying on the declared contract (a functional
+index, a generated column, cross-timezone plan caching) would be relying on an accidental
+invariant with no structural guarantee behind it.
+
+### Fix: rewrite to remove the STABLE dependency entirely, don't reclassify the function
+
+`STABLE` was rejected as a fix — nothing in this function actually depends on "the current
+query's" transaction-scoped state; every input is a plain, fully-determined argument. Declaring
+it `STABLE` would have been a strictly less honest fix: correct enough to silence the linter,
+but wrong about what the function actually is, and it would also have made
+`generate_task_occurrences` (the sole caller) less inlining/optimization-friendly for no reason.
+Instead, both call sites were rewritten to avoid the ambiguous/STABLE path structurally:
+
+- Daily: `p_after + make_interval(days => p_interval)` — `make_interval` is `IMMUTABLE`
+  (confirmed via `pg_proc`) and needs no string parsing at all.
+- Weekly: `date_trunc('week', v_candidate::timestamp)` — the explicit cast forces the
+  unambiguous `IMMUTABLE` overload instead of letting the resolver pick the preferred-but-wrong
+  one.
+
+Both rewrites were confirmed via `EXPLAIN (VERBOSE, COSTS OFF)` to constant-fold when given
+literal arguments (the practical signature of a genuinely immutable expression chain) and
+produce byte-identical output to the prior expressions across every case
+`140_recurring_tasks_reminders_test.sql` already exercised, plus new dedicated coverage in
+`190_hosted_lint_fixes_test.sql` (24 assertions): monthly skip-invalid-anchor, yearly leap-day
+skip, weekly interval-boundary snapping, deterministic repeated calls, identical results across
+three session timezones, the still-zero-grants regression check, and the real caller path
+(`create_recurring_personal_task` → `generate_task_occurrences`) end to end for the two
+frequencies whose arithmetic changed.
+
+### Two unrelated unused-variable warnings, same pass
+
+`set_responsibility_assignment` (`v_event_id`, selected but never read — `r.event_id` is still
+used in the join condition itself, just never selected out) and `update_event` (`v_family_id`,
+selected but never read — this RPC authorizes via `owner_profile_id` alone) both had one dead
+local variable each, almost certainly a copy-paste artifact from a shape that once needed it.
+Both removed with no behavior change; both functions' full behavior remains covered by
+`050_events_and_responsibilities_test.sql`/`120_family_calendar_test.sql` (re-run, unchanged),
+plus one direct smoke assertion each added to `190_hosted_lint_fixes_test.sql` for locality.
+
+### No index, generated column, or other dependent assumption to check
+
+Checked directly (`pg_index`/`pg_get_indexdef` for any reference to the function; `pg_attribute
+.attgenerated` for any generated column anywhere in the database) before writing the fix: zero
+matches outside Supabase's own vendor schemas (`realtime`/`storage`/`auth`, unrelated). The
+function has zero grants (`revoke all ... from public, anon, authenticated`, unchanged by this
+pass) and exactly one caller (`generate_task_occurrences`), so the blast radius of changing its
+internals was already structurally small before any fix was chosen.
+
+**Verification**: `npx supabase db reset` (23 migrations, clean) + `npx supabase test db` — 19
+files, 602 pgTAP assertions (up from 18/578; new `190_hosted_lint_fixes_test.sql`, 24
+assertions). `npx supabase db lint --local --level warning` — clean, zero findings (all three
+prior warnings gone, no new ones). `npm run verify` — 65 suites/576 tests unchanged (no client
+code touched this pass), wiki:lint clean. `npx supabase db push --dry-run` against the linked
+staging project — reports exactly one pending migration
+(`20260912140100_fix_hosted_lint_warnings.sql`), confirming local/remote parity is otherwise
+intact. The real `supabase db push` was never run this pass, per explicit instruction — the
+migration exists locally and is ready to deploy whenever the repo owner approves that step.
+

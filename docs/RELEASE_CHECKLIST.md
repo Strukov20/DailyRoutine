@@ -20,22 +20,24 @@ what's pending, and why — never claims a layer was verified when it wasn't.
 | Environment separation | ✅ Done | [DEPLOYMENT.md, "0. Environments (Phase 10)"](DEPLOYMENT.md); `EXPO_PUBLIC_APP_ENV` already fails closed. |
 | `eas.json` build profiles | ✅ Configured, not linked | Four profiles (`development-simulator`, `development-device`, `preview`, `production`). No EAS project linked. |
 | Security audit (DB + client + deps) | ✅ Done, this pass | See "Security audit results" below. |
-| Automated test suite | ✅ Green | 65 Jest suites / 576 tests; 18 pgTAP files / 578 assertions; 11/11 Deno; 4 backend e2e suites (32+24+28+23); offline (5) and realtime (28) e2e suites each run twice consecutively with zero residue. |
+| Automated test suite | ✅ Green | 65 Jest suites / 576 tests; 19 pgTAP files / 602 assertions; 11/11 Deno; 4 backend e2e suites (32+24+28+23); offline (5) and realtime (28) e2e suites each run twice consecutively with zero residue. |
 | Native local build checks | ✅ Green | `expo config --type public`, `expo export --platform ios`, `expo export --platform android`, `expo-doctor` (20/21, pre-existing unrelated patch drift), `git diff --check`. |
 | Documentation + LLM Wiki | ✅ Updated, this pass | See each doc's own Phase 10 section; wiki update recorded in `knowledge/wiki/log.md`. |
 
-## Stage B — Operator-Assisted Deployment and Device Validation: pending
+## Stage B — Operator-Assisted Deployment and Device Validation: in progress
 
-None of the following has been attempted. Each requires the repo owner's direct action — an
-account, a credential, a cost approval, or physical hardware this environment does not have.
-Nothing below should be read as "tested and passing on a smaller scale" — it has not been
-exercised at all.
+The hosted Supabase staging project now exists and is linked — the first real Stage B step.
+Everything else below is still not attempted and still requires the repo owner's direct
+action — an account, a credential, a cost approval, or physical hardware this environment does
+not have. Nothing below should be read as "tested and passing on a smaller scale" unless
+explicitly marked done.
 
 | Area | Status | What's needed |
 | --- | --- | --- |
-| Hosted Supabase staging project | ⏳ Not created — confirmed needed | See "Next Stage B step" below for the walkthrough (not yet executed). |
+| Hosted Supabase staging project | ✅ Linked | Project ref `ocurkeddkqkeitjfbcbe`, region `eu-west-1`. All 22 prior migrations deployed with confirmed Local/Remote parity; one further migration (`20260912140100_fix_hosted_lint_warnings.sql`, a narrow corrective pass — see [DECISIONS.md, "Phase 10B corrective pass"](DECISIONS.md)) exists locally, verified via `db push --dry-run`, and is ready to deploy but **has not been pushed** — the real `supabase db push` was deliberately not run this pass. |
+| Hosted schema lint | ✅ Clean | `supabase db lint --local --level warning` (which reproduces the hosted linter's findings) now reports zero issues, after fixing two unused-variable warnings and a real `IMMUTABLE`-declared-but-`STABLE`-routed bug in `compute_next_occurrence_date` — see [DECISIONS.md](DECISIONS.md) for the full root-cause analysis. |
 | EAS project link / credentials | ⏳ Not created | Expo account/org still needed (unanswered); `eas init`, iOS signing credential generation (Apple). Android deferred — see Platform target below. |
-| Real device push notifications | ⏳ Not verified | A hosted Supabase project, a linked EAS project, and a physical iOS device — see [DEPLOYMENT.md, "4–11"](DEPLOYMENT.md). |
+| Real device push notifications | ⏳ Not verified | A linked EAS project and a physical iOS device — see [DEPLOYMENT.md, "4–11"](DEPLOYMENT.md). The hosted Supabase project itself is now in place. |
 | Native beta test matrix — **iOS physical** | ⏳ Not run | A physical iOS device; see [BETA_TESTING.md](BETA_TESTING.md) for the exact matrix. Android rows deferred by the platform-target decision below, not dropped. |
 | TestFlight build | ⏳ Not built | Apple Developer account, approved EAS Build/Submit. Play Internal Testing deferred (Android not in scope for the first beta round). |
 | Beta tag (`v0.1.0-beta.1` suggested) | ⏳ Not created | Explicit operator approval of the exact commit, after Stage B validation. |
@@ -62,38 +64,36 @@ Answered 2026-09-09:
 5. Platform target — **iOS only for now**. Do not spend Stage B effort on an Android EAS
    build/credential/TestFlight-equivalent until iOS is through the matrix and the repo owner
    says to add Android.
-6. Hosted Supabase staging project — **does not exist; needs to be created.** This is the next
-   concrete Stage B step once the repo owner is ready — see "Next Stage B step," below, for
-   the walkthrough (not yet executed).
+6. Hosted Supabase staging project — **done.** Linked (ref `ocurkeddkqkeitjfbcbe`,
+   `eu-west-1`); 22 migrations deployed; a 23rd (corrective, not new functionality) exists
+   locally and is verified via `db push --dry-run` but **not yet pushed** — see "Next Stage B
+   step," below.
 
-## Next Stage B step: creating the hosted Supabase staging project
+## Next Stage B step: push the corrective migration, then EAS
 
-Not yet executed — presented here per this phase's own Stage B protocol (state what it does,
-why, the cost, the credential, verification, and rollback, before doing it). Requires the repo
-owner to actually click through the Supabase dashboard; this cannot be scripted from here
-without a Supabase account access token, which has not been provided and should not be pasted
-into chat.
+Not yet executed. The corrective migration
+(`20260912140100_fix_hosted_lint_warnings.sql`) is ready — `npx supabase db push --dry-run`
+confirms it as the only pending change and that local/remote are otherwise in parity — but the
+real `npx supabase db push` was deliberately not run this pass, per explicit instruction to
+stop after the dry run. Running the real push is a small, low-risk action (a function-body
+replacement, no schema/data change, no `DROP`), but it is still a write to the hosted database
+and therefore still requires the repo owner's go-ahead before it happens, consistent with every
+other Stage B action in this document.
 
-- **What**: create a new Supabase project (a Postgres database + Auth + Realtime + Storage +
-  Edge Functions, hosted by Supabase) dedicated to staging — never the same project used for
-  production once one exists, per [DEPLOYMENT.md, "0. Environments"](DEPLOYMENT.md).
-- **Why**: Stage B (real device push, real Realtime across devices, a real staging-hosted
-  auth/deep-link flow) has no backend to run against without this.
-- **How**: [supabase.com/dashboard](https://supabase.com/dashboard) → New Project → choose an
-  org, a project name (suggest `familyflow-staging`), a database password (generate and store
-  it in a password manager, never in this repo), and a region close to the beta testers.
-- **Cost**: Supabase's free tier covers a small beta's usage; no payment method is required to
-  create a free-tier project. Confirm current pricing on Supabase's own pricing page before
-  proceeding if this matters to you — this document is not the source of truth for their
-  pricing.
-- **Credentials produced**: a project URL, an anon/publishable key (safe for the client), and a
-  service-role/secret key (never goes in the client, never in this repo — see
-  [DEPLOYMENT.md](DEPLOYMENT.md) for exactly where each belongs).
-- **Verification**: the dashboard shows the project as active; `npx supabase projects list`
-  (after `supabase login`) shows it.
-- **Rollback**: deleting an unused Supabase project from its dashboard settings is
-  straightforward and reversible in the sense that no other system depends on it yet at this
-  stage — do this before any migration has been deployed to it if you change your mind.
+- **What**: `npx supabase db push` (no `--dry-run`) against the linked staging project —
+  applies exactly the one migration listed above.
+- **Why**: keeps the hosted schema's lint-clean state in sync with what's already verified
+  locally; nothing downstream (EAS, real device testing) depends on this specifically, but
+  leaving hosted and local out of sync invites confusion later.
+- **Verification**: `npx supabase migration list` afterward shows Local/Remote parity again;
+  re-running `npx supabase db lint --local --level warning` (or the hosted equivalent) stays
+  clean.
+- **Rollback**: a new forward-only migration restoring the prior function bodies — never edit
+  or delete the applied migration file, per this repo's standing convention.
+
+After that, the next Stage B items are EAS project linking (needs the still-unanswered Expo
+account/org) and, once a physical iOS device is available, the native beta matrix in
+[BETA_TESTING.md](BETA_TESTING.md).
 
 Once this project exists, the next steps are `supabase link`, comparing local vs. remote
 migrations, and deploying — all covered in [DEPLOYMENT.md](DEPLOYMENT.md), none of it run yet.

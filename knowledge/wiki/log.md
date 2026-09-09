@@ -1107,3 +1107,54 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
   patch-version drift). No hosted project, EAS project, or physical device was touched — Stage
   B remains entirely pending, honestly reported as such in every doc updated this pass.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-09T00:00:00Z — Phase 10B: hosted lint corrective pass
+
+- **Operation type:** bug fix (three `supabase db lint` findings against the newly linked
+  hosted staging project) — a narrow corrective pass, explicitly scoped by the user to stop
+  short of any further Stage B step (Auth, Edge Functions, EAS).
+- **Source material:** [`knowledge/raw/sessions/
+  2026-09-09-phase10b-hosted-lint-corrective-pass.md`](../raw/sessions/2026-09-09-phase10b-hosted-lint-corrective-pass.md).
+- **Wiki pages updated:** `engineering/recurring-tasks-and-reminders.md` — new note on
+  `compute_next_occurrence_date` (previously undocumented in the wiki despite existing since
+  Phase 8), covering the root cause and the fix; its "Testing" section updated with the new
+  pgTAP file.
+- **Canonical docs updated:** `docs/DECISIONS.md` (new "Phase 10B corrective pass" section —
+  the full empirical root-cause writeup: `pg_proc.provolatile`/`pg_cast`/
+  `pg_type.typispreferred` queried directly, not assumed from the lint message), 
+  `docs/TEST_STRATEGY.md` (pgTAP counts 18/578 → 19/602; a new "Conventions established" bullet
+  on verifying an `IMMUTABLE` claim via cross-session-timezone testing, not just
+  `EXPLAIN`-based constant-fold checks — the planner trusts the declared volatility either way),
+  `docs/RELEASE_CHECKLIST.md` (staging project now marked linked; the corrective migration
+  marked dry-run-verified but not yet pushed for real).
+- **Decisions/contradictions recorded:** none new.
+- **One real bug found and fixed**: `compute_next_occurrence_date` (Phase 8) was declared
+  `IMMUTABLE` but silently routed two expressions through `STABLE` overloads — a runtime
+  string-to-`interval` cast (`interval_in`, genuinely `STABLE` by Postgres's own
+  classification) in the daily branch, and an ambiguous `date_trunc` overload resolution
+  (Postgres's resolver prefers `timestamptz` over `timestamp` for a bare `date` argument, via
+  `pg_type.typispreferred`) in the weekly branch. Verified, before writing any fix, that the
+  actual computed values were already timezone-invariant in every case tested (UTC, UTC+14,
+  UTC−12) — this had never been caught by any prior test because nothing was observably wrong,
+  only unprovably contracted. Fixed by removing the `STABLE` dependency structurally
+  (`make_interval` instead of string parsing; an explicit `::timestamp` cast to force the
+  correct `date_trunc` overload) rather than reclassifying the function as `STABLE`, which
+  would have been less accurate and would have pessimized the planner's handling of the
+  function's sole caller for no reason. Two unrelated dead-variable warnings
+  (`set_responsibility_assignment`'s `v_event_id`, `update_event`'s `v_family_id`) were also
+  fixed in the same migration — trivial, no behavior change, confirmed by both direct
+  inspection and the existing 050/120 test files continuing to pass unchanged.
+- **Verified:** `npx supabase db reset` (23 migrations, clean). `npx supabase test db` — 19
+  files, 602 pgTAP assertions (new `190_hosted_lint_fixes_test.sql`, 24 assertions — monthly/
+  yearly/weekly/daily correctness unchanged, deterministic repeated calls, identical results
+  across three session timezones, still-zero-grants, and the real
+  `create_recurring_personal_task` → `generate_task_occurrences` caller path end to end).
+  `npx supabase db lint --local --level warning` — zero findings (was 3; reproduces the hosted
+  linter's output exactly). `npm run verify` — 65 suites/576 tests unchanged, wiki:lint clean.
+  `npx supabase db push --dry-run` against the linked staging project (ref
+  `ocurkeddkqkeitjfbcbe`) — exactly one pending migration, local/remote otherwise in parity.
+  The real `supabase db push` was never run this pass, per explicit instruction; the Supabase
+  CLI (2.116.0) was not updated.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
