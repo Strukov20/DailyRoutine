@@ -21,8 +21,16 @@ tags: [engineering, realtime, offline, sync, conflicts, sync-issues, security, p
 All sections of the phase's own brief are built and verified, including the completion pass's
 Sync Issues resolution UX (the phase's last "Not done yet" item, now done — see below). Only
 device-hardware-dependent scenarios are deferred, explicitly and non-blockingly, to a Phase 10
-manual release checklist. Full design/rationale for every decision below:
-[DECISIONS.md, "Phase 9"](../../../docs/DECISIONS.md).
+manual release checklist — see
+[`docs/RELEASE_CHECKLIST.md`](../../../docs/RELEASE_CHECKLIST.md) and
+[`docs/BETA_TESTING.md`](../../../docs/BETA_TESTING.md) for that checklist itself, now written.
+Full design/rationale for every decision below: [DECISIONS.md, "Phase 9"](../../../docs/DECISIONS.md).
+
+**Phase 10 addendum**: `families` had no broadcast trigger of its own (unlike
+`family_members`); `delete_family` (see [Family Spaces](../domain/family-spaces.md)) now calls
+the same `emit_invalidation` helper this mechanism is built on, so family deletion invalidates
+every affected device the same way any other family-scoped change does — no new client-side
+code needed.
 
 ## Done and verified
 

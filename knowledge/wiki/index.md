@@ -1,7 +1,7 @@
 ---
 title: LLM Wiki index
 status: current
-updated: 2026-09-08
+updated: 2026-09-09
 sources: []
 tags: [index]
 ---
@@ -41,7 +41,7 @@ For a one-off lookup, prefer `rg <term> knowledge/wiki` over reading this whole 
   testability limitation (Phase 8)
 - [Realtime sync and offline resilience](engineering/realtime-sync-and-offline.md) —
   Broadcast-based Realtime, the persisted read cache, the bounded offline mutation queue, and
-  the sync-status UI — **in progress (Phase 9), tracks done vs. not-done**
+  the sync-status UI — **Phase 9, complete**
 - [Testing strategy](engineering/testing-strategy.md) — what's tested, what isn't yet
 - [Development workflow](engineering/development-workflow.md) — git rules, CI, **the
   mandatory wiki read/update workflow** — read this once, it governs how every other page

@@ -2290,3 +2290,167 @@ running `deno test` from the repo root instead of `supabase/functions` earlier i
 session — the real, canonical lockfile is `supabase/functions/deno.lock`, already tracked
 since Phase 6) was deleted and `/deno.lock` added to `.gitignore` to prevent recurrence.
 
+## Phase 10 (MVP Stabilization, Deployment, and Beta Release)
+
+**Status**: Stage A (Local Release Readiness) complete on `release/mvp-beta`, branched from
+`develop` after confirming Phase 9 was merged (PR #10) and the tree was clean. Stage B
+(hosted staging deployment, EAS/TestFlight/Play builds, physical-device validation) requires
+external accounts, credentials, and hardware this environment does not have, and per this
+phase's own explicit "never claim a layer was verified when it was not" instruction is
+reported as pending/blocked, not attempted, rather than extrapolated from local evidence — see
+`docs/RELEASE_CHECKLIST.md` for the itemized breakdown.
+
+### Family ownership transfer: write ordering is dictated by an existing trigger and index, not chosen freely
+
+`assert_family_owner_consistency` (Phase 2) validates — never syncs — that `families.owner_id`
+matches the single `family_members` row with `role = 'owner'`, and fires on `family_members`
+INSERT/UPDATE whenever `new.role = 'owner'`, requiring `families.owner_id` to already equal
+`new.profile_id` at that point. Combined with the unique partial index
+`family_members_one_owner_per_family` on `(family_id) where role = 'owner'` (which forbids two
+simultaneous owner rows, even for an instant), the only write order that satisfies both inside
+one transaction is: (1) update `families.owner_id` to the new owner first, (2) demote the old
+owner's `family_members.role` to `'adult'`, (3) promote the new owner's `family_members.role`
+to `'owner'`. Any other order either fails the trigger outright or (if the trigger were
+somehow bypassed) would briefly violate the one-owner invariant. `transfer_family_ownership`
+follows this order exactly; the append-only `family_ownership_transfers` table records the
+outcome (previous/new owner member ids, who performed the transfer, when) without granting any
+write access beyond `SELECT` to family members.
+
+### Anonymize the `profiles` row, never hard-delete `auth.users`
+
+`request_account_deletion` does not delete `auth.users` or `profiles`. It anonymizes the
+`profiles` row in place (`display_name` → a generic "Deleted user" string, `avatar_url` →
+null, `deleted_at` set) and leaves every other reference to that profile id intact. A true hard
+delete of `auth.users` would need to first resolve every non-cascading foreign key that points
+at the profile (`tasks.owner_profile_id`, `events.owner_profile_id`, `families.owner_id`, and
+others) — deleting or reassigning that entire dependency graph is a substantially larger,
+riskier change than this phase's release-safety scope calls for, and doing it as a rushed side
+effect of a self-service deletion flow risks silently breaking family-shared content other
+members still depend on. The anonymize-in-place approach is documented as the interim, correct
+behavior; a future `SECURITY DEFINER` Edge Function using the Supabase Admin API
+(`admin.deleteUser()`) is the anticipated actual `auth.users`-purging step once this RPC's
+anonymization has already run — deliberately not implemented or deployed this phase (Stage B
+scope, and even then, an external action requiring explicit approval).
+
+A direct consequence: on account deletion, only the caller's **private** tasks/events are
+soft-deleted. **Family-shared** tasks/events the caller still owns are left alone — the
+profile row stays valid (anonymized, not gone), so `owner_profile_id` remains a valid
+reference and other family members keep whatever access RLS already granted them (an assigned
+shared task, a shared event with responsibilities). Soft-deleting shared content the deleting
+user happened to have created would orphan it for people still relying on it, which the
+"private vs. family" visibility distinction (`docs/PRODUCT.md`) exists specifically to avoid
+conflating.
+
+### Column-scoped UPDATE grants close the raw-client bypass the new RPCs would otherwise leave open
+
+Both `families` and `profiles` previously had a blanket `UPDATE` grant to `authenticated`.
+With `deleted_at` added to both tables, that blanket grant would let any client bypass every
+safety check in `delete_family`/`request_account_deletion` with a bare
+`supabase.from('families').update({ deleted_at: now })` call — including the "never leave a
+family without an owner" guard, which lives entirely in the RPC, not in a constraint. Both
+grants were narrowed to explicit column lists (`grant update (name) on families`; `grant
+update (display_name, avatar_url, preferred_language, preferred_color_scheme) on profiles`)
+that exclude `deleted_at` (and, for `families`, `owner_id`) — the only way to move either
+column is now through a `SECURITY DEFINER` RPC. This is the same "choke point, not a
+convention" pattern the RLS helper functions already establish for reads, applied here to a
+specific pair of writes.
+
+### The no-existence-oracle discipline (Phase 9) extended to family members
+
+`transfer_family_ownership` returns the identical `42501` "target member unavailable" whether
+the supplied member id doesn't exist at all, belongs to a different family, or was already
+removed from this one — the same reasoning as Phase 9's task-existence-oracle fix, applied
+here because this RPC is callable with an arbitrary target id and a distinguishable error
+would let a caller enumerate other families' membership.
+
+### Two real regressions caught and fixed this phase — both from redefining functions without checking for later revisions
+
+`is_family_member`/`is_family_owner`/`current_family_ids` needed a `f.deleted_at is null`
+condition added so a deleted family becomes immediately unreachable through every RLS policy
+that funnels through them (which is effectively all family-scoped policies in this schema —
+the whole point of the choke-point pattern). The first draft of this migration was written
+against the *original* Phase 2 definitions of these three functions, silently dropping the
+`fm.removed_at is null` condition Phase 5 had already added — this regressed 5 pre-existing
+pgTAP assertions (a removed member's immediate loss of access) before `supabase test db`
+caught it. Separately, the new internal helper `_remove_or_leave_family_member` was created
+with only a comment describing intent to revoke public execute access, not an actual `REVOKE`
+statement — Supabase's default-privilege bootstrap auto-grants `EXECUTE` to `anon`/
+`authenticated` at function-creation time regardless, which broke the schema-wide anon-execute
+regression guard (`130_security_regression_test.sql`) until the explicit `revoke all ... from
+public, anon, authenticated` was added. Both are now recorded here as a standing lesson for
+this codebase: **before any `create or replace function` on an existing function, grep every
+migration for the latest prior definition, not the one first encountered** — a later
+`create or replace` earlier in this same phase's own reading isn't guaranteed to be caught by
+simply remembering an earlier session's notes.
+
+### `delete_family` needed its own Realtime broadcast — `families` has no trigger of its own
+
+Unlike `family_members`, which already broadcasts through
+`broadcast_family_member_change_trigger`, the `families` table has no equivalent trigger.
+Without an explicit call, deleting a family would leave every other member's already-open
+session unaware until their next unrelated query happened to invalidate the right cache key.
+`delete_family` now calls the existing `emit_invalidation` helper directly — once for the
+family topic, once per member's own profile topic — so the same `useRealtimeSync` client
+mechanism Phase 9 built picks it up with no new client-side code.
+
+### `Alert.alert` requires a spy-and-invoke test pattern — nothing in this codebase's tests had exercised it before
+
+React Native's native `Alert.alert()` never renders into the React Native Testing Library
+component tree, so `fireEvent.press` can't reach its buttons. The pattern established this
+phase (used in `FamilyScreen.test.tsx`'s delete/leave confirmations): `jest.spyOn(Alert,
+'alert')`, read the `buttons` array off the spy's last call
+(`alertSpy.mock.calls.at(-1)?.[2]`), and invoke the desired button's `onPress` inside
+`act(async () => { ... })`. A Cancel button with no `onPress` (relying on native
+dismiss-by-default, the existing convention in this codebase's confirmation dialogs) can't be
+"pressed" this way — the corresponding test instead asserts the button exists with
+`style: 'cancel'` and that no destructive call fired. Recorded here since any future
+Alert-based confirmation in this codebase will need the same pattern.
+
+A real, if narrow, test-hygiene bug surfaced while writing the second such test file
+(`FamilyMemberDetailScreen.test.tsx`, covering the "Make family owner" button — a screen this
+codebase had zero prior test coverage of): omitting `await` on `fireEvent.press` (this
+installed RNTL version's own requirement — see the "Verification" conventions this file
+already documents) did not fail the offending test itself, but left React's `act()` scope
+unbalanced in a way that only manifested as an "overlapping act() calls" warning and an empty
+render tree on the *next* test's `render()` call — a one-test failure masquerading as two,
+neither of which pointed at its actual cause. Fixed by awaiting every `fireEvent.press` call,
+consistent with the existing convention; recorded here because the failure mode (a correct
+test, an unrelated-looking failure two tests later) is exactly the kind of thing worth knowing
+in advance rather than re-discovering.
+
+### Environment separation and `eas.json`: configuration only, no linking or building performed
+
+`EXPO_PUBLIC_APP_ENV` was already a Zod enum (`'local' | 'staging' | 'production'`, default
+`'local'`) that throws at startup on an invalid value (pre-Phase-10) — it already satisfied
+this phase's "fail closed" requirement without changes. What Phase 10 added is `eas.json`
+(four build profiles: `development-simulator`, `development-device`, `preview` for internal
+distribution, `production` for store builds with `autoIncrement: true`) and a "three
+environments" table in `docs/DEPLOYMENT.md` (Local/Staging-Beta/Production), plus a documented
+safety-gate checklist for any future hosted smoke-test script (explicit project reference,
+explicit environment name, reject unknown URLs, reject production without a deliberate
+override, synthetic-only test data, cleanup trap, no broad deletion queries). No EAS project
+was linked, no credentials were generated, and no hosted Supabase project was created this
+phase — all of that is Stage B, gated on explicit operator approval per the brief's own stop
+conditions.
+
+**Verification (this pass)**: `npm run verify` — lint, typecheck, 65 Jest suites/576 tests
+(new this pass: `FamilyMemberDetailScreen.test.tsx`, 6 tests — see the `Alert.alert` note
+above for the real test-hygiene bug it surfaced and fixed — plus `profileService.test.ts`, 5
+tests, and 3 new RPC-wiring/error-normalization tests added to the existing
+`familyService.test.ts` for `transferFamilyOwnership`/`deleteFamily`/`leaveFamily`, closing a
+gap where these three new mutations had no direct unit coverage of their own), and `wiki:lint`
+(19 articles) all green. `npx supabase db reset` applied all 24 migrations cleanly (3 new this phase); `npx
+supabase test db` — 18 files, 578 pgTAP assertions, all green (`170_release_safety_test.sql`
+new, 40 assertions; `180_task_category_guard_test.sql` new, 8 assertions). `deno test` for
+`dispatch-notifications` — 11/11, unchanged. `e2e:backend`
+(32/32), `e2e:notifications` (24/24), `e2e:calendar` (28/28), `e2e:recurrence` (23/23) all
+re-confirmed green, unchanged by this phase. `e2e:offline` (5/5) and `e2e:realtime` (28/28)
+each run twice consecutively without a database reset in between, both fully green both times
+— proving replay/broadcast idempotency holds, not just single-run success. `expo config
+--type public` and both `expo export --platform ios`/`--platform android` all exited clean
+(the iOS export in particular is this repo's specific regression guard for the
+`expo-router`-vs-`@react-navigation/native` theming-import class of bug — see "Navigation
+theming," above — and passed). `expo-doctor` unchanged at 20/21 (the same pre-existing
+`expo`/`expo-router` patch-version drift noted in Phase 9, not introduced this phase).
+`git diff --check` clean.
+

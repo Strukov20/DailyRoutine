@@ -1,7 +1,7 @@
 ---
 title: Testing strategy
 status: current
-updated: 2026-09-08
+updated: 2026-09-09
 sources:
   - ../../../docs/TEST_STRATEGY.md
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
@@ -16,8 +16,40 @@ sources:
   - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
   - ../../raw/sessions/2026-09-08-phase8-final-validation.md
   - ../../raw/sessions/2026-09-08-phase8-production-cleanup.md
-tags: [engineering, testing, phase8]
+  - ../../raw/sessions/2026-09-09-phase10-release-stabilization.md
+tags: [engineering, testing, phase10]
 ---
+
+## Note: this page's per-suite detail stops at Phase 8; current totals below are Phase 10
+
+Phase 9 (Realtime sync, offline resilience, Sync Issues) and Phase 9's completion pass added
+substantial test coverage — the real local Realtime WebSocket suite (`e2e:realtime`, 28
+assertions), the real offline-queue integration suite (`e2e:offline`, 5 tests, including the
+stale-review concurrency window), and `150_realtime_offline_conflicts_test.sql`/
+`160_sync_issues_resolution_test.sql` — that was never backfilled into this page's own
+per-phase narrative below (a wiki-maintenance gap from that phase, not a Phase 10 change).
+See [`docs/TEST_STRATEGY.md`](../../../docs/TEST_STRATEGY.md) for the accurate, current
+picture in the meantime, and
+[Realtime sync and offline resilience](realtime-sync-and-offline.md) for that suite's design.
+**Current totals as of Phase 10**: 65 Jest suites / 576 tests; 18 pgTAP files / 578 assertions;
+11/11 Deno; `e2e:backend` 32/32, `e2e:notifications` 24/24, `e2e:calendar` 28/28,
+`e2e:recurrence` 23/23; `e2e:offline` and `e2e:realtime` each run twice consecutively with zero
+residue.
+
+**Phase 10 additions**: `170_release_safety_test.sql` (40 assertions — the four family-
+lifecycle RPCs) and `180_task_category_guard_test.sql` (8 assertions — cross-family category
+guard); `src/components/family/{FamilyScreen,FamilyMemberDetailScreen}.test.tsx` and
+`src/components/profile/ProfileScreen.test.tsx` (the `Alert.alert`/typed-confirmation UI);
+`src/lib/profile/profileService.test.ts` (new) and 3 new tests in the existing
+`familyService.test.ts` for the three new RPC wrappers. Two testing-convention findings, both
+recorded in full in [`docs/TEST_STRATEGY.md`](../../../docs/TEST_STRATEGY.md)'s "Conventions
+established" list: **(1)** `Alert.alert()` never renders into the RNTL tree — spy on it
+(`jest.spyOn(Alert, 'alert')`), read the `buttons` array off the spy's last call, invoke the
+target button's `onPress` inside `act(async () => {...})`. **(2)** The "unawaited `act()`
+corrupts a later test" failure mode already documented below (Phase 9) recurred via an
+unawaited `fireEvent.press` specifically — same fix (always `await` it), but the trigger
+wasn't obviously the same bug at first glance, so it's called out again rather than assumed
+covered by the existing bullet.
 
 ## Confirmed / current
 
@@ -341,3 +373,7 @@ npm run verify       # lint + typecheck + test + wiki:lint
 - [Family calendar](family-calendar.md) — what's covered and explicitly deferred for Phase 7
 - [Recurring tasks and reminders](recurring-tasks-and-reminders.md) — the fake-scheduler
   suite, and the full live-Maestro `<Menu>` diagnostic evidence
+- [Realtime sync and offline resilience](realtime-sync-and-offline.md) — Phase 9's own test
+  suites, not yet narrated in this page's per-phase detail above
+- [Family Spaces](../domain/family-spaces.md) — the Phase 10 RPCs `170_release_safety_test.sql`
+  covers
