@@ -365,11 +365,16 @@ select lives_ok(
   'archiving an already-archived task is a safe no-op (idempotent)'
 );
 
+-- Phase 9 final security pass ("Sync Issues" — see docs/DECISIONS.md): a
+-- soft-deleted task raises the same 42501 "unavailable" every other RPC
+-- caller sees for a task they don't own — deliberately indistinguishable,
+-- never a distinct P0002 (that earlier split was a cross-user existence
+-- oracle, removed).
 select throws_ok(
   format($$ select public.complete_personal_task(%L) $$, :'inbox_task_id'),
   '42501',
   null,
-  'an archived task is treated as gone by every other RPC (cannot complete it)'
+  'an archived task is treated as unavailable by every other RPC (cannot complete it)'
 );
 
 select throws_ok(

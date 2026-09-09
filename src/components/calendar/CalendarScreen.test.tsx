@@ -18,6 +18,14 @@ import CalendarScreen from '../../../app/(app)/calendar';
 
 initI18n();
 
+// Phase 9 — the screen now also renders SyncStatusIndicator, which pulls
+// in the offline queue store and therefore AsyncStorage; same convention
+// as persistedQueryClient.test.ts.
+jest.mock('@react-native-async-storage/async-storage', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
+
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
@@ -65,6 +73,14 @@ const MEMBERS: FamilyMember[] = [
 jest.mock('@/domain/family/hooks', () => ({
   useActiveFamily: () => ({ activeFamily: { id: 'f1', name: 'Test Family' } }),
   useFamilyMembers: () => ({ data: MEMBERS }),
+}));
+
+// Phase 9 — the screen now also sources its Conflict Center entry-point
+// badge from this hook; a static empty result keeps this file focused on
+// the calendar behavior it actually tests (see ConflictsScreen.test.tsx
+// for Conflict-Center-specific coverage).
+jest.mock('@/domain/conflicts/hooks', () => ({
+  useFamilyConflicts: () => ({ data: [], isLoading: false, isError: false, isFetching: false, refetch: jest.fn() }),
 }));
 
 const mockOwnEventsState = {

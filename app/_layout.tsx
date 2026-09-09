@@ -1,6 +1,7 @@
 import { Stack, router, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -10,7 +11,9 @@ import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { initI18n } from '@/i18n';
 import { AuthProvider, useAuth } from '@/lib/auth/AuthProvider';
 import { useNotificationResponseRouter } from '@/lib/notifications/notificationResponseRouter';
+import { useOfflineQueueSync } from '@/lib/offline/useOfflineQueueSync';
 import { QueryProvider } from '@/lib/query/QueryProvider';
+import { useRealtimeSync } from '@/lib/realtime/useRealtimeSync';
 import { useReminderNotificationActions } from '@/lib/reminders/useReminderNotificationActions';
 import { useReminderReconciliation } from '@/lib/reminders/useReminderReconciliation';
 import { useUIStore } from '@/store/uiStore';
@@ -25,13 +28,13 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <AppThemeProvider>
-          <QueryProvider>
-            <AuthProvider>
+          <AuthProvider>
+            <QueryProvider>
               <ErrorBoundary>
                 <RootNavigator />
               </ErrorBoundary>
-            </AuthProvider>
-          </QueryProvider>
+            </QueryProvider>
+          </AuthProvider>
         </AppThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
@@ -40,6 +43,8 @@ export default function RootLayout() {
 
 function RootNavigator() {
   const theme = useAppTheme();
+  const { t } = useTranslation('conflicts');
+  const { t: tSyncIssues } = useTranslation('syncIssues');
   const { status } = useAuth();
   const pendingInviteToken = useUIStore((state) => state.pendingInviteToken);
   const setPendingInviteToken = useUIStore((state) => state.setPendingInviteToken);
@@ -59,6 +64,16 @@ function RootNavigator() {
   // server-push one useNotificationResponseRouter handles above).
   useReminderReconciliation();
   useReminderNotificationActions(status === 'signed-in');
+  // Phase 9 — the single Realtime sync manager (see
+  // src/lib/realtime/useRealtimeSync.ts): owns subscribe/unsubscribe
+  // lifecycle for the profile/family broadcast channels and drives
+  // TanStack Query invalidation on generic invalidation messages. Mounted
+  // once here, never from an individual screen.
+  useRealtimeSync();
+  // Phase 9 — the bounded offline mutation queue's own lifecycle (see
+  // src/lib/offline/useOfflineQueueSync.ts). Mounted once here, never from
+  // a screen.
+  useOfflineQueueSync();
 
   // A signed-out visitor who opened an invitation deep link
   // (app/invite/[token].tsx) was sent to sign in/up with no way to carry
@@ -128,6 +143,12 @@ function RootNavigator() {
           <Stack.Screen name="event/new" options={{ presentation: 'modal', headerShown: true }} />
           <Stack.Screen name="event/[id]" options={{ headerShown: true }} />
           <Stack.Screen name="event/[id]/edit" options={{ presentation: 'modal', headerShown: true }} />
+          <Stack.Screen name="conflicts" options={{ title: t('title'), headerShown: true }} />
+          <Stack.Screen name="sync-issues/index" options={{ title: tSyncIssues('title'), headerShown: true }} />
+          <Stack.Screen
+            name="sync-issues/[operationId]"
+            options={{ title: tSyncIssues('comparison.title'), headerShown: true }}
+          />
         </Stack.Protected>
         <Stack.Screen name="index" />
         <Stack.Screen name="reset-password" />

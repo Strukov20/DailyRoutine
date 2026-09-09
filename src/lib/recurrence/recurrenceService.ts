@@ -24,6 +24,11 @@ const logger = createLogger('recurrence-service');
 export type RecurrenceErrorCode = 'forbidden' | 'invalid_input' | 'unknown';
 
 const CODE_BY_SQLSTATE: Record<string, RecurrenceErrorCode> = {
+  // complete_task_occurrence/restore_task_occurrence deliberately raise the
+  // *same* 42501 for "the occurrence doesn't exist" and "it exists but
+  // belongs to another profile" — see taskService.ts's own comment and
+  // docs/DECISIONS.md, "Phase 9," for why a distinct "not found" code was
+  // a cross-user existence oracle and was removed.
   '42501': 'forbidden',
   '22023': 'invalid_input',
 };

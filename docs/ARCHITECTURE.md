@@ -108,14 +108,23 @@ supabase/                  See docs/DATA_MODEL.md and docs/SECURITY_AND_PRIVACY.
 GestureHandlerRootView
  └─ SafeAreaProvider
      └─ AppThemeProvider          (Paper + navigation theme + useAppTheme())
-         └─ QueryProvider          (TanStack Query)
-             └─ ErrorBoundary
-                 └─ Stack           (Expo Router)
+         └─ AuthProvider           (session state)
+             └─ QueryProvider      (TanStack Query + Phase 9 persisted cache, keyed by profile id)
+                 └─ ErrorBoundary
+                     └─ Stack       (Expo Router)
 ```
 
-`initI18n()` runs once at module scope in `app/_layout.tsx`, before the first render — i18next
-resources are bundled, not fetched, so this is synchronous and there is no "translations not
-ready yet" flash.
+`AuthProvider` wraps `QueryProvider` (flipped from the pre-Phase-9 order) because the
+persisted-cache provider needs the signed-in profile id to partition its storage key and to
+remount on account switch — see "Offline & caching (Phase 9)" below. `initI18n()` runs once at
+module scope in `app/_layout.tsx`, before the first render — i18next resources are bundled,
+not fetched, so this is synchronous and there is no "translations not ready yet" flash.
+
+`RootNavigator` (inside the tree above) also mounts three lifecycle-only hooks that render
+nothing: `useReminderReconciliation()` (Phase 8), `useRealtimeSync()` and
+`useOfflineQueueSync()` (both Phase 9, see their own sections below) — each owns a
+subscribe/unsubscribe or hydrate/replay lifecycle for the whole app and is never called from
+an individual screen.
 
 ## Authentication
 
@@ -431,17 +440,99 @@ functions the diagnostic exercised (`requestNotificationPermission`, `reconcileR
 `expoLocalScheduler`, `useReminderNotificationActions`) are unaffected by its removal — none of
 them depended on the diagnostic screen; it only called them.
 
-## Offline & caching (current state, not the V2 design)
+## Realtime sync (Phase 9)
 
-TanStack Query's in-memory cache gives cached reads of the last successfully loaded data for
-the lifetime of the app process; **no persistence layer (e.g., `persistQueryClient` +
-AsyncStorage) is wired up yet**, so "offline reads survive an app restart" is not true today
-and this document should not be read as claiming it is. `queryClient.ts`'s conservative retry
-defaults (`retry: 1` for queries, `retry: 0` for mutations) exist because, right now, most
-failures are "no backend configured" rather than a transient network blip — aggressive
-retries would just delay showing the real error state. See [ROADMAP.md](ROADMAP.md),
-"Offline behavior," for the V2 design (persistence + conflict resolution rules) this should
-grow into.
+`src/lib/realtime/useRealtimeSync.ts` is the single Realtime lifecycle manager, mounted once
+in `RootNavigator` — no screen or hook subscribes to a channel directly. It subscribes to the
+signed-in profile's own `profile:<id>` topic plus a `family:<id>` topic for every family it
+currently belongs to (Supabase Broadcast over private, RLS-gated channels — see
+[SECURITY_AND_PRIVACY.md, "Mechanism 3"](SECURITY_AND_PRIVACY.md) for the authorization
+design), unsubscribes on family-membership change, removes every channel on logout/account
+switch and on unmount, and re-subscribes any channel that silently died while backgrounded on
+foreground return. Auth-token sync onto the Realtime client needs no manual wiring —
+supabase-js already listens for its own auth state changes and calls `realtime.setAuth()`.
+
+A broadcast is a generic `{version, scope, entity, operation}` message, never row content —
+`src/lib/realtime/invalidationMap.ts` validates it (zod `safeParse`, ignoring anything
+malformed or unrecognized) and maps `entity` to a fixed table of query-key prefixes, which
+`useRealtimeSync` then `invalidateQueries` against (coalesced over a 300ms window so one RPC's
+several table writes collapse into one invalidation pass per prefix). This is the app's one
+centralized entity → query-key mapping — no component invalidates its own queries in response
+to a broadcast.
+
+## Offline & caching (Phase 9)
+
+TanStack Query owns server state as before, now with two Phase 9 additions layered on top —
+both under `src/lib/query/` and `src/lib/offline/`, neither reachable from a screen directly:
+
+- **Persistent read cache** — `PersistQueryClientProvider` +
+  `createAsyncStoragePersister` (the officially supported pattern, not a bespoke one),
+  wired in `src/lib/query/QueryProvider.tsx`. Persists an explicit allowlist only
+  (`PERSISTED_QUERY_KEY_PREFIXES` in `persistedQueryClient.ts`: tasks, calendar, families,
+  conflicts, categories), partitioned per signed-in profile id (the whole provider subtree
+  remounts by `key={profile.id}` on account switch — necessary because TanStack's restore
+  bookkeeping is tied to the provider instance, not just the persister prop), versioned via a
+  cache-buster, bounded by a 24h `maxAge`, and cleared on real sign-out
+  (`AuthProvider.tsx`'s `SIGNED_OUT` branch — never on a mere token refresh). Requires
+  `AuthProvider` to wrap `QueryProvider` (`app/_layout.tsx`), the reverse of the pre-Phase-9
+  order, since the persister needs to know the signed-in profile id.
+- **Bounded offline mutation queue** — `src/lib/offline/`, scoped to exactly eight *safe
+  personal-task* operations (create an Inbox task, update/schedule/complete/restore/delete an
+  existing one-off task, plus complete/restore of a single recurring occurrence); family/
+  shared mutations remain disabled offline with a clear message, never queued. Each operation
+  carries a stable id that doubles as the create RPC's idempotency key, and update/schedule
+  carry an `expectedUpdatedAt` precondition the RPC checks server-side (errcode `40001`) — a
+  queued edit never silently overwrites a change made elsewhere; it surfaces as a `'conflict'`
+  operation status, resolved through the Sync Issues screen below rather than a bare Retry.
+  `runOfflineQueueReplay` (`offlineQueueReplay.ts`) is a single FIFO worker triggered by auth
+  restoration, NetInfo reconnect, app foreground, and manual Retry
+  (`useOfflineQueueSync.ts`); an operation left `'syncing'` by a crash mid-replay is reset
+  to `'retry_wait'` on the next hydrate rather than assumed lost or done, since every queued
+  RPC is safe to retry blindly. See [DECISIONS.md, "Phase 9"](DECISIONS.md) for the full
+  design and [ROADMAP.md](ROADMAP.md), "Offline behavior," which this now implements.
+- **Sync Issues resolution UX** (`app/sync-issues/index.tsx`, `app/sync-issues/
+  [operationId].tsx`, `src/lib/offline/syncIssueResolution.ts`, `syncIssueDisplay.ts`) — the
+  operator-facing side of the queue above: a list of every operation that has failed at least
+  once (`retry_wait` / `conflict` / `permanent_failure`, via `selectSyncIssues`), and a
+  detail/comparison screen for reviewing and resolving one. Deliberately a **separate domain
+  from the Conflict Center** (`app/conflicts.tsx`) — that screen is schedule conflicts
+  (overlapping events/tasks, unassigned responsibilities), this one is synchronization
+  failures; see [DECISIONS.md, "Phase 9"](DECISIONS.md) for why the brief treats these as
+  non-overlapping and `docs/DATA_MODEL.md`'s note on the operation state machine for the exact
+  transitions. Resolution actions (Retry / Keep server version / Apply my change / Discard) go
+  through `syncIssueResolution.ts`, which always reuses the operation's own `operationId` —
+  never creates a replacement operation. Apply my change is concurrency-safe against two
+  distinct windows (final security/concurrency pass, `OfflineOperation.reviewedVersion`,
+  written only by a review action — `getConflictComparison`/`reloadServerSnapshot` — never by
+  Apply itself): (1) a write landing *after* the user's last review and *before* they press
+  Apply — Apply re-fetches the live row, finds it no longer matches `reviewedVersion`, refuses
+  to mutate, refreshes the comparison in place, and returns the app to Needs review, requiring
+  an explicit second Apply; (2) a write landing in the split-second *between* that same
+  confirming fetch and Apply's own write — caught by the RPC's own `40001` precondition check,
+  same outcome as any other renewed conflict. Neither window ever falls back to
+  last-write-wins, and Apply only ever sends the fields the *original* local patch touched.
+
+- Every RPC the offline queue replays against is one of the six affected by the "task
+  unavailable" fix below — `taskService.ts`/`recurrenceService.ts` map all of them to a single
+  `forbidden` code, and `offlineQueueReplay.ts`'s `toSafeErrorCode` maps that to
+  `OfflineSafeErrorCode`'s `'task_unavailable'` — the Sync Issues UI has no way to show "this
+  task no longer exists" separately from "you no longer have access," by design.
+
+`queryClient.ts`'s conservative retry defaults (`retry: 1` for queries, `retry: 0` for
+mutations) are unchanged and still apply to the *online* mutation path — the offline queue
+above is a separate mechanism for the case where there is no connection to retry against at
+all.
+
+A small shared sync-status indicator (`src/components/ui/SyncStatusIndicator.tsx`) surfaces
+this state (Synced / Syncing / Pending changes: N / Sync issues: N, tapping through to
+`/sync-issues`) on the same four screens `OfflineBanner` already covers — see
+`resolveSyncDisplayState`'s own precedence rules in that file for how the two never show a
+redundant "offline" message at once. It reads the queue store via `zustand/react/shallow`'s
+`useShallow` for its array-valued selector (`selectSyncIssues`) — a plain (non-`useShallow`)
+selector that allocates a new array every call caused a real "Maximum update depth exceeded"
+infinite-render loop under Zustand 5's `useSyncExternalStore`-based `useStore`, found and
+fixed during this phase; any future array/object-valued selector on this store needs the same
+treatment.
 
 ## Testing
 

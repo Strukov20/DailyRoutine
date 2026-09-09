@@ -35,6 +35,19 @@ jest.mock('@/lib/supabase/client', () => ({
   },
 }));
 
+// Explicit factory, not automock: the real module transitively imports
+// @react-native-async-storage/async-storage, which has no native module
+// under Jest (see docs/TEST_STRATEGY.md).
+const mockClearPersistedQueryCache = jest.fn().mockResolvedValue(undefined);
+jest.mock('@/lib/query/persistedQueryClient', () => ({
+  clearPersistedQueryCache: (...args: unknown[]) => mockClearPersistedQueryCache(...args),
+}));
+
+const mockQueryClientClear = jest.fn();
+jest.mock('@/lib/query/queryClient', () => ({
+  queryClient: { clear: (...args: unknown[]) => mockQueryClientClear(...args) },
+}));
+
 function StatusProbe() {
   const { status, profile } = useAuth();
   return <Text>{`status:${status}|profile:${profile?.displayName ?? 'none'}`}</Text>;
@@ -107,5 +120,30 @@ describe('AuthProvider', () => {
     await waitFor(() => {
       expect(screen.getByText('status:signed-out|profile:none')).toBeOnTheScreen();
     });
+
+    expect(mockClearPersistedQueryCache).toHaveBeenCalledWith('user-1');
+    expect(mockQueryClientClear).toHaveBeenCalledTimes(1);
+  });
+
+  it('never clears the persisted cache for a mere TOKEN_REFRESHED event (not a sign-out)', async () => {
+    const fakeSession = { user: { id: 'user-1', email: 'a@test.local' } };
+    (supabase.auth.getSession as jest.Mock).mockResolvedValue({ data: { session: fakeSession } });
+
+    await render(
+      <AuthProvider>
+        <StatusProbe />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('status:signed-in|profile:Test User')).toBeOnTheScreen();
+    });
+
+    await act(async () => {
+      authStateCallback('TOKEN_REFRESHED', fakeSession);
+    });
+
+    expect(mockClearPersistedQueryCache).not.toHaveBeenCalled();
+    expect(mockQueryClientClear).not.toHaveBeenCalled();
   });
 });

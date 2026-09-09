@@ -778,3 +778,260 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     changes. Deliberately not bumped, consistent with this repository's stated tooling-version-
     pinning discipline; recorded as deferred rather than silently ignored or reflexively fixed.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-09T00:00:00Z — Phase 9 (Secure Realtime Sync, Offline Resilience, Conflict Center): in progress, first wiki entry
+
+- **Operation type:** feature (new domain) + documentation + wiki update. **This phase is not
+  finished** — this entry and the new wiki page both say so explicitly and must be updated
+  again, not treated as a closing entry, once the remaining scope lands.
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-09-phase9-realtime-offline-partial.md`](../raw/sessions/2026-09-09-phase9-realtime-offline-partial.md).
+  Covers both this session's client-layer work and the prior (compacted) session's database
+  layer (commits `615c040`, `eee7cac`), which had never been logged here — this is the first
+  Phase 9 wiki entry for either.
+- **Wiki pages added:**
+  [`engineering/realtime-sync-and-offline.md`](engineering/realtime-sync-and-offline.md)
+  (new, `status: proposed` — deliberately not `current`, tracks a "done" and "not done yet"
+  list to be kept current as the phase continues rather than closed out prematurely).
+- **Wiki pages updated:** [`index.md`](index.md) — added the new page under Engineering.
+- **Canonical docs updated:** `docs/SECURITY_AND_PRIVACY.md` (Mechanism 3 rewritten from a
+  Phase-2-era "not implemented, here's the planned design" note to the actual Broadcast
+  implementation, which is more private than that old plan — content-free payloads, not
+  merely sanitized ones — plus a new offline-cache-privacy paragraph explicitly stating
+  app-sandbox storage is not the same guarantee as hardware encryption), `docs/ARCHITECTURE.md`
+  (the provider-stack diagram was stale — missing `AuthProvider` entirely and in the wrong
+  order relative to `QueryProvider` — corrected; new "Realtime sync (Phase 9)" section; "Offline
+  & caching" rewritten from "not wired up yet" to the actual implementation), `docs/ROADMAP.md`
+  and `docs/MVP_SCOPE.md` (moved the now-implemented subset of "advanced offline sync" out of
+  "V2, design before building" into "implemented," with the still-V2 remainder — full manual
+  conflict-resolution UI, offline editing beyond a personal task — precisely named rather than
+  left as a blanket "still V2"), `docs/DECISIONS.md` (new "Phase 9 — in progress" entry),
+  `docs/TEST_STRATEGY.md` (pgTAP file/assertion counts corrected from the stale Phase 7-era
+  13 files/391 to the current 15 files/508; two new testing conventions recorded).
+- **Decisions/contradictions recorded:**
+  - `docs/SECURITY_AND_PRIVACY.md`'s old Mechanism 3 and `docs/ROADMAP.md`'s old "V2, design
+    before building" framing were both genuine, accurate-at-the-time statements that had gone
+    stale against code built either earlier in Phase 9 (the DB layer, previously undocumented)
+    or in this session — corrected, not silently left contradicting the implementation the
+    way the standing instruction warns against.
+  - The actual Realtime payload design (fully content-free) is **stricter** than the Phase-2
+    plan it replaces (a sanitized-but-present row shape) — recorded as a deliberate
+    improvement the Phase 9 brief specified, not a scope creep needing separate justification.
+  - Recurring-occurrence complete/restore was named in the brief's offline-queue scope
+    (Section 9) alongside the six one-off-task operations that got built; it was not wired in
+    this pass. Recorded as a known, tracked gap in the new wiki page's "Not done yet" list —
+    not silently dropped from scope, not claimed as done.
+  - The Conflict Center UI, the real local Realtime WebSocket integration test, the offline
+    integration test suite, native device verification, and full manual conflict-resolution
+    UI are all still unbuilt. `npm run verify` is green (51 suites, 427 tests) but the
+    pgTAP/Deno/e2e:backend/e2e:notifications/e2e:calendar/e2e:recurrence suites were last
+    confirmed green against the DB-layer commit only, before any client-side Phase 9 code
+    existed — re-confirmation is still owed before this phase can be called complete.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-09T12:00:00Z — Phase 9 continued: Conflict Center, real integration tests, a real recurrence-script bug fix
+
+- **Operation type:** feature (new domain) + test (two new real local integration suites) +
+  bug fix (unrelated pre-existing script fragility) + wiki update. Still not the phase's
+  closing entry — native verification and the full manual conflict-resolution UI remain open.
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-09-phase9-conflict-center-and-integration-tests.md`](../raw/sessions/2026-09-09-phase9-conflict-center-and-integration-tests.md).
+- **Wiki pages updated:**
+  [`engineering/realtime-sync-and-offline.md`](engineering/realtime-sync-and-offline.md) —
+  "Done"/"Not done yet" split brought current (Conflict Center, both real integration test
+  suites, and the re-confirmed e2e:backend/notifications/calendar/recurrence runs all moved
+  from "not done" to "done"); still `status: proposed`, not `current`.
+- **Canonical docs to be updated in this same pass:** `docs/DECISIONS.md` (Conflict Center
+  design notes, the two integration suites' environment fixes, the e2e-recurrence.sh bug),
+  `docs/TEST_STRATEGY.md` (new pgTAP/e2e counts and the two new `e2e:*` scripts),
+  `docs/ARCHITECTURE.md`/`docs/SECURITY_AND_PRIVACY.md` if the Conflict Center's design
+  warrants its own section beyond what Realtime/offline already cover.
+- **Decisions/contradictions recorded:**
+  - A private, family-linked event's Realtime broadcast **does** reach `family:<family_id>`
+    (not withheld) — an assumption held while planning `scripts/e2e-realtime.mjs`, corrected
+    by reading the actual trigger SQL before writing the test rather than asserting a wrong
+    expectation. Correct by construction: the payload never carries content regardless of
+    which topic it goes out on.
+  - `e2e-recurrence.sh` had its own real, pre-existing wall-clock bug (a hardcoded creation
+    date, unrelated to any Phase 9 code) — found only because re-verification happened to run
+    a day after the script was last authored/tested. Fixed; not silently patched over.
+  - Both new real integration suites (`e2e:offline`, `e2e:realtime`) needed real environment
+    fixes before they could run at all under Jest/Node against a live backend (jest-expo's
+    RN fetch polyfill breaking real network calls; a virtual env-var module needing an
+    explicit transform carve-out; a non-cascading FK silently leaking test accounts on
+    cleanup) — each is a genuine, reusable lesson for any future real-backend test in this
+    repo, not just this phase's own scripts.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-09T14:00:00Z — Phase 9 continued: real native iOS verification, Maestro policy recorded
+
+- **Operation type:** verification (real device) + documentation + wiki update. Still not the
+  phase's closing entry — see the wiki page's remaining "Not done yet" list.
+- **Wiki pages updated:**
+  [`engineering/realtime-sync-and-offline.md`](engineering/realtime-sync-and-offline.md) —
+  native iOS verification and the Maestro policy decision moved from "not done" to "done";
+  remaining gaps (full manual conflict-resolution UI, recurring-occurrence offline queue,
+  network-disconnection/account-switch/Android testing) stay listed, `status` stays
+  `proposed`.
+- **Canonical docs updated:** `docs/DECISIONS.md` (five new subsections under the existing
+  "Phase 9" entry: Conflict Center Review-routing rationale, the two real environment fixes
+  behind the integration suites, the corrected private-event-broadcast assumption, the full
+  native verification writeup, and the Maestro policy decision), `docs/TEST_STRATEGY.md`
+  (E2E row extended with the Phase 9 native pass; the RLS/privacy row's stale "not yet
+  written" note about the two integration suites corrected).
+- **Decisions/contradictions recorded:**
+  - A real, valuable piece of native evidence: with the Conflict Center open on a real
+    Simulator build, an external `curl`-driven RPC call (simulating another device) made the
+    on-screen conflict list update live with zero manual refresh — direct proof the full
+    Realtime pipeline (trigger → Broadcast → real WebSocket → invalidation → refetch →
+    re-render) works end to end on a running app, not only inside `e2e-realtime.mjs`'s own
+    isolated test.
+  - A genuine tool-level limitation (not an app defect) was independently reproduced: a
+    Maestro assertion reported "1 conflict" as not visible on a step whose own screenshot
+    shows that exact text clearly rendered — confirming the Simulator/Maestro touch-and-
+    assertion-delivery flakiness `personal_task_smoke.yaml` already documented from Phase 5
+    also affects assertions, not only taps. Recorded as inconclusive for the one interaction
+    it affected (the Review action's tap-through), not asserted as either a pass or a bug —
+    the underlying routing logic is already deterministically covered by
+    `ConflictRow.test.tsx`.
+  - A leftover `expo run:ios` process from an earlier point in this same session (idle ~18
+    hours, its own log confirming it had already finished its work) was found still running
+    and was terminated before starting this pass's own native build, to avoid it competing
+    for the same Simulator device.
+  - Network-disconnection testing, account-switch-no-flash, and Android were explicitly not
+    attempted this pass — recorded as gaps, not silently skipped. The Maestro policy decision
+    itself explains why network-disconnection specifically was deferred to `e2e:offline`
+    rather than attempted via Maestro.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-09T15:00:00Z — Phase 9 continued: recurring-occurrence complete/restore joins the offline queue
+
+- **Operation type:** feature (closes a previously tracked gap) + test + wiki update.
+  Autonomous-loop tick — continuing this same session's own explicitly-tracked "Not done yet"
+  list, not new/invented scope.
+- **Wiki pages updated:**
+  [`engineering/realtime-sync-and-offline.md`](engineering/realtime-sync-and-offline.md) —
+  the offline-queue "Done" bullet extended to cover occurrence complete/restore; the matching
+  "Not done yet" item removed.
+- **Canonical docs updated:** `docs/DECISIONS.md` — new subsection under the Phase 9 entry
+  explaining why this needed no migration/RPC change at all (the occurrence RPCs were already
+  idempotent by construction) and why no optimistic UI patch was added (matches the existing
+  "deliberately not optimistic" rule for occurrence mutations, which predates Phase 9).
+- **Decisions/contradictions recorded:** none — this closes a gap this same session had
+  already identified and recorded, without discovering a new contradiction.
+- **Verified:** `npm run verify` — 55 suites, 463 tests (7 new: 3 in
+  `offlineQueueReplay.test.ts` covering the two new replay cases plus `RecurrenceServiceError`
+  classification, 4 in a new `src/domain/recurrence/hooks.test.tsx` covering the offline/online
+  branch and the bounded-queue error case), lint/typecheck/wiki:lint all clean.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+## 2026-09-10T12:00:00Z — Phase 9 completion pass: Sync Issues resolution UX
+
+- **Operation type:** feature (closes Phase 9's last remaining gap) + migration + test + docs.
+  User-directed: a full 16-section "Sync Conflict Resolution UX" brief, delivered after the
+  user asked whether the phase was finished.
+- **Wiki pages updated:**
+  [`engineering/realtime-sync-and-offline.md`](engineering/realtime-sync-and-offline.md) —
+  status changed `proposed` → `current`; "Done and verified" gained the Sync Issues bullet and
+  an extended offline-queue bullet (state-machine rename); "Not done yet" reduced to only the
+  Phase-10-deferred device-hardware items; two new sections added ("A concurrency nuance worth
+  knowing before touching Apply my change," and two new entries under the testing-gotchas
+  section: the Zustand `useShallow` array-selector gotcha, and the singleton-`queryClient`
+  test-hang gotcha).
+- **Canonical docs updated:** `docs/DECISIONS.md` (Phase 9 status note → complete, plus a full
+  new "Sync Issues resolution UX" subsection), `docs/ARCHITECTURE.md` ("Offline & caching"
+  section extended), `docs/SECURITY_AND_PRIVACY.md` (new bullet: Sync Issues never renders a
+  raw server error), `docs/ROADMAP.md` ("Offline behavior" section rewritten — conflict
+  resolution moved from "still V2" to "implemented"), `docs/MVP_SCOPE.md` (same correction),
+  `docs/TEST_STRATEGY.md` (Components row + RLS/privacy row counts and file lists updated),
+  `README.md` (added a Phase 9 bullet — it had none before despite the phase being otherwise
+  fully documented elsewhere; fixed a stale "Realtime sync... not implemented" claim in the
+  same pass).
+- **Decisions/contradictions recorded:** a real tension between the brief's own two Section-5
+  instructions for Apply my change ("refetch latest server version" vs. "remain in Needs
+  review if another update happened between review and application") — the implementation
+  took the literal "refetch" reading, which means only a write racing inside Apply's own
+  fetch-then-write pair (not the whole human review window) still produces a renewed conflict.
+  Documented in DECISIONS.md and the wiki rather than silently resolved either way — see that
+  entry if a future session needs to pin Apply to the exact reviewed version instead.
+- **Two real, unrelated bugs found and fixed along the way** (not part of the brief, found
+  while implementing it): (1) `schedule_personal_task`'s pre-existing `p_date is null →
+  22023` check was accidentally dropped while rewriting the function for the P0002 change —
+  caught by the existing pgTAP suite failing after `supabase db reset`, restored in its
+  original position (before the existence lookup). (2) `SyncStatusIndicator.tsx` and the Sync
+  Issues list screen both passed a new-array-every-call Zustand selector directly to
+  `useOfflineQueueStore`, causing a real "Maximum update depth exceeded" infinite render loop
+  under Zustand 5 — fixed with `useShallow`; this had also silently broken
+  `CalendarScreen.test.tsx` as a knock-on (it renders the indicator).
+- **Verified:** `npm run verify` — 60 suites / 544 tests (up from 55/463 — new:
+  `syncIssueDisplay.test.ts`, `syncIssueResolution.test.ts`, `SyncIssueCard.test.tsx`,
+  `SyncIssuesScreen.test.tsx`, `SyncIssueDetailScreen.test.tsx`, plus updates across the
+  vocabulary-rewrite-affected files), lint/typecheck/wiki:lint all clean. `supabase db reset
+  && supabase test db` — 16 files / 528 pgTAP assertions (new: `160_sync_issues_resolution_
+  test.sql`, 20 assertions). `deno test` for `dispatch-notifications` — 11/11. `e2e:backend`
+  32/32, `e2e:notifications` 24/24, `e2e:calendar` 28/28, `e2e:recurrence` 23/23 all
+  re-confirmed. `e2e:offline` extended with a 14-step review/resolve scenario, run twice
+  consecutively without a DB reset, both green. `e2e:realtime` run twice, both green (28/28).
+  `expo config --type public`, both `expo export` platforms, `git diff --check` all clean.
+  `expo-doctor` 20/21 — one pre-existing, unrelated patch-version drift (`expo`/`expo-router`),
+  reported per this codebase's dependency-pinning precedent rather than bumped.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+## 2026-09-11T12:00:00Z — Phase 9 final security/concurrency pass
+
+- **Operation type:** security fix + migration + test + docs. User-directed: a detailed 5-part
+  brief identifying two specific defects in the immediately prior session's own Sync Issues
+  work (a task-existence oracle, and a gap in Apply my change's review semantics) and
+  requesting both be fixed, plus resolution of a stray `deno.lock`.
+- **Wiki pages updated:**
+  [`engineering/realtime-sync-and-offline.md`](engineering/realtime-sync-and-offline.md) —
+  "Done and verified" gained a bullet documenting the existence-oracle fix and rewrote the
+  Sync Issues resolution bullet; the former "A concurrency nuance worth knowing before
+  touching Apply my change" section (which had flagged the review-semantics gap as an open
+  question) is replaced with "Apply my change's two concurrency windows," documenting the fix
+  now that it exists instead of the gap that used to exist there.
+- **Canonical docs updated:** `docs/DECISIONS.md` (new "Final security/concurrency pass"
+  subsection under Phase 9 — added below the prior "Sync Issues resolution UX" entry, which
+  was not edited, per this project's "add to a record, don't overwrite it" convention),
+  `docs/SECURITY_AND_PRIVACY.md` (new bullet for the existence-oracle fix, updated bullet for
+  the merged `OfflineSafeErrorCode` count), `docs/ARCHITECTURE.md` (Apply-my-change paragraph
+  rewritten from "flagged for confirmation" to the actual fixed two-window behavior),
+  `docs/TEST_STRATEGY.md` (pgTAP count 528→530, `160_...` file's own count 20→22, e2e:offline
+  description corrected to describe the real fixed behavior instead of the pre-fix one).
+- **Decisions/contradictions recorded:** none new — this session *resolved* the one open
+  question the prior session's own entries had explicitly flagged (Apply's two brief
+  instructions being in tension), rather than discovering a new one. The resolution: `reviewedVersion`
+  decouples the review-time fetch from the apply-time fetch, so both of the brief's
+  instructions are now literally true at once.
+- **Two real defects found and fixed, both originating in the immediately prior session's own
+  work** (not part of this session's own new code until the fix): (1) the P0002/42501 split
+  (commit `47df0e7`) was a cross-user task-existence oracle — any authenticated caller could
+  learn whether a task UUID exists anywhere in the system, for any user; removed via a new
+  additive migration, proven fixed by literally capturing and comparing the exact error output
+  for a random UUID vs. another profile's real UUID. (2) `applyMyChange` re-fetched the server
+  row and used that same fetch as both the staleness check and the write precondition, so a
+  write between a real user review and a real Apply press was silently absorbed rather than
+  re-surfaced — fixed by decoupling review-time and apply-time fetches via
+  `OfflineOperation.reviewedVersion`.
+- **Verified:** `npm run verify` — 60 suites / 550 tests, lint/typecheck/wiki:lint all clean.
+  `supabase db reset && supabase test db` — 16 files / 530 pgTAP assertions (`160_sync_issues_
+  resolution_test.sql` rewritten, 20→22 assertions, now proving indistinguishability directly
+  via a `pg_temp` capture helper rather than only checking both cases raise 42501).
+  `deno test` for `dispatch-notifications` — 11/11, run from the documented `supabase/
+  functions` directory (confirmed this does not regenerate the stray root `deno.lock`).
+  `e2e:backend` 32/32, `e2e:notifications` 24/24, `e2e:calendar` 28/28, `e2e:recurrence` 23/23
+  all re-confirmed. `e2e:offline` (extended with the real "stale review" concurrency window)
+  run twice consecutively without a DB reset, both green. `e2e:realtime` run twice, both green
+  (28/28). `expo config --type public`, both `expo export` platforms, `git diff --check` all
+  clean. `expo-doctor` unchanged at 20/21 (same pre-existing, unrelated patch-version drift).
+  Stray root-level `deno.lock` deleted; `/deno.lock` added to `.gitignore` (root-anchored only
+  — does not affect the real, already-tracked `supabase/functions/deno.lock`).
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

@@ -1906,3 +1906,387 @@ tap-to-navigate and the Snooze/Done notification actions specifically could not 
 to a structural, cross-process iOS UI-automation limitation (not an app defect) also detailed
 above, and are not claimed as observed.
 
+## Phase 9 (Secure Realtime Sync, Offline Resilience, and Conflict Center)
+
+**Status**: complete as of the completion pass documented at the end of this section (Sync
+Issues resolution UX). Everything below the original mid-phase status note — DB layer,
+Realtime manager, persisted cache, offline mutation queue, sync-status UI, Conflict Center,
+the real local Realtime WebSocket and offline integration tests, native iOS verification —
+was built and verified across the phase's own multiple passes; the phase's only remaining
+gaps (real device network-interruption testing, native account-switch-no-flash observation,
+Android emulator/device runtime) are explicitly deferred to a Phase 10 manual release
+checklist, not blocking, and not claimed as observed. See
+`knowledge/wiki/engineering/realtime-sync-and-offline.md` for the current status (now marked
+`current`, not `proposed`).
+
+### Broadcast, not Postgres Changes — and a content-free payload, not a sanitized one
+
+`postgres_changes` was rejected outright (same reasoning as the Phase-2-era note in
+[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md) this phase superseded): it broadcasts the
+full row before RLS narrows *visibility*, not *content* — a private row's payload could still
+carry its title to a connection RLS merely permits to see the event exists. Supabase's
+Broadcast-from-Database (`realtime.send`, private channels, RLS on `realtime.messages`) was
+chosen instead. The brief went one step further than that earlier plan (which proposed
+broadcasting the `family_schedule` view's own *sanitized* shape): broadcasts here carry no row
+content at all, ever — a fixed `{version, scope, entity, operation}` envelope. This is
+strictly more private (nothing to redact wrong) at the cost of the client always needing a
+follow-up fetch through the normal RLS-gated read path, which it already does for every other
+query — no new read path was needed to make this work.
+
+### `realtime.topic()` reads a per-subscription-attempt GUC — verified directly, not assumed
+
+`realtime.topic()` is `nullif(current_setting('realtime.topic', true), '')::text` — it returns
+whatever the real Realtime server sets via `set_config('realtime.topic', ..., true)` for that
+specific subscription attempt, not a property of the row or the session in general. A plain
+`psql` `SELECT` against `realtime.messages` with no topic GUC set makes every RLS policy here
+evaluate to `false` — confirmed by a real query returning 0 rows where it should have matched,
+before formalizing the pgTAP suite. Every RLS test in
+`supabase/tests/150_realtime_offline_conflicts_test.sql` wraps its assertion in
+`set_config('realtime.topic', '<topic>', true)` first, matching the real server's own
+authorization flow — a test that forgot this would silently prove nothing (every policy false
+either way) rather than failing loudly, which is why this is called out here explicitly.
+
+### Idempotency: `client_operation_id` for create, `expected_updated_at` for update/schedule
+
+`create_personal_task` gained a nullable `client_operation_id uuid` column plus a partial
+unique index `(owner_profile_id, client_operation_id) where client_operation_id is not null`.
+The RPC checks for an existing row with the same `(caller, client_operation_id)` first and
+returns its id on replay instead of inserting — a duplicate delivery (offline queue retry,
+crash-then-relaunch) can never create a duplicate task. `update_personal_task`/
+`schedule_personal_task` gained a nullable `p_expected_updated_at timestamptz` precondition:
+when supplied and it no longer matches the row's actual `updated_at`, the RPC raises with
+errcode `40001` (`serialization_failure` — reused deliberately rather than inventing a bespoke
+code, since it is a real, standard Postgres code whose meaning — "retry against a state that
+moved under you" — already matches) instead of applying the write. Adding these parameters via
+bare `CREATE OR REPLACE FUNCTION` would have created an *additional* overload rather than
+replacing the original (Postgres function identity includes the parameter type list) — each of
+the three functions is preceded by an explicit `DROP FUNCTION IF EXISTS <exact prior
+signature>`, with `REVOKE`/`GRANT` reapplied after (dropping a function drops its grants too).
+Both `update_personal_task`'s Phase 5 assignment-status guard and
+`schedule_personal_task`'s Phase 8 recurring-task guard were preserved by rebuilding each
+function body from its current (latest-migration) source rather than the original Phase 4
+version — a near-miss caught by grepping for every later migration that had already touched
+these same functions before writing the Phase 9 version.
+
+### Offline queue scope: six personal-task operations, nothing else
+
+Family/shared task mutations, assignments, invitations, family membership, events,
+responsibilities, recurrence-series edits, reminder-definition edits, category creation, and
+notification token changes are never queued — they fail immediately while offline with a
+clear message, the same as before this phase. Only create/update/schedule/complete/restore/
+delete of a personal, one-off task queue. An offline create is Inbox-only (no `date`) — a
+dated offline create is refused with a clear message rather than queued, since Section 9
+scoped queued creation to "an unscheduled Inbox task" specifically. Recurring-occurrence
+complete/restore (also named in the brief's Section 9 list) is **not yet wired into the
+queue** — deferred, tracked as a known gap, not silently dropped from scope.
+
+### FIFO dependency chaining: an offline-created task's own id isn't known until it syncs
+
+A task created offline is optimistically rendered under a client-generated id
+(`clientGeneratedId`) before the server assigns a real one. If the user then completes/edits
+that same task while still offline, the dependent operation is queued against
+`clientGeneratedId` as its `entityId`, since the real id doesn't exist yet. Once the create
+replays successfully, `useOfflineQueueStore.remapClientGeneratedId` rewrites every later op
+still pointing at that `clientGeneratedId` to the real server id before its turn comes up —
+the one real "FIFO replay where dependencies require it" case (Section 10) this phase's scope
+actually produces, found and fixed before it could ship as a silent data-loss bug (completing
+the *wrong*, nonexistent, task id).
+
+### Stale-write conflicts surface today only as "Sync issue" — full resolution UI deferred
+
+A queued update/schedule that loses its `expected_updated_at` precondition is marked `failed`
+with `lastSafeErrorCode: 'conflict'` and never retried automatically — the queue guarantees it
+can never silently overwrite a change made elsewhere. What is **not** yet built is Section 11's
+full manual-resolution UX (a distinct "Sync conflict" message with Reload/Review/Discard/Retry
+actions) — today this surfaces through the same generic sync-status "Sync issue" + Retry as any
+other permanently-failed operation. Recorded here as a deliberate, temporary scope reduction,
+not an oversight — see [ROADMAP.md, "Offline behavior"](ROADMAP.md).
+
+### Conflict Center: Review only ever navigates where the RPC itself says it's safe
+
+`ConflictRow`'s Review action does not decide for itself whether an entity is navigable — it
+trusts `list_family_conflicts`'s own output exactly: `primaryEntityType === 'event' &&
+primaryEntityId` routes to `/event/<id>`, `'task'` routes to `/task/<id>/edit`, and anything
+else (a redacted/null id, an `'occurrence'`, a `'responsibility'` — neither has its own
+single-item edit route) falls through to `/calendar` (Family Today). This means a private Busy
+conflict belonging to another adult can never be routed into their private item, by
+construction — the client has no privileged information to make that mistake with in the
+first place, since a redacted id is genuinely absent from the payload, not merely hidden by a
+client-side check.
+
+### Two real, reusable environment fixes found while building the offline-queue and Realtime integration suites
+
+Both are documented in full in `jest.e2e.config.js`'s and `scripts/e2e-realtime.mjs`'s own
+comments; summarized here because they'll matter for any *future* real-backend test in this
+repo, not just these two: (1) the shared `jest-expo` preset's own `setupFiles` install a React
+Native `fetch`/XHR polyfill that silently resolves every real network request with an
+undefined status/body under Jest — any suite that needs to hit a real HTTP endpoint (not just
+Realtime WebSockets) needs to avoid that preset, not merely mock around it. (2)
+`babel-preset-expo`'s environment-variable inlining rewrites `process.env.EXPO_PUBLIC_*` reads
+into an import of a real (but ES-module) `expo/virtual/env.js` file, which needs an explicit
+`transformIgnorePatterns` carve-out under a non-jest-expo Jest config, or every module that
+reads `env.EXPO_PUBLIC_*` (starting with `src/lib/supabase/client.ts`) fails to load at all.
+
+### `e2e-realtime.mjs`: a private, family-linked event's Realtime broadcast is not withheld from the family channel
+
+Written into this brief as a corrected assumption, not merely a passing test: before writing
+the script, the working assumption was that a private event would never broadcast to
+`family:<family_id>`, mirroring the Busy-block privacy rule for row *content*. Reading
+`broadcast_event_change`'s actual body first (rather than testing the assumption after the
+fact) showed this is wrong by design: the trigger fires to the family topic whenever
+`family_id` is set, regardless of `visibility`, and this is *correct* — the payload itself
+never carries content either way, so a family member's client just refetches through the
+already-redacted `family_schedule` view. The script verifies the property that actually
+matters instead (every payload, including this one, is confirmed content-free by the same
+secret-marker sweep), rather than a wrong assumption about which topic gets used.
+
+### Native iOS verification: real evidence, one real (tool-level) limitation, three explicit gaps
+
+A real `expo run:ios` debug build, installed and launched on a booted iPhone 17 Pro / iOS 26.5
+Simulator with Metro connected — not a bundle-export-only check, since this phase's actual
+claims (live cross-device sync, an on-device cache, a running WebSocket connection) can only
+be observed by actually running the app. The existing `personal_task_smoke.yaml` Maestro flow
+(Phase 5) ran clean end to end first, as a regression check — no Phase 9 change broke the
+existing sign-in/quick-add/schedule/complete/restore path.
+
+The single most valuable piece of evidence gathered: with the Conflict Center open on-device,
+an *external* `curl`-driven RPC call (simulating a second device/collaborator) created two
+overlapping family events, and the on-screen conflict list **updated live, with no manual
+refresh, no re-navigation, and no app restart** — direct, real proof that the full pipeline
+(a Postgres trigger emitting a Broadcast → the real local Realtime server → the app's real
+WebSocket subscription → `useRealtimeSync`'s invalidation mapping → a TanStack Query refetch →
+a re-render) works end to end on an actual running app, not just in the isolated
+`e2e-realtime.mjs` script. The sync-status indicator ("Synced") and the conflict badge (both
+the native Calendar-tab badge and the in-screen chip, both with the real count) were also
+directly observed rendering correctly.
+
+One genuine tool-level limitation, not an app defect, was independently reproduced during this
+pass: attempting to verify the Review action's tap-through via Maestro produced an assertion
+failure ("1 conflict" is visible) on a step whose own captured screenshot clearly shows that
+exact text rendered on screen — a concrete instance of the same Simulator/Maestro
+touch-and-assertion-delivery unreliability already documented at length in
+`personal_task_smoke.yaml`'s own header comments from Phase 5, now confirmed to also affect
+assertion checks, not only taps. Review's own routing logic is deterministically covered by
+`ConflictRow.test.tsx` regardless (both the event and task navigation cases, and the
+redacted/responsibility fallback case) — the native pass could not add confidence beyond that
+for this one interaction, and is recorded as inconclusive rather than either "passing" or "a
+bug," honestly.
+
+**Explicitly not attempted this pass**: true network-disconnection testing (verifying cached
+data stays visible, a queued mutation shows "Pending sync," and reconnect triggers replay, all
+by actually cutting the Simulator's network) — not safely automatable on this Simulator setup,
+the same limitation Phase 8 already documented for a different feature; the deterministic
+`e2e:offline` suite already proves the underlying mechanism (idempotent replay, stale-write
+detection) without needing a real network cut. Account-switch-no-flash was not checked
+on-device this pass. Android was not attempted — no emulator was available in this
+environment.
+
+### Maestro policy for Phase 9 (Section 23)
+
+No new Maestro flow was added this phase. The existing `personal_task_smoke.yaml` was re-run
+as a pure regression check (does Phase 9 break the pre-existing flow — it does not) rather
+than extended to cover Realtime/offline scenarios, for the same reason true network-
+disconnection testing wasn't attempted above: Maestro has no reliable way to simulate a real
+connectivity loss on this Simulator setup, and the specific interactions Phase 9 most needs
+verified (a live cross-device update, a queued-offline mutation, a reconnect-triggered replay)
+are either already covered more rigorously by `e2e-realtime.mjs`/`e2e:offline` (real backend,
+deterministic, bounded, zero residue) or require exactly the network-cut capability Maestro
+cannot provide here. Writing a new Maestro flow that could only exercise the *online* half of
+these scenarios would add tool-level flakiness risk (see the touch/assertion-delivery
+limitation above) without adding coverage beyond what already exists. Deferred, not
+forgotten — if a future phase finds a reliable way to script connectivity loss on this
+Simulator/CI setup, revisit.
+
+### Recurring-occurrence complete/restore joins the offline queue
+
+Closes the one remaining gap in Section 9's own operation list. Unlike the six one-off-task
+operations, `complete_task_occurrence`/`restore_task_occurrence` needed no new RPC parameters
+and no migration change at all — both were already idempotent by construction
+(`update ... where id = ... and status = 'scheduled'|'completed'`, see the Phase 8 migration),
+so a blind retry after a crash or a duplicate delivery was already safe. The queue's
+`OfflineOperationType` union gained two members, `offlineQueueReplay.ts`'s switch gained two
+cases (and its error classification now also recognizes `RecurrenceServiceError`, not only
+`TaskServiceError`), and `src/domain/recurrence/hooks.ts`'s `useCompleteOccurrence`/
+`useRestoreOccurrence` gained the same offline branch the personal-task hooks already have —
+no optimistic UI patch was added here, matching those hooks' own pre-existing "deliberately not
+optimistic" rule (an occurrence's task id repeats across every occurrence of the same series,
+so a client-side guess risks touching the wrong occurrence in another mounted list — see that
+file's own comment). Invalidation after a successful occurrence replay uses the `'recurrence'`
+entity (not `'tasks'`), which already covers `recurrenceKeys.pendingReminders`/
+`scheduledOccurrences` too, so reminder reconciliation re-runs through the same existing
+mechanism without any new wiring.
+
+### Sync Issues resolution UX (Phase 9 completion pass)
+
+Closes the phase's last remaining gap: manual conflict *resolution*, not just detection. Full
+brief scope: a new, separate `/sync-issues` domain; an explicit persisted operation state
+machine; exact per-failure-type action sets; a field-level comparison screen; Reload/Apply/
+Keep/Discard semantics with concurrency safety and idempotent double-tap protection; account
+isolation; accessibility/i18n; and the pgTAP/Jest/e2e coverage to prove all of it. Completion
+bar the brief set for this pass, met: *"a stale offline write can be visibly reviewed and
+explicitly resolved without silent server overwrite."*
+
+**Sync Issues vs. Conflict Center — two deliberately separate domains.** The Conflict Center
+(`/conflicts`, already built) is schedule conflicts: overlapping events/tasks, unassigned
+drop-off/pick-up, no available adult — all server-detected via `list_family_conflicts()`,
+read-only plus a Review action. Sync Issues (`/sync-issues`) is offline-queue synchronization
+failures: a stale-write conflict, a transient network failure, a permanent validation
+failure, authorization loss, or a deleted entity — all client-side queue state, resolved
+through direct action (Retry/Apply/Keep/Discard), never surfaced in the Conflict Center. The
+two never share a badge, a route, or a data source.
+
+**Operation state machine — extended, not replaced.** The old ad hoc
+`status: 'pending' | 'in-flight' | 'failed'` + a loose `lastSafeErrorCode` union became a
+proper, documented `OfflineOperationStatus = 'pending' | 'syncing' | 'retry_wait' |
+'conflict' | 'permanent_failure' | 'discarded'` (see `src/lib/offline/types.ts`'s own doc
+comment for the full transition table). Deliberate simplification versus the brief's own
+conceptual diagram: `applied`/`completed`/`reviewing` are never *persisted* as lingering
+rows — a successful replay (first attempt or post-resolution) simply removes the operation
+from the queue array, which already satisfies "terminal operations never return to the
+replay queue" without an extra completed-but-kept-around state; `reviewing` is UI-only (the
+comparison screen being open).
+
+**`selectPendingOperationCount` and `selectSyncIssueCount` are deliberately disjoint** — the
+former counts only `pending`/`syncing` (never yet failed), the latter counts
+`retry_wait`/`conflict`/`permanent_failure` (failed at least once), so "Pending changes: N"
+and "Sync issues: N" never double-count the same operation.
+
+**`P0002` (no_data_found) added alongside the existing `40001` (stale-write) convention** —
+this codebase already reuses standard Postgres condition codes rather than inventing bespoke
+ones; `P0002` distinguishes "the row is gone" from `42501` "the row exists but isn't yours"
+across `update_personal_task`/`schedule_personal_task`/`complete_personal_task`/
+`restore_personal_task`/`complete_task_occurrence`/`restore_task_occurrence`
+(`supabase/migrations/20260910120000_sync_issues_resolution.sql`, `create or replace` on each
+function's existing exact signature — no new parameter, no re-grant needed). No new
+server-side "operations" table was needed — same reasoning as the prior Phase 9 migration:
+the queue is client-side persisted state; only the idempotency/concurrency guarantee needs
+server support, already in place. While rewriting `schedule_personal_task`, its pre-existing
+`p_date is null` → `22023` validation (which must run *before* the existence lookup — a
+`gen_random_uuid()` task id with a null date should still raise `22023`, not the new
+`P0002`) was initially dropped by mistake and caught by the pre-existing pgTAP suite
+(`090_personal_task_management_test.sql`, test 34) failing after `supabase db reset` — a
+concrete example of why that suite runs on every schema change, not just ones that look
+related.
+
+**Apply my change's concurrency semantics — a real design nuance, surfaced rather than
+silently resolved either way.** The brief's Section 5 says both "refetch latest authorized
+server version" (as literally the first step of Apply) *and* "if another update happened
+between review and application, remain in Needs review — never silently fall back to
+last-write-wins." As implemented (`src/lib/offline/syncIssueResolution.ts`'s `applyMyChange`),
+Apply always re-fetches the server row immediately before reapplying the original patch,
+using that just-fetched value as the new `expectedUpdatedAt` precondition — so a write
+landing *during* Apply's own fetch-then-write pair is still caught by the RPC's own `40001`
+check (proven by `160_sync_issues_resolution_test.sql`'s "second concurrent update raises
+40001 again" assertion), but a write landing during the human review window *before* the user
+presses Apply is transparently picked up as the new base rather than re-surfaced for a second
+review. This reading was chosen because it's what the brief's own literal step order
+describes, and because the alternative (pinning Apply to the exact version the user reviewed,
+re-conflicting if anything changed since) would be a real behavior change worth a deliberate
+decision rather than an assumption — flagged here and in `docs/ARCHITECTURE.md` for
+confirmation, not silently picked.
+
+**A real, unrelated infinite-render-loop bug found and fixed along the way.**
+`SyncStatusIndicator.tsx` and the Sync Issues list screen both passed `selectSyncIssues` (a
+selector that `.filter()`s and `.sort()`s into a *new array* on every call) directly to
+`useOfflineQueueStore(...)`. Under Zustand 5's `useSyncExternalStore`-based `useStore`, a
+selector returning a new reference every render is read as "the store changed" on every
+render, causing "Maximum update depth exceeded." Fixed with `zustand/react/shallow`'s
+`useShallow` wrapping both call sites; `selectOperationById` (returns a stable reference or
+`undefined`) didn't need it. Any future array/object-valued selector on this store needs the
+same treatment — noted in `docs/ARCHITECTURE.md`.
+
+**Verification**: `npm run verify` (60 suites/544 tests, lint/typecheck/wiki:lint all clean);
+`supabase db reset && supabase test db` (16 files, 528 pgTAP assertions, including the new
+`160_sync_issues_resolution_test.sql`'s 20 assertions); `deno test` for
+`dispatch-notifications` (11 steps); `e2e:backend`/`e2e:notifications`/`e2e:calendar`/
+`e2e:recurrence` all re-confirmed green; `e2e:offline` extended with a 14-step review/resolve
+scenario (queue → concurrent write → conflict → fetch/compare → Keep server version → never
+replays → a second conflict → Apply → only the patched fields change → a further concurrent
+write → Apply again merges into the live row → a repeat Apply is a safe no-op → zero
+residue), run twice consecutively without a database reset, both green; `e2e:realtime` run
+twice, unaffected, both green; `expo config --type public`, both `expo export` platforms,
+`git diff --check` all clean. `expo-doctor`: 20/21 — one pre-existing, unrelated patch-version
+drift (`expo` `57.0.20`→`57.0.21`, `expo-router` `57.0.19`→`57.0.20`), not bumped per this
+codebase's TypeScript/ESLint-pinning precedent of not chasing "latest" without a deliberate
+compatibility check first; reported rather than silently fixed or silently ignored.
+
+### Final security/concurrency pass — removing a task-existence oracle, fixing Apply's review semantics
+
+A follow-up security review of the Sync Issues completion pass above found two real defects in
+its own work, both fixed in this same phase rather than carried forward. Recorded here as a
+correction, not by editing the entries above — see `docs/DECISIONS.md`'s own convention of
+adding to a record rather than overwriting it.
+
+**1. The P0002/42501 split (commit `47df0e7`) was a cross-user task-existence oracle.**
+Distinguishing "the row doesn't exist" from "the row exists but isn't yours" sounds like a
+harmless UX nicety, but the caller is an *authenticated* user who can pass any UUID to these
+RPCs, not only their own tasks' ids. A caller who gets a different, distinguishable error for
+"exists (not yours)" versus "doesn't exist" now has a working oracle: probe any UUID and learn
+whether a task with that id exists anywhere in the system, for any user, regardless of
+ownership. That is real information leakage, not a cosmetic detail — enumerable at scale
+against `tasks.id` (a `uuid`, so not practically guessable end-to-end, but the *mechanism*
+itself is the defect regardless of how hard the ids are to guess; the fix doesn't rely on that
+being true). Fixed in `supabase/migrations/20260911120000_remove_task_existence_oracle.sql` —
+a new, additive `create or replace` migration (the P0002 migration itself is never edited in
+place; migrations in this codebase are forward-only, same convention every other phase's fix
+has followed) collapsing "doesn't exist," "belongs to another profile," and "no longer visible
+to the caller" (soft-deleted) back into one outcome — errcode `42501`, one sanitized message
+per function ("task unavailable" / "occurrence unavailable"), byte-for-byte identical for a
+random UUID and another profile's real task/occurrence id.
+`160_sync_issues_resolution_test.sql` proves this directly (not just "both happen to be
+42501," which alone wouldn't rule out a distinguishing message) — a `pg_temp` helper function
+captures the exact `sqlstate || '|' || sqlerrm` for each probe and asserts equality. 42501
+stays reserved for "the caller has no standing on this row at all"; a transition-specific rule
+the caller *is* authorized to know about (e.g. `schedule_personal_task`'s `p_date is
+required`, 22023) is unaffected — it only ever runs once the existence+ownership check has
+already passed. Client-side: `TaskErrorCode`/`RecurrenceErrorCode` drop `'not_found'` entirely
+(both now normalize `42501` to the existing `'forbidden'`), and
+`OfflineSafeErrorCode`'s `'authorization_lost'`/`'entity_deleted'` merge into one
+`'task_unavailable'` — the Sync Issues UI has no way to show these as different outcomes, by
+design, since the server itself never distinguishes them.
+
+**2. `applyMyChange` didn't actually enforce "review before apply."** The completion pass's
+own implementation re-fetched the server row and used *that same fresh fetch* as both the
+version check and the write precondition, in one step — so "review" (opening the comparison
+screen) and "apply" (pressing the button) were only nominally two steps; a write landing in
+the gap between them was silently picked up as the new base without ever being shown to the
+user. This technically satisfied the brief's literal "refetch latest authorized server
+version" instruction but defeated its other instruction in the same section: "if another
+update happened between review and application, remain in Needs review." Fixed by adding
+`OfflineOperation.reviewedVersion` — written only by an actual review action
+(`getConflictComparison`/`reloadServerSnapshot`), never by `applyMyChange` itself. Apply now:
+fetches the current row, and if its `updated_at` doesn't match `reviewedVersion`, refuses to
+mutate, updates `reviewedVersion` to what it just saw (so the *next* explicit Apply has a
+correct baseline), and returns a new `'stale_review'` outcome — the UI shows "This task
+changed again. Review the latest version." and stays on the comparison screen. Only when the
+fetched version *does* match `reviewedVersion` does Apply proceed to replay, at which point
+the RPC's own `40001` precondition check remains the backstop for the one genuinely
+sub-millisecond race that can't be closed any other way (a write landing between Apply's own
+confirming fetch and its own write) — that case returns the existing `'conflict'` outcome,
+distinct from `'stale_review'`. Both are proven independently:
+`syncIssueResolution.test.ts` proves the fetch-to-write race by mocking the RPC call itself to
+reject with `'conflict'` despite the version check having just passed (the standard way to
+test a TOCTOU race deterministically — real concurrent timing can't be reproduced from
+sequential test code); `e2e:offline`'s 14-step scenario proves the stale-review window for
+real, end-to-end, against the real local stack (a second real concurrent write lands after a
+real review, Apply refuses and refreshes, a second real Apply then succeeds). A `pg`
+(node-postgres) raw-transaction-lock trick could in principle force the sub-millisecond race
+deterministically end-to-end too, but `pg` isn't a dependency of this project and adding one
+solely for this one test's exotic timing isn't worth the footprint — same reasoning this
+codebase already applied to the Maestro network-disconnection decision (Phase 9, "Maestro
+policy").
+
+**Verification (this pass)**: `npm run verify` (60 suites/550 tests — 6 new); `supabase db
+reset && supabase test db` (16 files, 530 pgTAP assertions —
+`160_sync_issues_resolution_test.sql` rewritten to 22 assertions proving indistinguishability
+directly); `deno test` for `dispatch-notifications` (11/11, run from
+`supabase/functions` per the documented invocation); `e2e:backend`
+(32/32)/`e2e:notifications` (24/24)/`e2e:calendar` (28/28)/`e2e:recurrence` (23/23) all
+re-confirmed; `e2e:offline` (both concurrency windows) run twice consecutively without a
+database reset, both green; `e2e:realtime` run twice, both green (28/28); `expo config`, both
+`expo export` platforms, `git diff --check` all clean; `expo-doctor` unchanged at 20/21 (same
+pre-existing, unrelated patch-version drift). A stray root-level `deno.lock` (generated by
+running `deno test` from the repo root instead of `supabase/functions` earlier in this same
+session — the real, canonical lockfile is `supabase/functions/deno.lock`, already tracked
+since Phase 6) was deleted and `/deno.lock` added to `.gitignore` to prevent recurrence.
+

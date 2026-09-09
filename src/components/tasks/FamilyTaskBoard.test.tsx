@@ -13,6 +13,13 @@ import { FamilyTaskBoard } from './FamilyTaskBoard';
 
 initI18n();
 
+// Phase 9 — hooks.ts now pulls in the offline queue store, which pulls in
+// AsyncStorage; same convention as persistedQueryClient.test.ts.
+jest.mock('@react-native-async-storage/async-storage', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
+
 // react-native's SectionList (built on VirtualizedList) only expands its
 // render window in response to real `onLayout`/scroll events, which never
 // fire under react-test-renderer (no native layout engine) — confirmed by

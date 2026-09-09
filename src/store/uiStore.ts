@@ -7,7 +7,7 @@ import { create } from 'zustand';
  * query/mutation instead. See docs/DECISIONS.md, "State-management
  * boundaries".
  */
-interface UIState {
+export interface UIState {
   /** Manual light/dark override; 'system' follows the OS setting. */
   colorSchemeOverride: 'system' | 'light' | 'dark';
   setColorSchemeOverride: (value: UIState['colorSchemeOverride']) => void;
@@ -39,6 +39,15 @@ interface UIState {
    */
   pendingNotificationRoute: string | null;
   setPendingNotificationRoute: (route: string | null) => void;
+
+  /**
+   * Phase 9 — the Realtime sync manager's own connection state
+   * (`src/lib/realtime/useRealtimeSync.ts`), surfaced for the sync-status
+   * indicator. Ephemeral, never fetched/persisted — the same rationale as
+   * every other field in this store.
+   */
+  realtimeStatus: 'connecting' | 'connected' | 'reconnecting' | 'offline' | 'error';
+  setRealtimeStatus: (status: UIState['realtimeStatus']) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -53,4 +62,7 @@ export const useUIStore = create<UIState>((set) => ({
 
   pendingNotificationRoute: null,
   setPendingNotificationRoute: (route) => set({ pendingNotificationRoute: route }),
+
+  realtimeStatus: 'offline',
+  setRealtimeStatus: (status) => set({ realtimeStatus: status }),
 }));

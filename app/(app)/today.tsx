@@ -9,6 +9,7 @@ import { TaskSectionList } from '@/components/tasks/TaskSectionList';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { OfflineBanner } from '@/components/ui/OfflineBanner';
+import { SyncStatusIndicator } from '@/components/ui/SyncStatusIndicator';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { useCategories } from '@/domain/categories/hooks';
 import {
@@ -93,6 +94,7 @@ export default function TodayScreen() {
           </Button>
         </View>
         <OfflineBanner />
+        <SyncStatusIndicator />
         <QuickAddInput date={todayDateString()} screenId="today" />
       </View>
 

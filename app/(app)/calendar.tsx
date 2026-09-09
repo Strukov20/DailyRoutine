@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { OfflineBanner } from '@/components/ui/OfflineBanner';
+import { SyncStatusIndicator } from '@/components/ui/SyncStatusIndicator';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import {
   useAcceptEventResponsibility,
@@ -19,7 +20,14 @@ import {
   useScheduleConflict,
   useTakeEventResponsibility,
 } from '@/domain/calendar/hooks';
-import { addLocalDays, formatEventDateLabel, formatEventTimeLabel, localDayBoundsUtc } from '@/domain/calendar/dateUtils';
+import {
+  addLocalDays,
+  dayBoundsUtcFor,
+  formatEventDateLabel,
+  formatEventTimeLabel,
+  localDayBoundsUtc,
+} from '@/domain/calendar/dateUtils';
+import { useFamilyConflicts } from '@/domain/conflicts/hooks';
 import { useActiveFamily, useFamilyMembers } from '@/domain/family/hooks';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { useAppTheme } from '@/theme';
@@ -53,6 +61,15 @@ export default function CalendarScreen() {
     selectedDate.getMonth() + 1,
     selectedDate.getDate(),
   );
+
+  // Conflict Center entry point (Section 15) — same bounded today..+7-day
+  // window app/conflicts.tsx itself queries, not this screen's own
+  // currently-selected single day, so the count means "conflicts to
+  // review soon," not "conflicts on the day I happen to be looking at."
+  const conflictWindowStart = dayBoundsUtcFor(new Date());
+  const conflictWindowEnd = dayBoundsUtcFor(addLocalDays(new Date(), 7));
+  const conflictsQuery = useFamilyConflicts(familyId, conflictWindowStart.startUtc, conflictWindowEnd.endUtc);
+  const conflictCount = conflictsQuery.data?.length ?? 0;
 
   const ownEventsQuery = useOwnDayEvents(startUtc, endUtc);
   const familyScheduleQuery = useFamilyDaySchedule(mode === 'family' ? familyId : null, startUtc, endUtc);
@@ -114,6 +131,7 @@ export default function CalendarScreen() {
   return (
     <ScreenContainer>
       <OfflineBanner />
+      <SyncStatusIndicator />
       <View style={styles.header}>
         <IconButton
           icon="chevron-left"
@@ -130,9 +148,20 @@ export default function CalendarScreen() {
         />
       </View>
 
-      <Chip icon="calendar-today" onPress={() => setSelectedDate(new Date())} style={styles.todayChip}>
-        {t('today')}
-      </Chip>
+      <View style={styles.chipRow}>
+        <Chip icon="calendar-today" onPress={() => setSelectedDate(new Date())} style={styles.todayChip}>
+          {t('today')}
+        </Chip>
+        {familyId && conflictCount > 0 ? (
+          <Chip
+            icon="alert-circle-outline"
+            onPress={() => router.push('/conflicts' as Href)}
+            style={[styles.todayChip, { backgroundColor: theme.colors.warning }]}
+          >
+            {t('conflictsBadge', { count: conflictCount })}
+          </Chip>
+        ) : null}
+      </View>
 
       <SegmentedButtons
         value={mode}
@@ -302,9 +331,14 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
   },
+  chipRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
   todayChip: {
     alignSelf: 'center',
-    marginBottom: 8,
   },
   segmented: {
     marginBottom: 8,

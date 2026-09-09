@@ -1,10 +1,12 @@
 import type { Session } from '@supabase/supabase-js';
-import { createContext, use, useCallback, useEffect, useMemo, useState } from 'react';
+import { createContext, use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PropsWithChildren } from 'react';
 
 import { mapProfileRow } from '@/domain/profile/mappers';
 import type { Profile } from '@/domain/profile/types';
 import { createLogger } from '@/lib/logger/logger';
+import { clearPersistedQueryCache } from '@/lib/query/persistedQueryClient';
+import { queryClient } from '@/lib/query/queryClient';
 import { supabase } from '@/lib/supabase/client';
 
 const logger = createLogger('auth-provider');
@@ -58,6 +60,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
   }, [loadProfile, session]);
 
+  // Tracks the most recent real signed-in user id purely so the
+  // SIGNED_OUT branch below knows *whose* persisted query cache to clear
+  // — by the time that event fires, `session`/`profile` state has not
+  // necessarily re-rendered yet, and the event itself carries no user id
+  // of its own (nextSession is null on sign-out).
+  const lastUserIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     let mounted = true;
 
@@ -65,7 +74,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (!mounted) return;
       setSession(data.session);
       setStatus(data.session ? 'signed-in' : 'signed-out');
-      if (data.session) void loadProfile(data.session.user.id);
+      if (data.session) {
+        lastUserIdRef.current = data.session.user.id;
+        void loadProfile(data.session.user.id);
+      }
     });
 
     const {
@@ -75,9 +87,21 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setSession(nextSession);
       setStatus(nextSession ? 'signed-in' : 'signed-out');
       if (nextSession) {
+        lastUserIdRef.current = nextSession.user.id;
         void loadProfile(nextSession.user.id);
       } else {
         setProfile(null);
+        // Real sign-out (never a mere family switch, which keeps the same
+        // profileId): drop this profile's persisted offline cache and the
+        // in-memory query cache both, so nothing from this account is
+        // still resolvable to whatever signs in next on this device
+        // (Section 8: "cleared on logout," "no data from the previous
+        // account flashes after account switch").
+        if (event === 'SIGNED_OUT' && lastUserIdRef.current) {
+          void clearPersistedQueryCache(lastUserIdRef.current);
+          queryClient.clear();
+          lastUserIdRef.current = null;
+        }
       }
     });
 

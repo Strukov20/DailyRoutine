@@ -1,0 +1,75 @@
+{
+  "title": "Sync Issues",
+  "empty": {
+    "title": "Everything is synced",
+    "description": "There are no changes requiring your attention."
+  },
+  "offlineNote": "You're offline — some actions are unavailable until you're back online.",
+  "status": {
+    "waitingToRetry": "Waiting to retry",
+    "needsReview": "Needs review",
+    "cannotSync": "Cannot be synchronized",
+    "taskGone": "Task no longer available"
+  },
+  "operationType": {
+    "create_personal_task": "Create task",
+    "update_personal_task": "Update task",
+    "schedule_personal_task": "Schedule task",
+    "complete_personal_task": "Complete task",
+    "restore_personal_task": "Restore task",
+    "delete_personal_task": "Delete task",
+    "complete_task_occurrence": "Complete occurrence",
+    "restore_task_occurrence": "Restore occurrence"
+  },
+  "reason": {
+    "conflict": "This task changed on another device while you were offline.",
+    "permanent_validation": "This change is no longer valid.",
+    "task_unavailable": "This task is no longer available.",
+    "unknown": "We couldn't sync this change after several attempts."
+  },
+  "actions": {
+    "retry": "Retry",
+    "reviewPendingChange": "Review pending change",
+    "reviewChanges": "Review changes",
+    "discardMyChange": "Discard my change",
+    "discardLocalChange": "Discard local change",
+    "reloadLatestVersion": "Reload latest server version",
+    "applyMyChange": "Apply my change",
+    "keepServerVersion": "Keep server version"
+  },
+  "confirm": {
+    "discardTitle": "Discard your offline change?",
+    "discardBody": "The latest version from the server will be kept.",
+    "applyTitle": "Apply your offline change?",
+    "applyBody": "This will replace the displayed fields in the latest server version.",
+    "confirm": "Confirm",
+    "cancel": "Cancel"
+  },
+  "comparison": {
+    "title": "Review changes",
+    "localHeader": "On this device",
+    "serverHeader": "Latest server version",
+    "field": {
+      "title": "Title",
+      "description": "Description",
+      "priority": "Priority",
+      "category": "Category",
+      "visibility": "Visibility",
+      "date": "Date",
+      "startTime": "Time",
+      "durationMinutes": "Duration",
+      "timezone": "Time zone"
+    },
+    "emptyValue": "(none)",
+    "taskGone": "This task is no longer available on the server.",
+    "offlineUnavailable": "Latest server version unavailable — you're offline.",
+    "loading": "Loading the latest server version…",
+    "error": "Couldn't load the latest server version.",
+    "staleReview": "This task changed again. Review the latest version."
+  },
+  "queuedAt": "Queued {{time}}",
+  "notFound": {
+    "title": "This issue is no longer available",
+    "description": "It may have already been resolved on this device."
+  }
+}

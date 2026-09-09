@@ -23,6 +23,13 @@ const logger = createLogger('task-service');
 export type TaskErrorCode = 'forbidden' | 'invalid_input' | 'conflict' | 'unknown';
 
 const CODE_BY_SQLSTATE: Record<string, TaskErrorCode> = {
+  // update_personal_task/schedule_personal_task/complete_personal_task/
+  // restore_personal_task deliberately raise the *same* 42501 for "the
+  // task doesn't exist," "it exists but belongs to another profile," and
+  // "it exists but is no longer visible to the caller" (soft-deleted) —
+  // see docs/DECISIONS.md, "Phase 9," for why an earlier pass's P0002 split
+  // was a cross-user task-existence oracle and was removed. Never
+  // reintroduce a distinct code for "not found" here.
   '42501': 'forbidden',
   '22023': 'invalid_input',
   '23514': 'invalid_input',
@@ -205,6 +212,13 @@ export interface CreatePersonalTaskParams {
   categoryId?: string;
   visibility?: TaskVisibility;
   familyId?: string;
+  /**
+   * Phase 9 — an offline-queued create's idempotency key (see
+   * src/lib/offline). `create_personal_task` returns the existing row's id
+   * on a replay with the same (caller, clientOperationId) pair instead of
+   * inserting a duplicate. Omitted for a normal online create.
+   */
+  clientOperationId?: string;
 }
 
 export async function getTask(taskId: string): Promise<Task | null> {
@@ -225,6 +239,7 @@ export async function createPersonalTask(params: CreatePersonalTaskParams): Prom
     p_category_id: params.categoryId,
     p_visibility: params.visibility,
     p_family_id: params.familyId,
+    p_client_operation_id: params.clientOperationId,
   });
   if (error) throw toTaskServiceError(error);
   return data;
@@ -240,6 +255,15 @@ export interface UpdatePersonalTaskParams {
   clearCategory?: boolean;
   visibility?: TaskVisibility;
   familyId?: string;
+  /**
+   * Phase 9 — optimistic-concurrency precondition (see docs/DECISIONS.md,
+   * "Phase 9"): when set, the RPC raises a stale-write conflict (errcode
+   * 40001, surfaced here as TaskErrorCode 'conflict') if the row's actual
+   * updated_at no longer matches, rather than silently overwriting a
+   * change made elsewhere. Omitted for a normal online edit, where the UI
+   * already reflects the live server state.
+   */
+  expectedUpdatedAt?: string;
 }
 
 export async function updatePersonalTask(params: UpdatePersonalTaskParams): Promise<void> {
@@ -253,6 +277,7 @@ export async function updatePersonalTask(params: UpdatePersonalTaskParams): Prom
     p_clear_category: params.clearCategory,
     p_visibility: params.visibility,
     p_family_id: params.familyId,
+    p_expected_updated_at: params.expectedUpdatedAt,
   });
   if (error) throw toTaskServiceError(error);
 }
@@ -273,6 +298,8 @@ export interface SchedulePersonalTaskParams {
   startTime?: string;
   durationMinutes?: number;
   timezone?: string;
+  /** Phase 9 — same stale-write precondition as UpdatePersonalTaskParams.expectedUpdatedAt. */
+  expectedUpdatedAt?: string;
 }
 
 export async function schedulePersonalTask(params: SchedulePersonalTaskParams): Promise<void> {
@@ -282,6 +309,7 @@ export async function schedulePersonalTask(params: SchedulePersonalTaskParams): 
     p_start_time: params.startTime,
     p_duration_minutes: params.durationMinutes,
     p_timezone: params.timezone,
+    p_expected_updated_at: params.expectedUpdatedAt,
   });
   if (error) throw toTaskServiceError(error);
 }

@@ -9,6 +9,7 @@ import { TaskSectionList } from '@/components/tasks/TaskSectionList';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { OfflineBanner } from '@/components/ui/OfflineBanner';
+import { SyncStatusIndicator } from '@/components/ui/SyncStatusIndicator';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { useCategories } from '@/domain/categories/hooks';
 import { todayDateString, tomorrowDateString } from '@/domain/tasks/dateUtils';
@@ -73,6 +74,7 @@ export default function InboxScreen() {
           {t('screens:inbox.title')}
         </Text>
         <OfflineBanner />
+        <SyncStatusIndicator />
         <QuickAddInput screenId="inbox" />
       </View>
 

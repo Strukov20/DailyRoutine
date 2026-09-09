@@ -5,20 +5,24 @@ import { initReactI18next } from 'react-i18next';
 import enAuth from './locales/en/auth.json';
 import enCalendar from './locales/en/calendar.json';
 import enCommon from './locales/en/common.json';
+import enConflicts from './locales/en/conflicts.json';
 import enErrors from './locales/en/errors.json';
 import enFamily from './locales/en/family.json';
 import enNavigation from './locales/en/navigation.json';
 import enNotifications from './locales/en/notifications.json';
 import enScreens from './locales/en/screens.json';
+import enSyncIssues from './locales/en/syncIssues.json';
 import enTasks from './locales/en/tasks.json';
 import ukAuth from './locales/uk/auth.json';
 import ukCalendar from './locales/uk/calendar.json';
 import ukCommon from './locales/uk/common.json';
+import ukConflicts from './locales/uk/conflicts.json';
 import ukErrors from './locales/uk/errors.json';
 import ukFamily from './locales/uk/family.json';
 import ukNavigation from './locales/uk/navigation.json';
 import ukNotifications from './locales/uk/notifications.json';
 import ukScreens from './locales/uk/screens.json';
+import ukSyncIssues from './locales/uk/syncIssues.json';
 import ukTasks from './locales/uk/tasks.json';
 
 export const SUPPORTED_LANGUAGES = ['en', 'uk'] as const;
@@ -38,6 +42,8 @@ export const resources = {
     family: enFamily,
     notifications: enNotifications,
     calendar: enCalendar,
+    conflicts: enConflicts,
+    syncIssues: enSyncIssues,
   },
   uk: {
     common: ukCommon,
@@ -49,6 +55,8 @@ export const resources = {
     family: ukFamily,
     notifications: ukNotifications,
     calendar: ukCalendar,
+    conflicts: ukConflicts,
+    syncIssues: ukSyncIssues,
   },
 } as const;
 

@@ -87,9 +87,21 @@ Full product/architecture documentation lives in [`docs/`](docs/):
   interaction limitation under Maestro automation — see DECISIONS.md for the full evidence and
   what remains unverified.
 
-Still not implemented: Realtime sync, notifications for anything beyond shared-task/
-responsibility-assignment/reminder events, Week/Month calendar views, and shared/family
-recurring tasks — see [docs/MVP_SCOPE.md](docs/MVP_SCOPE.md) for the exact boundary,
+- **Phase 9 (Secure Realtime Sync, Offline Resilience, and Conflict Center)**: private
+  Broadcast-based cross-device Realtime sync (never `postgres_changes`, never a row in a
+  payload); a persisted, profile-partitioned offline read cache; a bounded, idempotent
+  offline mutation queue for eight safe personal-task/occurrence operations; the Conflict
+  Center for schedule conflicts (overlapping events/tasks, unassigned responsibilities); and,
+  from a completion pass, the **Sync Issues** screens — full manual review/resolve UX for a
+  stale-write offline conflict (field-level comparison, Reload/Apply/Keep/Discard), never a
+  silent server overwrite. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), "Offline &
+  caching (Phase 9)," and [docs/DECISIONS.md](docs/DECISIONS.md), "Phase 9," for the full
+  design. Real device network-interruption testing, native account-switch-no-flash
+  observation, and Android are deferred to a Phase 10 manual release checklist.
+
+Still not implemented: notifications for anything beyond shared-task/responsibility-
+assignment/reminder events, Week/Month calendar views, and shared/family recurring tasks —
+see [docs/MVP_SCOPE.md](docs/MVP_SCOPE.md) for the exact boundary,
 [docs/ROADMAP.md](docs/ROADMAP.md) for what's deliberately deferred, and
 [docs/DECISIONS.md](docs/DECISIONS.md) for why things were built the way they were.
 

@@ -13,6 +13,8 @@
   "busy": "Зайнято",
   "warningsTitle": "Попередження",
   "conflictGeneric": "{{name}} зайнятий(а) у цей час",
+  "conflictsBadge_one": "{{count}} конфлікт",
+  "conflictsBadge_other": "{{count}} конфліктів",
   "dropOff": "Відвезти",
   "pickUp": "Забрати",
   "supervise": "Наглянути",

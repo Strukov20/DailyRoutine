@@ -8,6 +8,9 @@ import {
 import { useMemo } from 'react';
 
 import { useAuth } from '@/lib/auth/AuthProvider';
+import { useOfflineQueueStore } from '@/lib/offline/offlineQueueStore';
+import type { OfflineOperation, OfflineOperationType } from '@/lib/offline/types';
+import { useIsOffline } from '@/lib/query/useIsOffline';
 import {
   acceptTaskAssignment,
   assignFamilyTask,
@@ -29,6 +32,7 @@ import {
   restoreSharedTask,
   schedulePersonalTask,
   takeFamilyTask,
+  TaskServiceError,
   unassignFamilyTask,
   updatePersonalTask,
   type CreatePersonalTaskParams,
@@ -118,6 +122,94 @@ function patchTaskInCache(
   }
 }
 
+/** Optimistically removes `taskId` wherever it appears in any mounted task-list query. */
+function removeTaskFromCache(queryClient: QueryClient, taskId: string): void {
+  const queries = queryClient.getQueriesData<Task[]>({ queryKey: ['tasks'] });
+  for (const [key, data] of queries) {
+    if (!data) continue;
+    queryClient.setQueryData(
+      key,
+      data.filter((task) => task.id !== taskId),
+    );
+  }
+}
+
+function findCachedTask(queryClient: QueryClient, taskId: string): Task | undefined {
+  const queries = queryClient.getQueriesData<Task[]>({ queryKey: ['tasks'] });
+  for (const [, data] of queries) {
+    const found = data?.find((task) => task.id === taskId);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * Phase 9, Sections 9-10 — enqueues one offline personal-task operation
+ * (see src/lib/offline). Returns whether it was accepted; `false` only
+ * once the bounded queue is full ("no silent dropping when exceeded" —
+ * the caller surfaces this as a normal mutation error, same path as any
+ * other TaskServiceError).
+ */
+async function enqueueOfflineOperation(
+  profileId: string,
+  operationType: OfflineOperationType,
+  entityId: string | null,
+  clientGeneratedId: string | null,
+  payload: unknown,
+  expectedUpdatedAt: string | null,
+): Promise<boolean> {
+  const operation: OfflineOperation = {
+    operationId: crypto.randomUUID(),
+    profileId,
+    operationType,
+    entityId,
+    clientGeneratedId,
+    payload,
+    expectedUpdatedAt,
+    reviewedVersion: null,
+    createdAt: new Date().toISOString(),
+    attemptCount: 0,
+    status: 'pending',
+    lastSafeErrorCode: null,
+  };
+  const result = await useOfflineQueueStore.getState().enqueue(operation);
+  return result.ok;
+}
+
+const OFFLINE_QUEUE_FULL_MESSAGE =
+  'Too many changes are waiting to sync — connect to the internet to catch up before making more.';
+
+/** Section 9 scope: an offline create is an unscheduled Inbox task only — a dated create needs the recurrence/reminder machinery this queue deliberately does not carry offline. */
+const OFFLINE_SCHEDULED_CREATE_MESSAGE =
+  'Creating a scheduled task is not available offline — add it to the Inbox instead, or reconnect first.';
+
+function buildOptimisticInboxTask(
+  clientGeneratedId: string,
+  profileId: string,
+  params: CreatePersonalTaskParams,
+): Task {
+  const now = new Date().toISOString();
+  return {
+    id: clientGeneratedId,
+    ownerProfileId: profileId,
+    familyId: params.familyId ?? null,
+    title: params.title,
+    description: params.description ?? null,
+    date: null,
+    startTime: null,
+    durationMinutes: null,
+    timezone: null,
+    priority: params.priority ?? 'normal',
+    categoryId: params.categoryId ?? null,
+    visibility: params.visibility ?? 'private',
+    completedAt: null,
+    createdAt: now,
+    updatedAt: now,
+    assigneeMemberId: null,
+    assignmentStatus: 'unassigned',
+  };
+}
+
 export function useInboxTasks() {
   const { profile } = useAuth();
   const profileId = profile?.id ?? null;
@@ -176,11 +268,41 @@ export function useTomorrowSections() {
   return { sections, isLoading: query.isLoading, isError: query.isError, refetch: query.refetch };
 }
 
+/**
+ * Phase 9 — while offline, this enqueues the create instead of calling the
+ * RPC directly and optimistically prepends a `clientGeneratedId`-keyed row
+ * to the Inbox list; a straight `invalidateTaskLists` (paused by TanStack's
+ * own network-aware refetching until reconnect — see
+ * src/lib/query/onlineManager.ts) swaps it for the real row once the
+ * queued create replays. Only an unscheduled Inbox task can be queued this
+ * way (Section 9's scope) — a dated create still requires connectivity.
+ */
 export function useCreatePersonalTask() {
   const queryClient = useQueryClient();
   const { profile } = useAuth();
+  const isOffline = useIsOffline();
   return useMutation({
-    mutationFn: (params: CreatePersonalTaskParams) => createPersonalTask(params),
+    mutationFn: async (params: CreatePersonalTaskParams) => {
+      if (isOffline && profile) {
+        if (params.date) throw new TaskServiceError('invalid_input', OFFLINE_SCHEDULED_CREATE_MESSAGE);
+        const clientGeneratedId = crypto.randomUUID();
+        const accepted = await enqueueOfflineOperation(
+          profile.id,
+          'create_personal_task',
+          null,
+          clientGeneratedId,
+          params,
+          null,
+        );
+        if (!accepted) throw new TaskServiceError('unknown', OFFLINE_QUEUE_FULL_MESSAGE);
+        queryClient.setQueryData<Task[]>(taskKeys.inbox(profile.id), (existing) => [
+          buildOptimisticInboxTask(clientGeneratedId, profile.id, params),
+          ...(existing ?? []),
+        ]);
+        return clientGeneratedId;
+      }
+      return createPersonalTask(params);
+    },
     onSuccess: () => {
       if (profile) invalidateTaskLists(queryClient, profile.id);
     },
@@ -190,8 +312,33 @@ export function useCreatePersonalTask() {
 export function useUpdatePersonalTask() {
   const queryClient = useQueryClient();
   const { profile } = useAuth();
+  const isOffline = useIsOffline();
   return useMutation({
-    mutationFn: (params: UpdatePersonalTaskParams) => updatePersonalTask(params),
+    mutationFn: async (params: UpdatePersonalTaskParams) => {
+      if (isOffline && profile) {
+        const cached = findCachedTask(queryClient, params.taskId);
+        const accepted = await enqueueOfflineOperation(
+          profile.id,
+          'update_personal_task',
+          params.taskId,
+          null,
+          params,
+          cached?.updatedAt ?? null,
+        );
+        if (!accepted) throw new TaskServiceError('unknown', OFFLINE_QUEUE_FULL_MESSAGE);
+        patchTaskInCache(queryClient, params.taskId, (task) => ({
+          ...task,
+          title: params.title ?? task.title,
+          description: params.clearDescription ? null : (params.description ?? task.description),
+          priority: params.priority ?? task.priority,
+          categoryId: params.clearCategory ? null : (params.categoryId ?? task.categoryId),
+          visibility: params.visibility ?? task.visibility,
+          familyId: params.familyId ?? task.familyId,
+        }));
+        return;
+      }
+      return updatePersonalTask(params);
+    },
     onSuccess: () => {
       if (profile) invalidateTaskLists(queryClient, profile.id);
     },
@@ -201,8 +348,31 @@ export function useUpdatePersonalTask() {
 export function useSchedulePersonalTask() {
   const queryClient = useQueryClient();
   const { profile } = useAuth();
+  const isOffline = useIsOffline();
   return useMutation({
-    mutationFn: (params: SchedulePersonalTaskParams) => schedulePersonalTask(params),
+    mutationFn: async (params: SchedulePersonalTaskParams) => {
+      if (isOffline && profile) {
+        const cached = findCachedTask(queryClient, params.taskId);
+        const accepted = await enqueueOfflineOperation(
+          profile.id,
+          'schedule_personal_task',
+          params.taskId,
+          null,
+          params,
+          cached?.updatedAt ?? null,
+        );
+        if (!accepted) throw new TaskServiceError('unknown', OFFLINE_QUEUE_FULL_MESSAGE);
+        patchTaskInCache(queryClient, params.taskId, (task) => ({
+          ...task,
+          date: params.date,
+          startTime: params.startTime ?? null,
+          durationMinutes: params.durationMinutes ?? null,
+          timezone: params.timezone ?? task.timezone,
+        }));
+        return;
+      }
+      return schedulePersonalTask(params);
+    },
     onSuccess: () => {
       if (profile) invalidateTaskLists(queryClient, profile.id);
     },
@@ -223,8 +393,17 @@ export function useMoveTaskToInbox() {
 export function useDeletePersonalTask() {
   const queryClient = useQueryClient();
   const { profile } = useAuth();
+  const isOffline = useIsOffline();
   return useMutation({
-    mutationFn: (taskId: string) => deleteOrArchivePersonalTask(taskId),
+    mutationFn: async (taskId: string) => {
+      if (isOffline && profile) {
+        const accepted = await enqueueOfflineOperation(profile.id, 'delete_personal_task', taskId, null, {}, null);
+        if (!accepted) throw new TaskServiceError('unknown', OFFLINE_QUEUE_FULL_MESSAGE);
+        removeTaskFromCache(queryClient, taskId);
+        return;
+      }
+      return deleteOrArchivePersonalTask(taskId);
+    },
     onSuccess: () => {
       if (profile) invalidateTaskLists(queryClient, profile.id);
     },
@@ -240,8 +419,23 @@ export function useDeletePersonalTask() {
 export function useCompletePersonalTask() {
   const queryClient = useQueryClient();
   const { profile } = useAuth();
+  const isOffline = useIsOffline();
   return useMutation({
-    mutationFn: (taskId: string) => completePersonalTask(taskId),
+    mutationFn: async (taskId: string) => {
+      if (isOffline && profile) {
+        const accepted = await enqueueOfflineOperation(
+          profile.id,
+          'complete_personal_task',
+          taskId,
+          null,
+          {},
+          null,
+        );
+        if (!accepted) throw new TaskServiceError('unknown', OFFLINE_QUEUE_FULL_MESSAGE);
+        return;
+      }
+      return completePersonalTask(taskId);
+    },
     onMutate: async (taskId: string) => {
       await queryClient.cancelQueries({ queryKey: ['tasks'] });
       const previous = snapshotTaskQueries(queryClient);
@@ -263,8 +457,23 @@ export function useCompletePersonalTask() {
 export function useRestorePersonalTask() {
   const queryClient = useQueryClient();
   const { profile } = useAuth();
+  const isOffline = useIsOffline();
   return useMutation({
-    mutationFn: (taskId: string) => restorePersonalTask(taskId),
+    mutationFn: async (taskId: string) => {
+      if (isOffline && profile) {
+        const accepted = await enqueueOfflineOperation(
+          profile.id,
+          'restore_personal_task',
+          taskId,
+          null,
+          {},
+          null,
+        );
+        if (!accepted) throw new TaskServiceError('unknown', OFFLINE_QUEUE_FULL_MESSAGE);
+        return;
+      }
+      return restorePersonalTask(taskId);
+    },
     onMutate: async (taskId: string) => {
       await queryClient.cancelQueries({ queryKey: ['tasks'] });
       const previous = snapshotTaskQueries(queryClient);

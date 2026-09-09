@@ -24,7 +24,7 @@ describe('i18n', () => {
   });
 
   it('has matching keys in every namespace across both locales', () => {
-    for (const namespace of ['common', 'navigation', 'screens', 'auth', 'tasks', 'errors']) {
+    for (const namespace of ['common', 'navigation', 'screens', 'auth', 'tasks', 'errors', 'conflicts', 'syncIssues']) {
       const enKeys = collectKeys(i18n.getResourceBundle('en', namespace));
       const ukKeys = collectKeys(i18n.getResourceBundle('uk', namespace));
       expect(ukKeys.sort()).toEqual(enKeys.sort());
