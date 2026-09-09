@@ -47,3 +47,9 @@ yarn-error.*
 
 # Claude Code session-local runtime state (not shared project config)
 .claude/*.lock
+
+# Deno's real lockfile is supabase/functions/deno.lock (colocated with that
+# tree's own deno.json — always `cd supabase/functions && deno test ...`).
+# Running `deno test` from the repo root instead accidentally generates a
+# second, redundant one here — never intentional, never committed.
+/deno.lock
