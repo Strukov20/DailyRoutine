@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react-native';
 
 import type { FamilyMember } from '@/domain/family/types';
 import type { FamilyConflict } from '@/domain/conflicts/types';
+import { todayDateString } from '@/domain/tasks/dateUtils';
 import { initI18n } from '@/i18n';
 import { AppThemeProvider } from '@/theme';
 
@@ -108,7 +109,12 @@ describe('ConflictsScreen', () => {
   });
 
   it("buckets today's conflict under Today and a future one under Upcoming", async () => {
-    const today = new Date().toISOString().slice(0, 10);
+    // app/conflicts.tsx buckets by the device's *local* calendar date
+    // (todayDateString(), see @/domain/tasks/dateUtils) — a UTC-based
+    // `toISOString().slice(0, 10)` here diverges from it for part of every
+    // day in any timezone ahead of UTC, the same class of real-wall-clock
+    // test flakiness TEST_STRATEGY.md already documents (Phase 4/8).
+    const today = todayDateString();
     mockConflictsState = {
       ...mockConflictsState,
       data: [
