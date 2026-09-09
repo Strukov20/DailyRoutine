@@ -10,6 +10,7 @@ describe('mapFamilyRow', () => {
         created_at: '2026-01-01',
         updated_at: '2026-01-01',
         created_by: 'u1',
+        deleted_at: null,
       }),
     ).toEqual({ id: 'f1', name: 'The Smiths', ownerId: 'u1', createdAt: '2026-01-01' });
   });
