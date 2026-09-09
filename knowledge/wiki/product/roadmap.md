@@ -1,14 +1,15 @@
 ---
 title: Roadmap (V2/V3)
 status: current
-updated: 2026-09-08
+updated: 2026-09-09
 sources:
   - ../../../docs/ROADMAP.md
   - ../../raw/sessions/2026-09-03-phase4-personal-tasks.md
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
   - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
   - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
-tags: [product, roadmap, v2, v3, phase8]
+  - ../../raw/sessions/2026-09-09-phase10-release-stabilization.md
+tags: [product, roadmap, v2, v3, phase10]
 ---
 
 ## Confirmed
@@ -38,9 +39,20 @@ calendar](../engineering/family-calendar.md), and `docs/ROADMAP.md` for the full
 member's recurring occurrences), AI planning, drag-and-drop editing, attachments, event
 ownership transfer, a full offline write queue, and all-day/date-only events.
 
-**Also still open**: family ownership transfer / an owner leaving their own family has no RPC
-(`remove_family_member` unconditionally refuses to remove the `role = 'owner'` row) — see
-[Family Spaces](../domain/family-spaces.md).
+**Resolved, Phase 10**: family ownership transfer, an owner deleting their own family, a
+non-owner leaving, and self-service account deletion all now have RPCs
+(`transfer_family_ownership`/`delete_family`/`leave_family`/`request_account_deletion`) — see
+[Family Spaces](../domain/family-spaces.md), "Ownership transfer, family deletion, and account
+deletion." `remove_family_member` still unconditionally refuses to remove a `role = 'owner'`
+row directly — that's by design now, not a gap: the owner must go through one of the RPCs
+above instead.
+
+**Correction to this page's own prior "Not full offline-first sync" claim** (see "Offline
+behavior" below): that was accurate through Phase 4/8 but became stale once Phase 9 actually
+built a persisted query cache and a bounded offline mutation queue — this page wasn't updated
+at the time. See [Realtime sync and offline resilience](../engineering/realtime-sync-and-offline.md)
+for the real, current design; the "Offline behavior" section below is left as a historical
+record of the Phase 4-era baseline and should not be read as current.
 
 **V2 (not implemented, architecturally anticipated):** Google/Apple Calendar integration,
 Week/Month calendar views, subtasks, attachments, shared shopping lists,
@@ -88,3 +100,6 @@ shopping-list schema shape is explicitly "decide at design time, not now").
   deferred
 - [Recurring tasks and reminders](../engineering/recurring-tasks-and-reminders.md) — what
   Phase 8 built and what's still deferred
+- [Realtime sync and offline resilience](../engineering/realtime-sync-and-offline.md) — what
+  Phase 9 actually built (this page's own "Offline behavior" section predates it)
+- [Family Spaces](../domain/family-spaces.md) — the Phase 10 ownership/deletion RPCs

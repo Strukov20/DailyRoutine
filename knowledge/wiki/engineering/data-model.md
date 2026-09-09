@@ -1,7 +1,7 @@
 ---
 title: Data model
 status: current
-updated: 2026-09-08
+updated: 2026-09-09
 sources:
   - ../../../docs/DATA_MODEL.md
   - ../../../docs/DECISIONS.md
@@ -12,14 +12,16 @@ sources:
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
   - ../../raw/sessions/2026-09-07-phase7-family-calendar.md
   - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
-tags: [engineering, data-model, supabase, phase8]
+  - ../../raw/sessions/2026-09-09-phase10-release-stabilization.md
+tags: [engineering, data-model, supabase, phase10]
 ---
 
 ## Status: implemented
 
-`supabase/migrations/` (16 files) implements this schema against a local Supabase project
-only — no hosted/production project connected. See [`docs/DATA_MODEL.md`](../../../docs/DATA_MODEL.md)
-for the normative description; the migrations are the source of truth for exact syntax.
+`supabase/migrations/` (24 files as of Phase 10) implements this schema against a local
+Supabase project only — no hosted/production project connected. See
+[`docs/DATA_MODEL.md`](../../../docs/DATA_MODEL.md) for the normative description; the
+migrations are the source of truth for exact syntax.
 
 ## Entities (full column lists in the migrations / doc)
 
@@ -89,6 +91,17 @@ also check a member's own recurring occurrences and one-off timed personal tasks
 reasoning: [DECISIONS.md, "Phase 8"](../../../docs/DECISIONS.md) and
 [Recurring tasks and reminders](recurring-tasks-and-reminders.md).
 
+**Phase 10 additions**: `families.deleted_at`, `profiles.deleted_at` (soft delete, same
+convention as `tasks`/`events`); new `family_ownership_transfers` table (append-only audit —
+`family_id`, `previous_owner_member_id`, `new_owner_member_id`, `transferred_by`,
+`transferred_at`; members can `SELECT`, no other grant); `families`/`profiles`' `UPDATE`
+grants narrowed from blanket to explicit column lists excluding the new `deleted_at`/
+`owner_id` columns (see [security model](security-model.md), "Family lifecycle mutations");
+`is_family_member`/`is_family_owner`/`current_family_ids` (Phase 2, extended Phase 5) extended
+again to exclude a deleted family. Full reasoning:
+[DECISIONS.md, "Phase 10"](../../../docs/DECISIONS.md) and
+[Family Spaces](../domain/family-spaces.md).
+
 ## Ownership summary (who owns what, who can read it)
 
 See [`docs/DATA_MODEL.md`, "Ownership and authorization
@@ -123,9 +136,11 @@ table. Key points not to get wrong:
   atomically creates the family row and its owner's membership row; `families`/
   `family_members` still have no direct INSERT grant for `authenticated` by design. See
   [Family Spaces](../domain/family-spaces.md) and [DECISIONS.md](../../../docs/DECISIONS.md).
-- **Family ownership transfer has no RPC** — `remove_family_member` refuses unconditionally
-  to remove the `role = 'owner'` row, so an owner cannot currently hand off or leave a family
-  they created. See [roadmap](../product/roadmap.md).
+- ~~Family ownership transfer has no RPC~~ — resolved in Phase 10:
+  `transfer_family_ownership`/`delete_family`/`leave_family`/`request_account_deletion`.
+  `remove_family_member` still refuses unconditionally to remove a `role = 'owner'` row
+  directly — by design, the owner now goes through one of those RPCs instead. See
+  [Family Spaces](../domain/family-spaces.md).
 - ~~`src/lib/supabase/types.ts` is hand-authored~~ — resolved: it's now the real generated
   output (`npm run db:types` run for real against the local stack). CHECK-constrained columns
   come back as `string` (a generator limitation, not a bug) — narrowed in domain mappers

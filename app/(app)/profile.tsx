@@ -2,15 +2,17 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, View } from 'react-native';
-import { Button, Divider, HelperText, List, SegmentedButtons, Text } from 'react-native-paper';
+import { Button, Dialog, Divider, HelperText, List, Portal, SegmentedButtons, Text, TextInput } from 'react-native-paper';
 
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { APP_INFO } from '@/config/appInfo';
+import { useRequestAccountDeletion } from '@/domain/profile/hooks';
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '@/i18n';
 import { AuthServiceError, signOut } from '@/lib/auth/authService';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { createLogger } from '@/lib/logger/logger';
 import { deactivateCurrentDeviceToken } from '@/lib/notifications/notificationService';
+import { ProfileServiceError } from '@/lib/profile/profileService';
 import { useUIStore } from '@/store/uiStore';
 import { useAppTheme } from '@/theme';
 
@@ -29,6 +31,12 @@ export default function ProfileScreen() {
   const { session, profile } = useAuth();
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
+  const requestAccountDeletion = useRequestAccountDeletion();
+  const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const confirmPhrase = t('profile.deleteAccount.confirmPhrase');
 
   const onSignOut = async () => {
     setSignOutError(null);
@@ -48,6 +56,36 @@ export default function ProfileScreen() {
       setSignOutError(t('common:state.somethingWentWrong'));
     } finally {
       setIsSigningOut(false);
+    }
+  };
+
+  const onOpenDeleteDialog = () => {
+    setDeleteError(null);
+    setDeleteConfirmText('');
+    setDeleteDialogVisible(true);
+  };
+
+  const onConfirmDeleteAccount = async () => {
+    setDeleteError(null);
+    setIsDeletingAccount(true);
+    try {
+      await requestAccountDeletion.mutateAsync();
+      // Same best-effort-then-sign-out sequence as a normal sign-out
+      // (Section 3: "logout and immediate clearing of..." applies here
+      // too — this account is gone either way).
+      await deactivateCurrentDeviceToken();
+      await signOut();
+      setDeleteDialogVisible(false);
+    } catch (error) {
+      const code = error instanceof ProfileServiceError ? error.code : 'unknown';
+      logger.warn('account deletion failed', { code });
+      setDeleteError(
+        code === 'still_owns_a_family'
+          ? t('profile.deleteAccount.stillOwnsAFamily')
+          : t('profile.deleteAccount.genericError'),
+      );
+    } finally {
+      setIsDeletingAccount(false);
     }
   };
 
@@ -114,6 +152,17 @@ export default function ProfileScreen() {
 
       <Divider style={styles.divider} />
 
+      <Button
+        testID="profile-delete-account"
+        mode="outlined"
+        textColor={theme.colors.danger}
+        onPress={onOpenDeleteDialog}
+      >
+        {t('profile.deleteAccount.action')}
+      </Button>
+
+      <Divider style={styles.divider} />
+
       <View>
         <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
           {t('profile.about', { appName: APP_INFO.productName })}
@@ -122,6 +171,48 @@ export default function ProfileScreen() {
           {APP_INFO.tagline}
         </Text>
       </View>
+
+      <Portal>
+        <Dialog
+          testID="profile-delete-account-dialog"
+          visible={deleteDialogVisible}
+          onDismiss={() => setDeleteDialogVisible(false)}
+        >
+          <Dialog.Title>{t('profile.deleteAccount.title')}</Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodyMedium" style={styles.deleteDialogMessage}>
+              {t('profile.deleteAccount.message')}
+            </Text>
+            <TextInput
+              testID="profile-delete-account-confirm-input"
+              mode="outlined"
+              label={t('profile.deleteAccount.confirmPhraseLabel')}
+              value={deleteConfirmText}
+              onChangeText={setDeleteConfirmText}
+              autoCapitalize="characters"
+              autoCorrect={false}
+            />
+            <HelperText type="error" visible={Boolean(deleteError)}>
+              {deleteError}
+            </HelperText>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setDeleteDialogVisible(false)} disabled={isDeletingAccount}>
+              {t('profile.deleteAccount.cancel')}
+            </Button>
+            <Button
+              testID="profile-delete-account-confirm"
+              textColor={theme.colors.danger}
+              disabled={deleteConfirmText !== confirmPhrase || isDeletingAccount}
+              accessibilityState={{ disabled: deleteConfirmText !== confirmPhrase || isDeletingAccount, busy: isDeletingAccount }}
+              loading={isDeletingAccount}
+              onPress={() => void onConfirmDeleteAccount()}
+            >
+              {t('profile.deleteAccount.confirm')}
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
     </ScreenContainer>
   );
 }
@@ -138,5 +229,8 @@ const styles = StyleSheet.create({
   },
   divider: {
     marginVertical: 24,
+  },
+  deleteDialogMessage: {
+    marginBottom: 16,
   },
 });

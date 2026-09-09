@@ -269,6 +269,60 @@ error message and component stack, never component props/state, which is exactly
 private task's title would otherwise end up. Supabase/Postgres-side logs (Edge Functions,
 database logs) must follow the same rule once they exist: log row ids, not row content.
 
+## Mechanism 6 — family lifecycle and account deletion (Phase 10)
+
+Three server-authoritative RPCs, all `SECURITY DEFINER`, all narrowly scoped (see
+DATA_MODEL.md, "family_ownership_transfers," and
+`supabase/migrations/20260912120000_release_safety_ownership_and_deletion.sql` for the exact
+implementation):
+
+- **`transfer_family_ownership`** — owner-only. `families.owner_id` and the two affected
+  `family_members.role` values are updated inside one transaction (never observable as
+  "two owners" or "zero owners" from outside it — the unique partial index on
+  `family_members (family_id) where role = 'owner'` enforces this at the database level, not
+  just in application logic). A target member id that doesn't exist, belongs to another
+  family, or was already removed all raise the identical `42501` — the same no-existence-
+  oracle discipline established in Phase 9 (see that section above) applied to family
+  members, not just tasks.
+- **`delete_family`** — owner-only, soft delete (`families.deleted_at`). `is_family_member`/
+  `is_family_owner`/`current_family_ids` — the one choke point essentially every family-scoped
+  RLS policy in this schema already goes through — exclude a deleted family immediately, so
+  every member, including the former owner, loses read/write access to everything
+  family-scoped in the same instant. Tasks/events/responsibilities/assignment audit rows/
+  notification outbox rows for that family are **never deleted** — they remain in the
+  database as historical data, simply unreachable through any RLS-gated path once membership
+  can no longer be established. Every pending invitation is revoked in the same transaction.
+- **`request_account_deletion`** — self-service, blocked (`22023`) if the caller currently
+  owns any non-deleted family (must transfer or delete it first — a family can never be left
+  ownerless by this path). On success: every other family membership is left (soft-removed,
+  the same unassign-then-remove guarantee `remove_family_member` already provided); the
+  caller's own **private** tasks/events are soft-deleted; **family-shared** tasks/events the
+  caller still owns are left in place, since another family member may depend on them (an
+  assigned shared task, a shared event with responsibilities) and deleting them would orphan
+  that content for someone still using it; every device token is deactivated; every pending
+  invitation the caller sent is revoked; the `profiles` row is anonymized in place
+  (`display_name` → "Deleted user", `avatar_url` → null) and marked `deleted_at`.
+  **`auth.users` is never touched by this RPC** — a full cascading hard delete would need to
+  first delete or reassign every `tasks.owner_profile_id`/`events.owner_profile_id`/
+  `families.owner_id` row referencing that profile (none of those foreign keys cascade, by
+  design, so the row can't simply be dropped), which is a substantially larger, riskier change
+  than anonymize-in-place; a documented (not deployed) Edge Function using the Supabase Admin
+  API is the anticipated follow-up for actually purging the `auth.users` row once this RPC has
+  succeeded — see DECISIONS.md, "Phase 10."
+
+**What an operator can access**: the hosted Postgres database directly (for support/incident
+response), same as any Supabase project — this document has never claimed otherwise. What
+changes with Phase 10: a "deleted" account's row is anonymized, not gone, so an operator
+querying `profiles` directly would still see the row (with `deleted_at` set and PII cleared)
+rather than nothing at all; this is a deliberate tradeoff for auditability/data-integrity
+(see "auth.users is never touched," above) over "leaves literally no trace."
+
+**No analytics, advertising, or third-party tracking SDK is present in this codebase** — every
+network call the mobile app makes goes to this project's own Supabase project or the Expo
+Push Service (for push delivery only, ids only — Mechanism 4). This remains true as of Phase
+10; introducing any such SDK requires explicit approval (see DECISIONS.md, "Phase 10," "Stop
+conditions").
+
 ## Implementation status
 
 - ✅ RLS policies for every table in DATA_MODEL.md's ownership table exist in

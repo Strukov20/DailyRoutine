@@ -38,8 +38,10 @@ still out of scope, not forgotten:
   there is no list of past notifications to revisit.
 - Notifications for general event content changes (a title/time edit) or child-profile
   activity unrelated to a responsibility assignment.
-- Notifications around family ownership transfer (not built at all yet — see the "Family
-  ownership transfer" row in the V2 table below).
+- Notifications around family ownership transfer, family deletion, or a member leaving —
+  `transfer_family_ownership`/`delete_family`/`leave_family` (Phase 10) broadcast a Realtime
+  `members` invalidation to affected devices so the UI updates promptly, but none of them
+  enqueue a push notification the way a task assignment does; a push here remains V2.
 - Direct APNs/FCM integration — Expo Push Service only, deliberately not bypassed.
 
 ### Calendar scope not covered by Phase 7
@@ -73,7 +75,6 @@ push has been sent or received in this phase — every test uses a fake `PushTra
 | Comments                                     | A `comments` table polymorphic on (entity_type, entity_id), RLS mirroring the parent entity's visibility rule.                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | Advanced offline sync                        | A bounded subset (persisted read cache, a queue for eight safe personal-task/occurrence operations, stale-write detection *and* a full manual resolution UX — Sync Issues) was implemented across Phase 9 and its completion pass — see "Offline behavior" below. Still V2: offline editing for family/shared/event/responsibility/recurrence-series/reminder-definition data.                                                                                                                                                                                                                                                                                                                                                                                             |
 | Statistics                                   | Derived entirely from existing tables via read-only aggregate queries/views; no new write-path tables needed.                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Family ownership transfer / owner leaves     | `remove_family_member` refuses to ever remove the `role = 'owner'` row (see DATA_MODEL.md, "family_members," and DECISIONS.md, "Phase 3"). A `transfer_family_ownership` RPC — atomically re-pointing `families.owner_id` and swapping the two `family_members` rows' roles inside `assert_family_owner_consistency`'s existing invariant — is the anticipated shape; not built this phase because no product flow for it has been specified yet (does the outgoing owner become a plain adult, or leave the family entirely?). |
 
 ### Offline behavior: implemented (Phase 9 + completion pass) vs. still V2
 
@@ -106,9 +107,25 @@ state-machine and resolution-semantics writeup.
 and a `version` integer beyond the `updated_at`-based precondition already in place. Assignment
 Accept/Decline remains an audit-logged event, not a field to merge (see DATA_MODEL.md,
 "task_assignments") — unaffected by either Phase 9 pass, since assignment mutations are not
-offline-queueable at all. Real device network-interruption testing, native account-switch-
-no-flash observation, and Android emulator/device runtime verification are deferred to a
-Phase 10 manual release checklist — not blocking, and not claimed as observed.
+offline-queueable at all. Real device network-interruption testing and native account-switch-
+no-flash observation are deferred to a Phase 10 manual beta-validation matrix — not blocking,
+and not claimed as observed (see docs/RELEASE_CHECKLIST.md).
+
+### Family ownership, family deletion, and account deletion: implemented (Phase 10)
+
+The `transfer_family_ownership`/`delete_family`/`leave_family`/`request_account_deletion` RPCs
+close the gap the V2 table above used to carry — every family now has a way to change or
+resolve its owner, and every account has a discoverable, self-service deletion path, both
+mandatory before a real family could safely beta-test this app. See
+[DECISIONS.md, "Phase 10"](DECISIONS.md) for the full design (including why account deletion
+anonymizes the profile row in place rather than hard-deleting `auth.users`) and
+[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md) for what happens to each table's data.
+Still V2/out of scope: an audit trail for family *deletion* itself (only ownership transfer
+gets a dedicated append-only table — `family_ownership_transfers`; a deleted family's
+`deleted_at` timestamp is itself a form of record, but there's no separate log of *who*
+deleted it beyond that they were the owner at the time), and any UI for an operator to review
+or reverse a deletion (there is no restore path this phase, same "no undelete" convention as
+`tasks.deleted_at`/`events.deleted_at`).
 
 ## V3 — not implemented, architecturally anticipated
 

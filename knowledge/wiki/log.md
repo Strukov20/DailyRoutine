@@ -1035,3 +1035,75 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
   Stray root-level `deno.lock` deleted; `/deno.lock` added to `.gitignore` (root-anchored only
   — does not affect the real, already-tracked `supabase/functions/deno.lock`).
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-09T00:00:00Z — Phase 10 (Stage A): release-safety RPCs, security audit, release docs
+
+- **Operation type:** feature build (family ownership/deletion RPCs + client wiring) + security
+  audit + release-documentation build, on new branch `release/mvp-beta` (from `develop`).
+- **Source material:** [`knowledge/raw/sessions/
+  2026-09-09-phase10-release-stabilization.md`](../raw/sessions/2026-09-09-phase10-release-stabilization.md).
+- **Wiki pages updated:** `domain/family-spaces.md` (new "Ownership transfer, family deletion,
+  and account deletion" section, permissions table extended, the stale "no RPC yet" line
+  removed), `engineering/security-model.md` (two new real-gap bullets, a new "Family lifecycle
+  mutations" section, Mechanism 3's status corrected — see below), `engineering/data-model.md`
+  (Phase 10 schema additions, the ownership-transfer "Unresolved" bullet resolved),
+  `engineering/testing-strategy.md` (current totals note, Phase 10 additions, two new
+  conventions), `product/roadmap.md` (ownership-transfer line resolved; see below),
+  `engineering/realtime-sync-and-offline.md` (Phase 10 addendum for `delete_family`'s
+  Realtime broadcast), `index.md` (Realtime page's status blurb corrected from "in progress" to
+  "complete," matching that page's own already-current content).
+- **Two pre-existing staleness gaps found and corrected, not just Phase 10 content added**:
+  `engineering/security-model.md` and `product/roadmap.md` both still described Phase 9's
+  Realtime sync and offline mutation queue as "not implemented" — true when those pages were
+  last written (Phase 2–8) but false since Phase 9 actually shipped both; apparently never
+  updated during Phase 9's own session despite that session's own dedicated
+  `realtime-sync-and-offline.md` page being kept current throughout. Corrected in place with an
+  explicit note explaining the correction (not a silent rewrite — per this file's own "add to a
+  record, don't overwrite it" convention, applied here to a stale claim rather than a
+  contradiction). `engineering/testing-strategy.md` has the same kind of gap in its own
+  per-phase narrative (stops at Phase 8) — flagged with a similar note rather than fully
+  backfilled, since a full Phase 9 backfill is beyond this session's own scope; pointed at
+  `docs/TEST_STRATEGY.md` as the accurate source meanwhile.
+- **Canonical docs updated:** `docs/SECURITY_AND_PRIVACY.md` (new "Mechanism 6"),
+  `docs/ARCHITECTURE.md` (new Phase 10 section), `docs/DECISIONS.md` (full new "Phase 10"
+  section), `docs/TEST_STRATEGY.md` (counts + 2 new convention bullets), `docs/MVP_SCOPE.md`
+  and `docs/ROADMAP.md` (updated by the prior segment of this same session, before this wiki
+  pass), `README.md` (new Phase 10 bullet). Four new docs:
+  `docs/RELEASE_CHECKLIST.md`, `docs/BETA_TESTING.md`, `docs/PRIVACY_POLICY_DRAFT.md` (draft,
+  unpublished), `docs/INCIDENT_AND_ROLLBACK.md`.
+- **Decisions/contradictions recorded:** none new beyond the two staleness corrections above
+  (which are corrections to out-of-date claims, not live contradictions between two current
+  sources).
+- **Two real defects found and fixed this phase** (both in new Phase 10 code, caught by
+  `supabase test db`/the Phase 6.1 anon-EXECUTE guard, not by review): (1) `is_family_member`/
+  `is_family_owner`/`current_family_ids` redefined against their *original* Phase 2 source
+  instead of the latest (Phase 5-amended) one, silently dropping the `removed_at is null`
+  filter and regressing 5 existing pgTAP assertions. (2) A new internal helper
+  (`_remove_or_leave_family_member`) documented an intended `REVOKE` only in a comment, never
+  as an actual statement — left reachable by `anon`/`authenticated` via Supabase's own
+  default-privilege bootstrap until the Phase 6.1 regression guard caught it.
+- **One test-coverage gap found and closed while auditing this session's own compliance with
+  the brief's "add tests for every Phase 10 change" instruction**: the member-detail screen's
+  new "Make family owner" button (and the screen itself) had zero test coverage, and the three
+  new `familyService.ts` RPC wrappers plus the new `profileService.ts` had no direct unit
+  test. Fixed: new `FamilyMemberDetailScreen.test.tsx` (6 tests) and `profileService.test.ts`
+  (5 tests), plus 3 new tests in the existing `familyService.test.ts`.
+- **A test-hygiene bug found while writing that new component test**: every `fireEvent.press`
+  call in the first draft was unawaited, which didn't fail the offending test itself but
+  corrupted a *later* test's render (an empty tree, preceded by an "overlapping act() calls"
+  warning) — the same class of bug `engineering/testing-strategy.md` already recorded for a
+  bare `act()` call (Phase 9), now confirmed to apply to `fireEvent.press` too. Fixed by
+  awaiting every call.
+- **Verified:** `npm run verify` — 65 suites / 576 tests (up from 63/562), lint/typecheck/
+  wiki:lint all clean. `supabase db reset && supabase test db` — 18 files / 578 pgTAP
+  assertions (up from 16/530; new `170_release_safety_test.sql` 40 assertions,
+  `180_task_category_guard_test.sql` 8 assertions). `deno test` — 11/11. `e2e:backend` 32/32,
+  `e2e:notifications` 24/24, `e2e:calendar` 28/28, `e2e:recurrence` 23/23 all re-confirmed.
+  `e2e:offline` (5/5) and `e2e:realtime` (28/28) each run twice consecutively with no reset in
+  between, both green both times. `expo config --type public`, both `expo export` platforms,
+  `git diff --check` all clean. `expo-doctor` unchanged at 20/21 (pre-existing, unrelated
+  patch-version drift). No hosted project, EAS project, or physical device was touched — Stage
+  B remains entirely pending, honestly reported as such in every doc updated this pass.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

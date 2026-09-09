@@ -1,7 +1,7 @@
 ---
 title: Security model
 status: current
-updated: 2026-09-08
+updated: 2026-09-09
 sources:
   - ../../../docs/SECURITY_AND_PRIVACY.md
   - ../../../docs/DECISIONS.md
@@ -15,21 +15,28 @@ sources:
   - ../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md
   - ../../raw/sessions/2026-09-08-phase7-followup-audit.md
   - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
-tags: [engineering, security, rls, privacy, phase8]
+  - ../../raw/sessions/2026-09-09-phase10-release-stabilization.md
+tags: [engineering, security, rls, privacy, phase10]
 ---
 
-## Status: implemented and verified (Mechanisms 1, 2, 4, 5) / not yet implemented (3)
+## Status: all five mechanisms implemented and verified
 
-`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, all 461 assertions
-across 14 files passing against a real local Postgres instance) proves it, particularly
-`060_privacy_regression_test.sql`, `080_family_management_test.sql`,
-`090_personal_task_management_test.sql`, `110_notification_outbox_test.sql`,
-`120_family_calendar_test.sql`, `130_security_regression_test.sql`, and (Phase 8)
-`140_recurring_tasks_reminders_test.sql`. See
+`supabase/migrations/` implements this design; `supabase/tests/` (pgTAP, 578 assertions across
+18 files as of Phase 10, passing against a real local Postgres instance — see
+[testing-strategy](testing-strategy.md) for the current breakdown by file) proves it. See
 [privacy-and-availability](../domain/privacy-and-availability.md) for the domain-facing
 version of this same content; this page is the engineering-facing index.
 
-**Six real gaps have been found and fixed while implementing this, not bugs shipped and
+**Correction to this page's own prior "not yet implemented" claim for Mechanism 3**: this page
+previously said Realtime (Broadcast-from-Database) was out of scope and unimplemented. That
+was accurate when written (Phase 2–8) but became stale once Phase 9 actually built it — this
+page was not updated at the time, which is itself the kind of gap the wiki's own maintenance
+workflow ([development-workflow](development-workflow.md)) exists to prevent. See
+[Realtime sync and offline resilience](realtime-sync-and-offline.md) for the real, current
+design (private Broadcast channels, a content-free `{version, scope, entity, operation}`
+payload, never `postgres_changes`). Mechanism 3's entry below is corrected accordingly.
+
+**Eight real gaps have been found and fixed while implementing this, not bugs shipped and
 later caught** — design corrections made during the same phase that built the feature:
 
 - Mechanism 2 (sanitized views, Phase 2):
@@ -76,6 +83,23 @@ CHECK` protected only `owner_profile_id`; a client could rewrite `family_id`,
   trigger function (provably inert regardless of grant — Postgres refuses to invoke one
   outside trigger context) or is in a short reviewed whitelist. Verified the guard actually
   fails when the bug is reintroduced, not just when read.
+- **Redefining `is_family_member`/`is_family_owner`/`current_family_ids` from a stale base
+  silently dropped an existing filter (Phase 10)** — Phase 10 needed to add "exclude a deleted
+  family" to all three anti-recursion helpers below. The first draft was written against the
+  *original* Phase 2 definitions, silently dropping the `removed_at is null` filter Phase 5 had
+  already added — regressing 5 pre-existing pgTAP assertions about a removed member's immediate
+  loss of access, caught by `supabase test db`, not by review. Lesson recorded in
+  [DECISIONS.md, "Phase 10"](../../../docs/DECISIONS.md): grep every migration for a function's
+  *latest* prior definition before redefining it, never trust an earlier read.
+- **A new internal helper shipped with only a comment describing the intended `REVOKE`, not the
+  statement itself (Phase 10)** — `_remove_or_leave_family_member` (factored out of
+  `remove_family_member` this phase) needed the same "no grant to any role at all" treatment as
+  `set_task_assignment`/`set_responsibility_assignment` below, but the first draft only
+  documented that intent in a comment. Supabase's default-privilege bootstrap auto-grants
+  `EXECUTE` to `anon`/`authenticated` at function-creation time regardless of comments — this
+  broke the Phase 6.1 anon-EXECUTE regression guard immediately, the guard doing exactly the
+  job it was built for. Fixed with the actual `revoke all ... from public, anon, authenticated`
+  statement.
 
 **Not a seventh gap either (Phase 8): `reminders` moved to RPC-only writes pre-emptively.**
 Unlike every gap above, `reminders`' direct grants were never shown to be exploitable — Phase 8
@@ -107,11 +131,11 @@ own stated reasoning. Full writeup:
    the view's own `WHERE` clause is the entire authorization check, reviewed together with
    the sanitizing `CASE` expressions in one file. **Implemented.**
 3. **Realtime via Broadcast-from-Database**, not naive `postgres_changes` on the base table.
-   **Not implemented** — Realtime sync is out of scope this phase (see
-   [roadmap](../product/roadmap.md)); `supabase/config.toml` has Realtime enabled globally
-   but no table/broadcast trigger uses it yet. The design (a shared sanitization function
-   used by both the view and a future broadcast trigger) still stands as the requirement for
-   whoever adds it.
+   **Implemented (Phase 9)** — see the correction note above and
+   [Realtime sync and offline resilience](realtime-sync-and-offline.md) for the full design:
+   private, RLS-gated channels; a fixed `{version, scope, entity, operation}` payload with no
+   row content ever, verified by a secret-marker sweep in the real local-WebSocket integration
+   suite (`e2e:realtime`, 28/28).
 4. **Notifications** built server-side from the same authorized query path; never trust a
    client-supplied payload for what goes to another user. **Implemented (Phase 6) for shared
    family task assignment events, extended (Phase 7) to event-responsibility assignment
@@ -231,6 +255,21 @@ application-level locking to prevent duplicate generation under concurrent calls
 list and design: [Recurring tasks and reminders](recurring-tasks-and-reminders.md) and
 [DECISIONS.md, "Phase 8"](../../../docs/DECISIONS.md).
 
+## Family lifecycle mutations are RPC-only too, with column-scoped grants as backup (Phase 10)
+
+`transfer_family_ownership`/`delete_family`/`leave_family`/`request_account_deletion` follow
+the same `SECURITY DEFINER`, fixed-`search_path`, revoke-then-grant-`authenticated`-only
+pattern as every RPC-only table above. This phase adds a second layer specifically because two
+of these RPCs write columns (`families.deleted_at`/`owner_id`, `profiles.deleted_at`) on
+tables that otherwise still need a broader `UPDATE` grant for other, harmless columns (a
+family's `name`, a profile's `display_name`) — a blanket grant would let a raw client bypass
+the RPCs' invariants entirely. Both grants are narrowed to explicit column lists that exclude
+the RPC-only columns: `grant update (name) on families`; `grant update (display_name,
+avatar_url, preferred_language, preferred_color_scheme) on profiles`. See
+[Family Spaces](../domain/family-spaces.md), "Ownership transfer, family deletion, and account
+deletion," for the full RPC list and [DECISIONS.md, "Phase 10"](../../../docs/DECISIONS.md)
+for the write-ordering rationale.
+
 ## Before enabling Realtime on any table
 
 Confirm which broadcast mechanism is actually active — Supabase Realtime config is per-table,
@@ -247,3 +286,7 @@ first time Realtime is turned on for `events`/`tasks`.
 - [Family calendar](family-calendar.md) — the Phase 7 RPC-only conversion and Mechanism 4b
 - [Recurring tasks and reminders](recurring-tasks-and-reminders.md) — the Phase 8 RPC-only
   conversion, Mechanism 4c, and the extended Mechanism 4b
+- [Realtime sync and offline resilience](realtime-sync-and-offline.md) — Mechanism 3's actual
+  (Phase 9) design, corrected on this page from a stale "not implemented" note
+- [Family Spaces](../domain/family-spaces.md) — the Phase 10 ownership-transfer/family-
+  deletion/account-deletion RPCs this page's "Family lifecycle mutations" section summarizes

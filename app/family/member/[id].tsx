@@ -10,6 +10,7 @@ import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import {
   useFamilyMembers,
   useRemoveFamilyMember,
+  useTransferFamilyOwnership,
   useUpdateChildProfile,
 } from '@/domain/family/hooks';
 import { useAuth } from '@/lib/auth/AuthProvider';
@@ -29,6 +30,7 @@ export default function FamilyMemberDetailScreen() {
   const membersQuery = useFamilyMembers(familyId);
   const removeMember = useRemoveFamilyMember(familyId);
   const updateChild = useUpdateChildProfile(familyId);
+  const transferOwnership = useTransferFamilyOwnership(familyId);
 
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -70,6 +72,30 @@ export default function FamilyMemberDetailScreen() {
       });
       setActionError(t('common:state.somethingWentWrong'));
     }
+  };
+
+  const onMakeOwner = () => {
+    Alert.alert(
+      t('family:member.makeOwnerConfirm.title', { name: member.displayName }),
+      t('family:member.makeOwnerConfirm.message', { name: member.displayName }),
+      [
+        { text: t('common:actions.cancel'), style: 'cancel' },
+        {
+          text: t('family:member.makeOwner'),
+          onPress: () => {
+            void transferOwnership
+              .mutateAsync(member.id)
+              .then(() => router.back())
+              .catch((error: unknown) => {
+                logger.warn('transfer ownership failed', {
+                  code: error instanceof FamilyServiceError ? error.code : 'unknown',
+                });
+                setActionError(t('family:member.makeOwnerFailed'));
+              });
+          },
+        },
+      ],
+    );
   };
 
   const onRemove = () => {
@@ -124,6 +150,17 @@ export default function FamilyMemberDetailScreen() {
           style={styles.action}
         >
           {t('common:actions.save')}
+        </Button>
+      ) : null}
+
+      {callerIsOwner && member.role === 'adult' ? (
+        <Button
+          mode="outlined"
+          onPress={onMakeOwner}
+          loading={transferOwnership.isPending}
+          style={styles.action}
+        >
+          {t('family:member.makeOwner')}
         </Button>
       ) : null}
 

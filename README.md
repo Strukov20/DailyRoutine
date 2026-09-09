@@ -99,6 +99,21 @@ Full product/architecture documentation lives in [`docs/`](docs/):
   design. Real device network-interruption testing, native account-switch-no-flash
   observation, and Android are deferred to a Phase 10 manual release checklist.
 
+- **Phase 10 (MVP Stabilization, Deployment, and Beta Release)**: the MVP feature set was
+  complete after Phase 9; Phase 10 is release-readiness, not new features. Stage A (local,
+  complete): the mandatory family-lifecycle RPCs a real beta family needs before this app is
+  safe to hand to them — owner-authorized `transfer_family_ownership`, `delete_family`,
+  self-service `leave_family`/`request_account_deletion` (anonymize-in-place, never a hard
+  delete of `auth.users`) — plus a security audit, `eas.json` build-profile configuration, and
+  the three-environment (Local/Staging-Beta/Production) separation documented in
+  [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). See
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), "Family ownership, family deletion, and
+  account deletion (Phase 10)," [docs/SECURITY_AND_PRIVACY.md](docs/SECURITY_AND_PRIVACY.md),
+  "Mechanism 6," and [docs/DECISIONS.md](docs/DECISIONS.md), "Phase 10." Stage B — hosted
+  staging deployment, EAS/TestFlight/Play builds, and physical-device validation — needs
+  external accounts, credentials, and hardware not available in this environment; see
+  [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for exactly what remains.
+
 Still not implemented: notifications for anything beyond shared-task/responsibility-
 assignment/reminder events, Week/Month calendar views, and shared/family recurring tasks —
 see [docs/MVP_SCOPE.md](docs/MVP_SCOPE.md) for the exact boundary,

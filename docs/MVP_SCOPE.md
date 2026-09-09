@@ -47,9 +47,16 @@ These are documented (architecturally supported where noted) but not built. See
 - **V3**: natural-language task creation, "Plan My Day," AI scheduling, automatic
   rescheduling with confirmation, family conflict resolution, AI family planning.
 
-## This foundation phase vs. the MVP
+## Current status: MVP scope is feature-complete; Phase 10 is release stabilization
 
-This repository's current state is the **foundation phase** — one iteration before MVP work
-starts. The foundation phase deliberately stops short of the MVP list above. See the "Stop
-point" section of [README.md](../README.md) and [DECISIONS.md](DECISIONS.md) for exactly
-what was built vs. deferred, and why.
+Every item in "In scope for MVP" above is built (Phases 1–9) and covered by automated tests —
+see [README.md](../README.md)'s own phase-by-phase summary for what each phase added, and
+[DECISIONS.md](DECISIONS.md) for why things were built the way they were. Phase 10
+("MVP Stabilization, Deployment, and Beta Release," [DECISIONS.md, "Phase 10"](DECISIONS.md))
+is not new feature work — it is release-readiness work: closing the mandatory release-safety
+gaps an MVP audit found (family ownership transfer, family/account deletion — none of which
+were built despite being prerequisites for a real family to safely use the app), a security
+audit, environment/build configuration, and the beta-distribution runbook
+([docs/RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)). This document's own "in scope" list is
+otherwise unchanged by Phase 10 — see [ROADMAP.md](ROADMAP.md) for exactly what Phase 10 added
+versus what remains V2/V3.

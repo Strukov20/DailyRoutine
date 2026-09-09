@@ -65,16 +65,23 @@ One row per authenticated user (1:1 with `auth.users`). **Owned by the user.**
 | `avatar_url`             | text | nullable                                                                                                             |
 | `preferred_language`     | text | `'en' \| 'uk'`, defaults from device locale at signup (see `src/i18n`)                                               |
 | `preferred_color_scheme` | text | `'system' \| 'light' \| 'dark'`, mirrors `useUIStore` default, persisted server-side only once the user is signed in |
+| `deleted_at`             | timestamptz, nullable | Phase 10 — set by `request_account_deletion()`. The row is anonymized in place (`display_name` → "Deleted user", `avatar_url` → null), never hard-deleted — `auth.users` is untouched by that RPC; see DECISIONS.md, "Phase 10," for why a full cascading hard delete was rejected |
 
 ## families
 
 **Owned by the family** (see "Ownership and authorization" below).
 
-| column     | type                 | notes                                                                                              |
-| ---------- | -------------------- | -------------------------------------------------------------------------------------------------- |
-| `id`       | uuid                 |                                                                                                    |
-| `name`     | text                 | required                                                                                           |
-| `owner_id` | uuid → `profiles.id` | the creating adult; ownership can be transferred later (V2), never deleted-with-cascade implicitly |
+| column       | type                 | notes                                                                                              |
+| ------------ | -------------------- | -------------------------------------------------------------------------------------------------- |
+| `id`         | uuid                 |                                                                                                    |
+| `name`       | text                 | required                                                                                           |
+| `owner_id`   | uuid → `profiles.id` | the current owner (the creating adult, until transferred); kept consistent with the single `family_members` `role = 'owner'` row by `assert_family_owner_consistency` (a validating trigger, not a syncing one — see below) |
+| `deleted_at` | timestamptz, nullable | Phase 10 — soft delete, set only by `delete_family()`. Never cascaded to child tables (tasks/events/responsibilities/audit rows are untouched); `is_family_member()`/`is_family_owner()`/`current_family_ids()` all exclude a deleted family, which is the single choke point every family-scoped RLS policy already goes through |
+
+Ownership transfer (Phase 10, `transfer_family_ownership()`) atomically re-points `owner_id`
+and swaps the two `family_members` rows' roles — see `family_ownership_transfers` below for
+the append-only audit trail this writes, and DECISIONS.md, "Phase 10," for the exact write
+ordering `assert_family_owner_consistency`'s invariant requires.
 
 ## family_members
 
@@ -95,10 +102,30 @@ point called out in the brief — resolved as: **one table, two shapes**, distin
 | `avatar_url`    | text                           | nullable                                                                                                                                                                                                                                 |
 | `date_of_birth` | date                           | nullable; child profiles only, optional                                                                                                                                                                                                  |
 | `invited_by`    | uuid → `profiles.id`, nullable | who added this member                                                                                                                                                                                                                    |
+| `removed_at`    | timestamptz, nullable          | Phase 5 — soft delete, set only by `remove_family_member()`/`leave_family()`/`request_account_deletion()` (Phase 10). Never hard-deleted (`task_assignments`/`responsibility_assignments` reference it permanently as audit history)     |
 
 Constraint (enforced in the migration, not just documented): `member_type = 'adult'` requires
 `profile_id is not null`; `member_type = 'child'` requires `profile_id is null OR` a future
 verified-link flag — that flag doesn't exist yet and is intentionally deferred.
+
+## family_ownership_transfers (Phase 10)
+
+**Owned by the family.** Append-only audit trail for `transfer_family_ownership()` — same
+"insert-only, never update/delete" convention as `task_assignments`/
+`responsibility_assignments`. One row per successful transfer.
+
+| column                     | type                        | notes                                                                |
+| --------------------------- | ---------------------------- | --------------------------------------------------------------------- |
+| `id`                        | uuid                          |                                                                       |
+| `family_id`                 | uuid → `families.id`          |                                                                       |
+| `previous_owner_member_id`  | uuid → `family_members.id`    |                                                                       |
+| `new_owner_member_id`       | uuid → `family_members.id`    |                                                                       |
+| `transferred_by`            | uuid → `profiles.id`          | always the previous owner — only the current owner may call the RPC |
+| `transferred_at`            | timestamptz                   |                                                                       |
+
+No client INSERT/UPDATE/DELETE grant at all — every row is written exclusively by
+`transfer_family_ownership()`, running as `SECURITY DEFINER`. Readable by any current member
+of the family (`is_family_member(family_id)`).
 
 ## family_invitations
 
@@ -513,7 +540,7 @@ design, so `created_at` alone is their "audit" story) gets:
 | Table                                                        | Owned by                           | Who can read                                                                                                                                 |
 | ------------------------------------------------------------ | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `profiles`                                                   | the user                           | self; other family members see only what `family_members.display_name`/`avatar_url` expose (not the full profile row)                        |
-| `families`, `family_members`                                 | the family                         | family adults (and children, for `family_members`)                                                                                           |
+| `families`, `family_members`, `family_ownership_transfers`   | the family                         | family adults (and children, for `family_members`); a deleted family (`families.deleted_at`) is unreachable for everyone, including its former owner |
 | `family_invitations`                                         | the family                         | direct table access: owner only. Anyone else: only the sanitized `get_family_invitation_preview(token)` RPC — never a table read             |
 | `categories`                                                 | family, or system                  | family members; system categories are public                                                                                                 |
 | `tasks`, `events`                                            | user (personal) or family (shared) | owner always; family members only if `visibility = 'family'`, and only sanitized fields if the item is private (see SECURITY_AND_PRIVACY.md) |

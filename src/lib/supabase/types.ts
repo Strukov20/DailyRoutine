@@ -215,6 +215,7 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string
+          deleted_at: string | null
           id: string
           name: string
           owner_id: string
@@ -223,6 +224,7 @@ export type Database = {
         Insert: {
           created_at?: string
           created_by: string
+          deleted_at?: string | null
           id?: string
           name: string
           owner_id: string
@@ -231,6 +233,7 @@ export type Database = {
         Update: {
           created_at?: string
           created_by?: string
+          deleted_at?: string | null
           id?: string
           name?: string
           owner_id?: string
@@ -394,6 +397,62 @@ export type Database = {
           },
         ]
       }
+      family_ownership_transfers: {
+        Row: {
+          family_id: string
+          id: string
+          new_owner_member_id: string
+          previous_owner_member_id: string
+          transferred_at: string
+          transferred_by: string
+        }
+        Insert: {
+          family_id: string
+          id?: string
+          new_owner_member_id: string
+          previous_owner_member_id: string
+          transferred_at?: string
+          transferred_by: string
+        }
+        Update: {
+          family_id?: string
+          id?: string
+          new_owner_member_id?: string
+          previous_owner_member_id?: string
+          transferred_at?: string
+          transferred_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "family_ownership_transfers_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "family_ownership_transfers_new_owner_member_id_fkey"
+            columns: ["new_owner_member_id"]
+            isOneToOne: false
+            referencedRelation: "family_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "family_ownership_transfers_previous_owner_member_id_fkey"
+            columns: ["previous_owner_member_id"]
+            isOneToOne: false
+            referencedRelation: "family_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "family_ownership_transfers_transferred_by_fkey"
+            columns: ["transferred_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notification_preferences: {
         Row: {
           assignment_notifications_enabled: boolean
@@ -471,6 +530,7 @@ export type Database = {
         Row: {
           avatar_url: string | null
           created_at: string
+          deleted_at: string | null
           display_name: string
           id: string
           preferred_color_scheme: string
@@ -480,6 +540,7 @@ export type Database = {
         Insert: {
           avatar_url?: string | null
           created_at?: string
+          deleted_at?: string | null
           display_name: string
           id: string
           preferred_color_scheme?: string
@@ -489,6 +550,7 @@ export type Database = {
         Update: {
           avatar_url?: string | null
           created_at?: string
+          deleted_at?: string | null
           display_name?: string
           id?: string
           preferred_color_scheme?: string
@@ -1174,6 +1236,10 @@ export type Database = {
       }
     }
     Functions: {
+      _remove_or_leave_family_member: {
+        Args: { p_acting_member_id: string; p_member_id: string }
+        Returns: undefined
+      }
       accept_event_responsibility: {
         Args: { p_responsibility_id: string }
         Returns: undefined
@@ -1366,6 +1432,7 @@ export type Database = {
         Args: { p_task_id: string }
         Returns: undefined
       }
+      delete_family: { Args: { p_family_id: string }; Returns: undefined }
       delete_or_archive_personal_task: {
         Args: { p_task_id: string }
         Returns: undefined
@@ -1409,6 +1476,7 @@ export type Database = {
         Args: { p_family_id: string; p_profile_id?: string }
         Returns: boolean
       }
+      leave_family: { Args: { p_family_id: string }; Returns: undefined }
       list_family_conflicts: {
         Args: { p_family_id: string; p_from: string; p_to: string }
         Returns: {
@@ -1451,6 +1519,7 @@ export type Database = {
         Args: { p_member_id: string }
         Returns: undefined
       }
+      request_account_deletion: { Args: never; Returns: undefined }
       reschedule_task_occurrence: {
         Args: {
           p_clear_start_time?: boolean
@@ -1517,6 +1586,10 @@ export type Database = {
         Returns: undefined
       }
       take_family_task: { Args: { p_task_id: string }; Returns: undefined }
+      transfer_family_ownership: {
+        Args: { p_family_id: string; p_new_owner_member_id: string }
+        Returns: undefined
+      }
       try_cast_uuid: { Args: { p_text: string }; Returns: string }
       unassign_family_task: { Args: { p_task_id: string }; Returns: undefined }
       update_child_profile: {

@@ -534,6 +534,38 @@ infinite-render loop under Zustand 5's `useSyncExternalStore`-based `useStore`, 
 fixed during this phase; any future array/object-valued selector on this store needs the same
 treatment.
 
+## Family ownership, family deletion, and account deletion (Phase 10)
+
+Four `SECURITY DEFINER` RPCs — `transfer_family_ownership`, `delete_family`, `leave_family`,
+`request_account_deletion` — are the only write path onto `families.owner_id`,
+`families.deleted_at`, and `profiles.deleted_at`; the corresponding `UPDATE` grants on
+`families`/`profiles` are narrowed to explicit column lists that exclude those columns, so a
+raw client write can't bypass the RPCs' invariants (never orphan a family without an owner,
+child profiles can never become owners, exactly one active owner at all times). See
+[SECURITY_AND_PRIVACY.md, "Mechanism 6"](SECURITY_AND_PRIVACY.md) for the full per-table data
+lifecycle and [DECISIONS.md, "Phase 10"](DECISIONS.md) for the write-ordering rationale
+(driven by the pre-existing `assert_family_owner_consistency` trigger and the
+`family_members_one_owner_per_family` unique partial index).
+
+Client wiring follows the existing layering rule (screens → hooks → repositories/services →
+Supabase client — no screen calls `supabase.rpc` directly): `familyService.ts` gained
+`transferFamilyOwnership`/`deleteFamily`/`leaveFamily`; a new `src/lib/profile/
+profileService.ts` (deliberately separate from `authService.ts`, which stays scoped to
+`supabase.auth.*` calls only) added `requestAccountDeletion`. Corresponding hooks live in
+`src/domain/family/hooks.ts` and a new `src/domain/profile/hooks.ts`. Account deletion reuses
+the app's existing sign-out sequence (deactivate the device token, then `signOut()`) so it
+goes through the same `AuthProvider` `SIGNED_OUT` cleanup as a normal sign-out — including a
+Phase 10 addition to that cleanup: `useUIStore`'s new `resetForSignOut()` action, clearing
+`activeFamilyId`/`pendingInviteToken`/`pendingNotificationRoute` (but not
+`colorSchemeOverride`/`realtimeStatus`, which aren't account-sensitive), called alongside the
+pre-existing TanStack Query cache clearing.
+
+`families` gained a Realtime invalidation path it previously lacked: unlike `family_members`,
+it had no broadcast trigger of its own, so `delete_family` explicitly calls the existing
+`emit_invalidation` helper (`family:<id>` plus a per-member `profile:<id>` broadcast) so every
+affected device's UI updates promptly through the same `useRealtimeSync` mechanism described
+above — no new client-side subscription logic needed.
+
 ## Testing
 
 See [TEST_STRATEGY.md](TEST_STRATEGY.md).

@@ -7,12 +7,15 @@ import {
   createFamily,
   createFamilyInvitation,
   declineFamilyInvitation,
+  deleteFamily,
   getInvitationPreview,
+  leaveFamily,
   listFamilyInvitations,
   listFamilyMembers,
   listMyFamilies,
   removeFamilyMember,
   revokeFamilyInvitation,
+  transferFamilyOwnership,
   updateChildProfile,
 } from './familyService';
 
@@ -226,6 +229,34 @@ describe('familyService', () => {
         updateChildProfile({ memberId: 'm3', displayName: 'Renamed' }),
       ).resolves.toBeUndefined();
       await expect(removeFamilyMember('m3')).resolves.toBeUndefined();
+    });
+
+    it('transferFamilyOwnership calls transfer_family_ownership with the family and target member id', async () => {
+      (supabase.rpc as jest.Mock).mockResolvedValue({ error: null });
+
+      await expect(transferFamilyOwnership('f1', 'm2')).resolves.toBeUndefined();
+      expect(supabase.rpc).toHaveBeenCalledWith('transfer_family_ownership', {
+        p_family_id: 'f1',
+        p_new_owner_member_id: 'm2',
+      });
+    });
+
+    it('deleteFamily calls delete_family and leaveFamily calls leave_family, both with the family id', async () => {
+      (supabase.rpc as jest.Mock).mockResolvedValue({ error: null });
+
+      await expect(deleteFamily('f1')).resolves.toBeUndefined();
+      expect(supabase.rpc).toHaveBeenCalledWith('delete_family', { p_family_id: 'f1' });
+
+      await expect(leaveFamily('f1')).resolves.toBeUndefined();
+      expect(supabase.rpc).toHaveBeenCalledWith('leave_family', { p_family_id: 'f1' });
+    });
+
+    it('transferFamilyOwnership/deleteFamily/leaveFamily normalize RPC errors the same way as every other mutation', async () => {
+      (supabase.rpc as jest.Mock).mockResolvedValue({ error: { code: '42501', message: 'nope' } });
+
+      await expect(transferFamilyOwnership('f1', 'm2')).rejects.toBeInstanceOf(FamilyServiceError);
+      await expect(deleteFamily('f1')).rejects.toBeInstanceOf(FamilyServiceError);
+      await expect(leaveFamily('f1')).rejects.toBeInstanceOf(FamilyServiceError);
     });
   });
 

@@ -7,12 +7,15 @@ import {
   createFamily,
   createFamilyInvitation,
   declineFamilyInvitation,
+  deleteFamily,
   getInvitationPreview,
+  leaveFamily,
   listFamilyInvitations,
   listFamilyMembers,
   listMyFamilies,
   removeFamilyMember,
   revokeFamilyInvitation,
+  transferFamilyOwnership,
   updateChildProfile,
   type CreateChildProfileParams,
   type UpdateChildProfileParams,
@@ -168,6 +171,40 @@ export function useRemoveFamilyMember(familyId: string) {
     mutationFn: removeFamilyMember,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: familyKeys.members(familyId) });
+    },
+  });
+}
+
+/** Phase 10 — release-safety mutations. Realtime (family:<id> broadcast) also invalidates these same keys on every other connected device — see src/lib/realtime/invalidationMap.ts. */
+export function useTransferFamilyOwnership(familyId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (newOwnerMemberId: string) => transferFamilyOwnership(familyId, newOwnerMemberId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: familyKeys.members(familyId) });
+      void queryClient.invalidateQueries({ queryKey: familyKeys.myFamilies });
+    },
+  });
+}
+
+/** Every member (including the caller) loses access to this family the instant this succeeds — see useActiveFamily()'s own fallback for what the UI shows next. */
+export function useDeleteFamily() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: deleteFamily,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: familyKeys.myFamilies });
+    },
+  });
+}
+
+/** Self-service — refused (22023 → 'invalid_or_expired') if the caller currently owns this family. */
+export function useLeaveFamily() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: leaveFamily,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: familyKeys.myFamilies });
     },
   });
 }

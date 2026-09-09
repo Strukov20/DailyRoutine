@@ -184,3 +184,31 @@ export async function removeFamilyMember(memberId: string): Promise<void> {
   const { error } = await supabase.rpc('remove_family_member', { p_member_id: memberId });
   if (error) throw toFamilyServiceError(error);
 }
+
+/**
+ * Phase 10 — release-safety RPCs. See
+ * supabase/migrations/20260912120000_release_safety_ownership_and_deletion.sql
+ * for the full server-side design (never a raw table write, same as every
+ * other mutation in this file).
+ */
+
+/** Owner-only. Atomically re-points ownership; the previous owner becomes a plain adult member — never removed. */
+export async function transferFamilyOwnership(familyId: string, newOwnerMemberId: string): Promise<void> {
+  const { error } = await supabase.rpc('transfer_family_ownership', {
+    p_family_id: familyId,
+    p_new_owner_member_id: newOwnerMemberId,
+  });
+  if (error) throw toFamilyServiceError(error);
+}
+
+/** Owner-only, soft delete — every member (including the caller) loses access immediately. */
+export async function deleteFamily(familyId: string): Promise<void> {
+  const { error } = await supabase.rpc('delete_family', { p_family_id: familyId });
+  if (error) throw toFamilyServiceError(error);
+}
+
+/** Self-service — any non-owner adult member may leave at any time. The owner is refused (22023) until they transfer or delete. */
+export async function leaveFamily(familyId: string): Promise<void> {
+  const { error } = await supabase.rpc('leave_family', { p_family_id: familyId });
+  if (error) throw toFamilyServiceError(error);
+}
