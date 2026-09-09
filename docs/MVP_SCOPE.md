@@ -35,12 +35,15 @@ These are documented (architecturally supported where noted) but not built. See
   shared shopping lists, widgets, comments, advanced offline sync, statistics. (Deterministic
   schedule-conflict *detection* was implemented in Phase 7 — see
   [ARCHITECTURE.md, "Family calendar"](ARCHITECTURE.md) and
-  [DECISIONS.md, "Phase 7"](DECISIONS.md); conflict *resolution* — automatically proposing or
-  applying a fix — remains V2. A bounded personal-task offline mutation queue, a persisted
-  read cache, Realtime cross-device sync, and stale-write *detection* were implemented in
-  Phase 9 — see [ARCHITECTURE.md, "Offline & caching"](ARCHITECTURE.md) and
-  [DECISIONS.md, "Phase 9"](DECISIONS.md); offline editing for anything beyond a personal
-  task, and manual conflict *resolution* UI, remain V2.)
+  [DECISIONS.md, "Phase 7"](DECISIONS.md); *automatically* proposing or applying a fix for a
+  schedule conflict remains V2 — the Conflict Center stays read-only plus a Review action, by
+  design. A bounded personal-task/occurrence offline mutation queue, a persisted read cache,
+  Realtime cross-device sync, stale-write *detection*, and — from a Phase 9 completion pass —
+  full manual *resolution* of a stale-write sync conflict (the Sync Issues screens: review a
+  field-level comparison, then Reload/Apply/Keep/Discard) were implemented — see
+  [ARCHITECTURE.md, "Offline & caching"](ARCHITECTURE.md) and
+  [DECISIONS.md, "Phase 9"](DECISIONS.md). Offline editing for anything beyond a personal
+  task/occurrence remains V2.)
 - **V3**: natural-language task creation, "Plan My Day," AI scheduling, automatic
   rescheduling with confirmation, family conflict resolution, AI family planning.
 

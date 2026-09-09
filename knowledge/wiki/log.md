@@ -932,3 +932,55 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
   classification, 4 in a new `src/domain/recurrence/hooks.test.tsx` covering the offline/online
   branch and the bounded-queue error case), lint/typecheck/wiki:lint all clean.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+## 2026-09-10T12:00:00Z — Phase 9 completion pass: Sync Issues resolution UX
+
+- **Operation type:** feature (closes Phase 9's last remaining gap) + migration + test + docs.
+  User-directed: a full 16-section "Sync Conflict Resolution UX" brief, delivered after the
+  user asked whether the phase was finished.
+- **Wiki pages updated:**
+  [`engineering/realtime-sync-and-offline.md`](engineering/realtime-sync-and-offline.md) —
+  status changed `proposed` → `current`; "Done and verified" gained the Sync Issues bullet and
+  an extended offline-queue bullet (state-machine rename); "Not done yet" reduced to only the
+  Phase-10-deferred device-hardware items; two new sections added ("A concurrency nuance worth
+  knowing before touching Apply my change," and two new entries under the testing-gotchas
+  section: the Zustand `useShallow` array-selector gotcha, and the singleton-`queryClient`
+  test-hang gotcha).
+- **Canonical docs updated:** `docs/DECISIONS.md` (Phase 9 status note → complete, plus a full
+  new "Sync Issues resolution UX" subsection), `docs/ARCHITECTURE.md` ("Offline & caching"
+  section extended), `docs/SECURITY_AND_PRIVACY.md` (new bullet: Sync Issues never renders a
+  raw server error), `docs/ROADMAP.md` ("Offline behavior" section rewritten — conflict
+  resolution moved from "still V2" to "implemented"), `docs/MVP_SCOPE.md` (same correction),
+  `docs/TEST_STRATEGY.md` (Components row + RLS/privacy row counts and file lists updated),
+  `README.md` (added a Phase 9 bullet — it had none before despite the phase being otherwise
+  fully documented elsewhere; fixed a stale "Realtime sync... not implemented" claim in the
+  same pass).
+- **Decisions/contradictions recorded:** a real tension between the brief's own two Section-5
+  instructions for Apply my change ("refetch latest server version" vs. "remain in Needs
+  review if another update happened between review and application") — the implementation
+  took the literal "refetch" reading, which means only a write racing inside Apply's own
+  fetch-then-write pair (not the whole human review window) still produces a renewed conflict.
+  Documented in DECISIONS.md and the wiki rather than silently resolved either way — see that
+  entry if a future session needs to pin Apply to the exact reviewed version instead.
+- **Two real, unrelated bugs found and fixed along the way** (not part of the brief, found
+  while implementing it): (1) `schedule_personal_task`'s pre-existing `p_date is null →
+  22023` check was accidentally dropped while rewriting the function for the P0002 change —
+  caught by the existing pgTAP suite failing after `supabase db reset`, restored in its
+  original position (before the existence lookup). (2) `SyncStatusIndicator.tsx` and the Sync
+  Issues list screen both passed a new-array-every-call Zustand selector directly to
+  `useOfflineQueueStore`, causing a real "Maximum update depth exceeded" infinite render loop
+  under Zustand 5 — fixed with `useShallow`; this had also silently broken
+  `CalendarScreen.test.tsx` as a knock-on (it renders the indicator).
+- **Verified:** `npm run verify` — 60 suites / 544 tests (up from 55/463 — new:
+  `syncIssueDisplay.test.ts`, `syncIssueResolution.test.ts`, `SyncIssueCard.test.tsx`,
+  `SyncIssuesScreen.test.tsx`, `SyncIssueDetailScreen.test.tsx`, plus updates across the
+  vocabulary-rewrite-affected files), lint/typecheck/wiki:lint all clean. `supabase db reset
+  && supabase test db` — 16 files / 528 pgTAP assertions (new: `160_sync_issues_resolution_
+  test.sql`, 20 assertions). `deno test` for `dispatch-notifications` — 11/11. `e2e:backend`
+  32/32, `e2e:notifications` 24/24, `e2e:calendar` 28/28, `e2e:recurrence` 23/23 all
+  re-confirmed. `e2e:offline` extended with a 14-step review/resolve scenario, run twice
+  consecutively without a DB reset, both green. `e2e:realtime` run twice, both green (28/28).
+  `expo config --type public`, both `expo export` platforms, `git diff --check` all clean.
+  `expo-doctor` 20/21 — one pre-existing, unrelated patch-version drift (`expo`/`expo-router`),
+  reported per this codebase's dependency-pinning precedent rather than bumped.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

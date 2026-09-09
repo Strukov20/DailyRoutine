@@ -292,9 +292,19 @@ database logs) must follow the same rule once they exist: log row ids, not row c
   tokens, mutation error payloads, raw Realtime messages, or the offline queue's own rows —
   `shouldDehydrateQuery` rejects anything outside that allowlist). The offline mutation queue
   (`src/lib/offline/`) is a **separate** persisted store, same per-profile partitioning and
-  logout-clearing, bounded to 200 operations, holding only the six safe personal-task
-  operations in Section 9's scope (never family/shared mutations, never auth material) — see
-  [DECISIONS.md, "Phase 9"](DECISIONS.md) for the idempotency/stale-write design.
+  logout-clearing, bounded to 200 operations, holding only the eight safe personal-task/
+  occurrence operations in Section 9's scope (never family/shared mutations, never auth
+  material) — see [DECISIONS.md, "Phase 9"](DECISIONS.md) for the idempotency/stale-write
+  design.
+- ✅ **Implemented, Phase 9 completion pass**: the Sync Issues screens (`app/sync-issues/`)
+  never render a raw Postgres error, SQLSTATE, stack trace, RPC payload, or internal SQL
+  identifier — every failure is mapped, at the transport layer
+  (`offlineQueueReplay.ts`'s `toSafeErrorCode`), to one of five generic
+  `OfflineSafeErrorCode` values before it ever reaches a component, and the comparison screen
+  fetches the server side of a stale-write conflict through the same authenticated,
+  RLS-governed `getTask()` read every online screen uses — never a cached/trusted snapshot.
+  Covered by a dedicated Jest assertion (`SyncIssueCard.test.tsx`, `SyncIssuesScreen.test.tsx`)
+  that greps the rendered tree for PostgREST/SQLSTATE-shaped strings and asserts none appear.
 - ✅ **Implemented in Phase 6, extended in Phase 7**: shared family task and event-
   responsibility assignment notifications (Mechanism 4) — content-free push payloads (ids
   only), server-derived recipients inside the same transaction as the mutation, the

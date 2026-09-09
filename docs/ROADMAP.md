@@ -71,35 +71,44 @@ push has been sent or received in this phase — every test uses a fake `PushTra
 | Shared shopping lists                        | Likely its own `lists` + `list_items` pair rather than overloading `tasks` — a shopping item isn't a task (no assignee-accept workflow, no priority). Decide at design time, not now.                                                                                                                                                                                                                                                                                                                                           |
 | Widgets                                      | Native, platform-specific; needs a lightweight read API (a Postgres view) that a widget extension can hit without pulling in the full app bundle.                                                                                                                                                                                                                                                                                                                                                                               |
 | Comments                                     | A `comments` table polymorphic on (entity_type, entity_id), RLS mirroring the parent entity's visibility rule.                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Advanced offline sync                        | A bounded subset (persisted read cache, a queue for six safe personal-task operations, stale-write detection) was implemented in Phase 9 — see "Offline behavior" below. Still V2: offline editing for family/shared/event/responsibility/recurrence-series/reminder-definition data, and a full manual conflict-resolution UI (only detection + a generic "Sync issue" surfaces today).                                                                                                                                                                                                                                                                                                                                                                                             |
+| Advanced offline sync                        | A bounded subset (persisted read cache, a queue for eight safe personal-task/occurrence operations, stale-write detection *and* a full manual resolution UX — Sync Issues) was implemented across Phase 9 and its completion pass — see "Offline behavior" below. Still V2: offline editing for family/shared/event/responsibility/recurrence-series/reminder-definition data.                                                                                                                                                                                                                                                                                                                                                                                             |
 | Statistics                                   | Derived entirely from existing tables via read-only aggregate queries/views; no new write-path tables needed.                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Family ownership transfer / owner leaves     | `remove_family_member` refuses to ever remove the `role = 'owner'` row (see DATA_MODEL.md, "family_members," and DECISIONS.md, "Phase 3"). A `transfer_family_ownership` RPC — atomically re-pointing `families.owner_id` and swapping the two `family_members` rows' roles inside `assert_family_owner_consistency`'s existing invariant — is the anticipated shape; not built this phase because no product flow for it has been specified yet (does the outgoing owner become a plain adult, or leave the family entirely?). |
 
-### Offline behavior: implemented (Phase 9) vs. still V2
+### Offline behavior: implemented (Phase 9 + completion pass) vs. still V2
 
 **Implemented, Phase 9** — pulled forward from the "V2, design before building" note this
 section used to carry, because the Phase 9 brief specified this exact design explicitly (see
 [DECISIONS.md, "Phase 9"](DECISIONS.md)): a persisted, profile-partitioned read cache; a
-visible sync-status indicator (Synced/Syncing/Pending changes: N/Sync issue); a bounded,
-idempotent offline mutation queue for the six safe personal-task operations, with
-FIFO/bounded-retry replay on reconnect; and real stale-write **detection** — an
-`expectedUpdatedAt` precondition on `update_personal_task`/`schedule_personal_task` that
+bounded, idempotent offline mutation queue for eight safe personal-task/occurrence
+operations, with FIFO/bounded-retry replay on reconnect; and real stale-write **detection** —
+an `expectedUpdatedAt` precondition on `update_personal_task`/`schedule_personal_task` that
 raises a distinguishable conflict (errcode `40001`) rather than silently overwriting a change
 made elsewhere. Optimistic updates remain limited to where a rollback is trivial and safe
 (completion/restoration, plus the equivalent offline-queued case) — never a multi-step
 operation like accepting an assignment, and never any family/shared mutation, which stays
 disabled offline entirely.
 
-**Still V2 (not built this phase)** — conflict *resolution*, as opposed to detection: Section
-11's full manual-resolution UX ("Sync conflict — this task changed on another device," with
-Reload server version / Review my pending change / Discard my change / Retry actions) is not
-implemented. Today a stale-write conflict surfaces only as the shared sync-status indicator's
-generic "Sync issue" + Retry — enough to guarantee the app never silently overwrites a
-change, but not yet a dedicated resolution flow. Also still V2: last-write-wins as a *default*
-rule for fields with no explicit precondition, and a `version` integer beyond the
-`updated_at`-based precondition already in place. Assignment Accept/Decline remains an
-audit-logged event, not a field to merge (see DATA_MODEL.md, "task_assignments") — unaffected
-by this phase, since assignment mutations are not offline-queueable at all.
+**Implemented, Phase 9 completion pass** — conflict *resolution*: the **Sync Issues** screens
+(`/sync-issues`, `/sync-issues/[operationId]`), deliberately a separate domain from the
+schedule-conflict Conflict Center. Every failed offline operation gets one of four statuses
+(Waiting to retry / Needs review / Cannot be synchronized / Task no longer available) and the
+exact action set the brief specifies per failure type — a stale-write conflict never offers a
+bare Retry, only Review changes (a real field-level local-vs-server comparison, fetched
+through the authenticated repository) and Reload/Apply/Discard. Apply my change reuses the
+original operation id and reapplies only the fields the original patch touched, never a
+derived or full-row payload; Keep server version/Discard is terminal (never replays again).
+The shared sync-status indicator now reads Synced/Syncing/Pending changes: N/Sync issues: N,
+tapping through to the list. See [DECISIONS.md, "Phase 9"](DECISIONS.md) for the full
+state-machine and resolution-semantics writeup.
+
+**Still V2** — last-write-wins as a *default* rule for fields with no explicit precondition,
+and a `version` integer beyond the `updated_at`-based precondition already in place. Assignment
+Accept/Decline remains an audit-logged event, not a field to merge (see DATA_MODEL.md,
+"task_assignments") — unaffected by either Phase 9 pass, since assignment mutations are not
+offline-queueable at all. Real device network-interruption testing, native account-switch-
+no-flash observation, and Android emulator/device runtime verification are deferred to a
+Phase 10 manual release checklist — not blocking, and not claimed as observed.
 
 ## V3 — not implemented, architecturally anticipated
 

@@ -476,20 +476,39 @@ both under `src/lib/query/` and `src/lib/offline/`, neither reachable from a scr
   (`AuthProvider.tsx`'s `SIGNED_OUT` branch — never on a mere token refresh). Requires
   `AuthProvider` to wrap `QueryProvider` (`app/_layout.tsx`), the reverse of the pre-Phase-9
   order, since the persister needs to know the signed-in profile id.
-- **Bounded offline mutation queue** — `src/lib/offline/`, scoped to exactly six *safe
+- **Bounded offline mutation queue** — `src/lib/offline/`, scoped to exactly eight *safe
   personal-task* operations (create an Inbox task, update/schedule/complete/restore/delete an
-  existing one-off task); family/shared mutations remain disabled offline with a clear
-  message, never queued. Each operation carries a stable id that doubles as the create RPC's
-  idempotency key, and update/schedule carry an `expectedUpdatedAt` precondition the RPC
-  checks server-side (errcode `40001`) — a queued edit never silently overwrites a change made
-  elsewhere; it surfaces as a `'conflict'` failure the sync-status UI can show instead.
+  existing one-off task, plus complete/restore of a single recurring occurrence); family/
+  shared mutations remain disabled offline with a clear message, never queued. Each operation
+  carries a stable id that doubles as the create RPC's idempotency key, and update/schedule
+  carry an `expectedUpdatedAt` precondition the RPC checks server-side (errcode `40001`) — a
+  queued edit never silently overwrites a change made elsewhere; it surfaces as a `'conflict'`
+  operation status, resolved through the Sync Issues screen below rather than a bare Retry.
   `runOfflineQueueReplay` (`offlineQueueReplay.ts`) is a single FIFO worker triggered by auth
   restoration, NetInfo reconnect, app foreground, and manual Retry
-  (`useOfflineQueueSync.ts`); an operation left `'in-flight'` by a crash mid-replay is reset
-  to `'pending'` on the next hydrate rather than assumed lost or done, since every queued RPC
-  is safe to retry blindly. See [DECISIONS.md, "Phase 9"](DECISIONS.md) for the full design
-  and [ROADMAP.md](ROADMAP.md), "Offline behavior," which this now implements (that section
-  has been updated to stop describing this as unbuilt).
+  (`useOfflineQueueSync.ts`); an operation left `'syncing'` by a crash mid-replay is reset
+  to `'retry_wait'` on the next hydrate rather than assumed lost or done, since every queued
+  RPC is safe to retry blindly. See [DECISIONS.md, "Phase 9"](DECISIONS.md) for the full
+  design and [ROADMAP.md](ROADMAP.md), "Offline behavior," which this now implements.
+- **Sync Issues resolution UX** (`app/sync-issues/index.tsx`, `app/sync-issues/
+  [operationId].tsx`, `src/lib/offline/syncIssueResolution.ts`, `syncIssueDisplay.ts`) — the
+  operator-facing side of the queue above: a list of every operation that has failed at least
+  once (`retry_wait` / `conflict` / `permanent_failure`, via `selectSyncIssues`), and a
+  detail/comparison screen for reviewing and resolving one. Deliberately a **separate domain
+  from the Conflict Center** (`app/conflicts.tsx`) — that screen is schedule conflicts
+  (overlapping events/tasks, unassigned responsibilities), this one is synchronization
+  failures; see [DECISIONS.md, "Phase 9"](DECISIONS.md) for why the brief treats these as
+  non-overlapping and `docs/DATA_MODEL.md`'s note on the operation state machine for the exact
+  transitions. Resolution actions (Retry / Keep server version / Apply my change / Discard) go
+  through `syncIssueResolution.ts`, which always reuses the operation's own `operationId` —
+  never creates a replacement operation — and, for Apply, re-fetches the live server row
+  immediately before reapplying the original patch as the new `expectedUpdatedAt` precondition
+  (see that file's own doc comment on `applyMyChange` for the resulting concurrency semantics:
+  a write landing *during* the fetch-then-write pair is still caught by the RPC's own
+  `40001` check; a write landing during the human review window beforehand is transparently
+  picked up as the new base rather than re-surfaced for a second review — a deliberate reading
+  of "refetch latest authorized server version" from the brief, flagged for confirmation
+  rather than silently assumed correct).
 
 `queryClient.ts`'s conservative retry defaults (`retry: 1` for queries, `retry: 0` for
 mutations) are unchanged and still apply to the *online* mutation path — the offline queue
@@ -497,9 +516,15 @@ above is a separate mechanism for the case where there is no connection to retry
 all.
 
 A small shared sync-status indicator (`src/components/ui/SyncStatusIndicator.tsx`) surfaces
-this state (Synced / Syncing / Pending changes: N / Sync issue, with Retry) on the same four
-screens `OfflineBanner` already covers — see `resolveSyncDisplayState`'s own precedence rules
-in that file for how the two never show a redundant "offline" message at once.
+this state (Synced / Syncing / Pending changes: N / Sync issues: N, tapping through to
+`/sync-issues`) on the same four screens `OfflineBanner` already covers — see
+`resolveSyncDisplayState`'s own precedence rules in that file for how the two never show a
+redundant "offline" message at once. It reads the queue store via `zustand/react/shallow`'s
+`useShallow` for its array-valued selector (`selectSyncIssues`) — a plain (non-`useShallow`)
+selector that allocates a new array every call caused a real "Maximum update depth exceeded"
+infinite-render loop under Zustand 5's `useSyncExternalStore`-based `useStore`, found and
+fixed during this phase; any future array/object-valued selector on this store needs the same
+treatment.
 
 ## Testing
 

@@ -1906,15 +1906,18 @@ tap-to-navigate and the Snooze/Done notification actions specifically could not 
 to a structural, cross-process iOS UI-automation limitation (not an app defect) also detailed
 above, and are not claimed as observed.
 
-## Phase 9 (Secure Realtime Sync, Offline Resilience, and Conflict Center) — in progress
+## Phase 9 (Secure Realtime Sync, Offline Resilience, and Conflict Center)
 
-**Status note, written mid-phase**: this entry documents what has actually been built and
-verified so far (DB layer, Realtime manager, persisted cache, offline mutation queue,
-sync-status UI), not the full 28-section brief. The Conflict Center UI, the real local
-Realtime WebSocket integration test, the offline integration test suite, native device
-verification, and the full documentation/wiki pass for the *remaining* scope are not yet
-done — see `knowledge/wiki/engineering/realtime-sync-and-offline.md` for the current
-done/not-done split, kept current as the phase continues.
+**Status**: complete as of the completion pass documented at the end of this section (Sync
+Issues resolution UX). Everything below the original mid-phase status note — DB layer,
+Realtime manager, persisted cache, offline mutation queue, sync-status UI, Conflict Center,
+the real local Realtime WebSocket and offline integration tests, native iOS verification —
+was built and verified across the phase's own multiple passes; the phase's only remaining
+gaps (real device network-interruption testing, native account-switch-no-flash observation,
+Android emulator/device runtime) are explicitly deferred to a Phase 10 manual release
+checklist, not blocking, and not claimed as observed. See
+`knowledge/wiki/engineering/realtime-sync-and-offline.md` for the current status (now marked
+`current`, not `proposed`).
 
 ### Broadcast, not Postgres Changes — and a content-free payload, not a sanitized one
 
@@ -2112,4 +2115,98 @@ file's own comment). Invalidation after a successful occurrence replay uses the 
 entity (not `'tasks'`), which already covers `recurrenceKeys.pendingReminders`/
 `scheduledOccurrences` too, so reminder reconciliation re-runs through the same existing
 mechanism without any new wiring.
+
+### Sync Issues resolution UX (Phase 9 completion pass)
+
+Closes the phase's last remaining gap: manual conflict *resolution*, not just detection. Full
+brief scope: a new, separate `/sync-issues` domain; an explicit persisted operation state
+machine; exact per-failure-type action sets; a field-level comparison screen; Reload/Apply/
+Keep/Discard semantics with concurrency safety and idempotent double-tap protection; account
+isolation; accessibility/i18n; and the pgTAP/Jest/e2e coverage to prove all of it. Completion
+bar the brief set for this pass, met: *"a stale offline write can be visibly reviewed and
+explicitly resolved without silent server overwrite."*
+
+**Sync Issues vs. Conflict Center — two deliberately separate domains.** The Conflict Center
+(`/conflicts`, already built) is schedule conflicts: overlapping events/tasks, unassigned
+drop-off/pick-up, no available adult — all server-detected via `list_family_conflicts()`,
+read-only plus a Review action. Sync Issues (`/sync-issues`) is offline-queue synchronization
+failures: a stale-write conflict, a transient network failure, a permanent validation
+failure, authorization loss, or a deleted entity — all client-side queue state, resolved
+through direct action (Retry/Apply/Keep/Discard), never surfaced in the Conflict Center. The
+two never share a badge, a route, or a data source.
+
+**Operation state machine — extended, not replaced.** The old ad hoc
+`status: 'pending' | 'in-flight' | 'failed'` + a loose `lastSafeErrorCode` union became a
+proper, documented `OfflineOperationStatus = 'pending' | 'syncing' | 'retry_wait' |
+'conflict' | 'permanent_failure' | 'discarded'` (see `src/lib/offline/types.ts`'s own doc
+comment for the full transition table). Deliberate simplification versus the brief's own
+conceptual diagram: `applied`/`completed`/`reviewing` are never *persisted* as lingering
+rows — a successful replay (first attempt or post-resolution) simply removes the operation
+from the queue array, which already satisfies "terminal operations never return to the
+replay queue" without an extra completed-but-kept-around state; `reviewing` is UI-only (the
+comparison screen being open).
+
+**`selectPendingOperationCount` and `selectSyncIssueCount` are deliberately disjoint** — the
+former counts only `pending`/`syncing` (never yet failed), the latter counts
+`retry_wait`/`conflict`/`permanent_failure` (failed at least once), so "Pending changes: N"
+and "Sync issues: N" never double-count the same operation.
+
+**`P0002` (no_data_found) added alongside the existing `40001` (stale-write) convention** —
+this codebase already reuses standard Postgres condition codes rather than inventing bespoke
+ones; `P0002` distinguishes "the row is gone" from `42501` "the row exists but isn't yours"
+across `update_personal_task`/`schedule_personal_task`/`complete_personal_task`/
+`restore_personal_task`/`complete_task_occurrence`/`restore_task_occurrence`
+(`supabase/migrations/20260910120000_sync_issues_resolution.sql`, `create or replace` on each
+function's existing exact signature — no new parameter, no re-grant needed). No new
+server-side "operations" table was needed — same reasoning as the prior Phase 9 migration:
+the queue is client-side persisted state; only the idempotency/concurrency guarantee needs
+server support, already in place. While rewriting `schedule_personal_task`, its pre-existing
+`p_date is null` → `22023` validation (which must run *before* the existence lookup — a
+`gen_random_uuid()` task id with a null date should still raise `22023`, not the new
+`P0002`) was initially dropped by mistake and caught by the pre-existing pgTAP suite
+(`090_personal_task_management_test.sql`, test 34) failing after `supabase db reset` — a
+concrete example of why that suite runs on every schema change, not just ones that look
+related.
+
+**Apply my change's concurrency semantics — a real design nuance, surfaced rather than
+silently resolved either way.** The brief's Section 5 says both "refetch latest authorized
+server version" (as literally the first step of Apply) *and* "if another update happened
+between review and application, remain in Needs review — never silently fall back to
+last-write-wins." As implemented (`src/lib/offline/syncIssueResolution.ts`'s `applyMyChange`),
+Apply always re-fetches the server row immediately before reapplying the original patch,
+using that just-fetched value as the new `expectedUpdatedAt` precondition — so a write
+landing *during* Apply's own fetch-then-write pair is still caught by the RPC's own `40001`
+check (proven by `160_sync_issues_resolution_test.sql`'s "second concurrent update raises
+40001 again" assertion), but a write landing during the human review window *before* the user
+presses Apply is transparently picked up as the new base rather than re-surfaced for a second
+review. This reading was chosen because it's what the brief's own literal step order
+describes, and because the alternative (pinning Apply to the exact version the user reviewed,
+re-conflicting if anything changed since) would be a real behavior change worth a deliberate
+decision rather than an assumption — flagged here and in `docs/ARCHITECTURE.md` for
+confirmation, not silently picked.
+
+**A real, unrelated infinite-render-loop bug found and fixed along the way.**
+`SyncStatusIndicator.tsx` and the Sync Issues list screen both passed `selectSyncIssues` (a
+selector that `.filter()`s and `.sort()`s into a *new array* on every call) directly to
+`useOfflineQueueStore(...)`. Under Zustand 5's `useSyncExternalStore`-based `useStore`, a
+selector returning a new reference every render is read as "the store changed" on every
+render, causing "Maximum update depth exceeded." Fixed with `zustand/react/shallow`'s
+`useShallow` wrapping both call sites; `selectOperationById` (returns a stable reference or
+`undefined`) didn't need it. Any future array/object-valued selector on this store needs the
+same treatment — noted in `docs/ARCHITECTURE.md`.
+
+**Verification**: `npm run verify` (60 suites/544 tests, lint/typecheck/wiki:lint all clean);
+`supabase db reset && supabase test db` (16 files, 528 pgTAP assertions, including the new
+`160_sync_issues_resolution_test.sql`'s 20 assertions); `deno test` for
+`dispatch-notifications` (11 steps); `e2e:backend`/`e2e:notifications`/`e2e:calendar`/
+`e2e:recurrence` all re-confirmed green; `e2e:offline` extended with a 14-step review/resolve
+scenario (queue → concurrent write → conflict → fetch/compare → Keep server version → never
+replays → a second conflict → Apply → only the patched fields change → a further concurrent
+write → Apply again merges into the live row → a repeat Apply is a safe no-op → zero
+residue), run twice consecutively without a database reset, both green; `e2e:realtime` run
+twice, unaffected, both green; `expo config --type public`, both `expo export` platforms,
+`git diff --check` all clean. `expo-doctor`: 20/21 — one pre-existing, unrelated patch-version
+drift (`expo` `57.0.20`→`57.0.21`, `expo-router` `57.0.19`→`57.0.20`), not bumped per this
+codebase's TypeScript/ESLint-pinning precedent of not chasing "latest" without a deliberate
+compatibility check first; reported rather than silently fixed or silently ignored.
 

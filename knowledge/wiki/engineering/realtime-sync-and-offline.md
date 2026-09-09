@@ -1,7 +1,7 @@
 ---
 title: Realtime sync and offline resilience
-status: proposed
-updated: 2026-09-09
+status: current
+updated: 2026-09-10
 sources:
   - ../../../docs/ARCHITECTURE.md
   - ../../../docs/SECURITY_AND_PRIVACY.md
@@ -11,14 +11,16 @@ sources:
   - ../../../docs/TEST_STRATEGY.md
   - ../../raw/sessions/2026-09-09-phase9-realtime-offline-partial.md
   - ../../raw/sessions/2026-09-09-phase9-conflict-center-and-integration-tests.md
-tags: [engineering, realtime, offline, sync, conflicts, phase9]
+  - ../../raw/sessions/2026-09-10-phase9-sync-issues-completion.md
+tags: [engineering, realtime, offline, sync, conflicts, sync-issues, phase9]
 ---
 
-## Status: Phase 9, in progress — this page tracks done vs. not-done, keep it current
+## Status: Phase 9, complete
 
-Marked `proposed` rather than `current` because the phase this page documents is not finished.
-Update the status to `current` only once the "Not done yet" list below is empty and the
-Section 28 final report has been delivered. Full design/rationale for every decision below:
+All sections of the phase's own brief are built and verified, including the completion pass's
+Sync Issues resolution UX (the phase's last "Not done yet" item, now done — see below). Only
+device-hardware-dependent scenarios are deferred, explicitly and non-blockingly, to a Phase 10
+manual release checklist. Full design/rationale for every decision below:
 [DECISIONS.md, "Phase 9"](../../../docs/DECISIONS.md).
 
 ## Done and verified
@@ -41,13 +43,35 @@ Section 28 final report has been delivered. Full design/rationale for every deci
   operations (create Inbox task, update/schedule/complete/restore/delete an existing one-off
   task) plus recurring-occurrence complete/restore. Idempotent by design: `client_operation_id`
   for create-replay, `expected_updated_at` precondition (errcode `40001`) for update/schedule,
-  an op left `'in-flight'` by a crash is retried (not lost or assumed done) on next hydrate,
-  and `remapClientGeneratedId` handles the one real ordering dependency (completing a task
-  created earlier in the same offline session). `complete_task_occurrence`/
+  an op left `'syncing'` by a crash is reset to `'retry_wait'` (retried, not lost or assumed
+  done) on next hydrate, and `remapClientGeneratedId` handles the one real ordering dependency
+  (completing a task created earlier in the same offline session). `complete_task_occurrence`/
   `restore_task_occurrence` needed no new RPC parameters at all — both are already idempotent
   server-side via a plain `WHERE status = ...` guard. Wired into `src/domain/tasks/hooks.ts`'s
   six mutation hooks and `src/domain/recurrence/hooks.ts`'s occurrence hooks — offline, each
-  enqueues and applies the same behavior the online path already used.
+  enqueues and applies the same behavior the online path already used. Operation status is
+  `OfflineOperationStatus = 'pending' | 'syncing' | 'retry_wait' | 'conflict' |
+  'permanent_failure' | 'discarded'` — see `src/lib/offline/types.ts`'s own doc comment for
+  the full transition table.
+- **Sync Issues resolution UX** (completion pass) — `app/sync-issues/index.tsx` (list, oldest
+  first),  `app/sync-issues/[operationId].tsx` (field-level comparison + resolution),
+  `src/lib/offline/syncIssueResolution.ts`/`syncIssueDisplay.ts`. A **separate domain from the
+  Conflict Center**: that screen is schedule conflicts (server-detected,
+  `list_family_conflicts()`); this one is offline-queue synchronization failures (client-side
+  queue state) — never sharing a badge, route, or data source. Four statuses (Waiting to
+  retry / Needs review / Cannot be synchronized / Task no longer available), the brief's exact
+  per-status action set (a stale-write conflict never offers a bare Retry — only Review
+  changes / Reload latest server version), and four resolution flows: **Retry** (reuses the
+  same operationId, joins the existing FIFO worker's singleton guard — never a duplicate
+  concurrent attempt), **Keep server version / Discard** (terminal — the operation is removed,
+  never replays again), **Apply my change** (re-fetches the live server row, reapplies only
+  the original patch's own fields against it as the new `expectedUpdatedAt`, never a derived
+  payload — see "A concurrency nuance" below). `P0002` (no_data_found) was added alongside the
+  existing `40001` convention to distinguish "the row is gone" from `42501` "not yours" across
+  all six affected RPCs — no new server-side "operations" table needed, same reasoning as the
+  queue itself (client-side persisted state; only idempotency/concurrency needs server
+  support). See [DECISIONS.md, "Phase 9" → "Sync Issues resolution UX"](../../../docs/DECISIONS.md)
+  for the full state-machine and resolution-semantics writeup.
 - **Sync-status UI** — `src/components/ui/SyncStatusIndicator.tsx`, Synced/Syncing/Pending
   changes: N/Sync issue (+ Retry), mounted next to `OfflineBanner` on
   Today/Tomorrow/Inbox/Calendar. `resolveSyncDisplayState` is the pure precedence function;
@@ -69,7 +93,11 @@ Section 28 final report has been delivered. Full design/rationale for every deci
 - **Offline queue integration test** — `src/lib/offline/__e2e__/offlineQueue.e2e.test.ts`
   (`npm run e2e:offline`), driving the production queue against real local RPCs (idempotent
   create-replay, a real stale-write conflict that never overwrites the real row, real
-  cross-account isolation), run twice consecutively, zero residue.
+  cross-account isolation, and — completion pass — a 14-step review/resolve scenario driving
+  the real `syncIssueResolution.ts` functions: stale conflict → server fetch/compare → Keep
+  server version → never replays → a second conflict → Apply my change → only the patched
+  fields change → a further concurrent write → Apply again merges into the live row → a
+  repeat Apply is a safe no-op → zero residue), run twice consecutively, zero residue.
 - **Re-confirmed e2e:backend (32/32) / e2e:notifications (24/24) / e2e:calendar (28/28) /
   e2e:recurrence (23/23, twice)** all still pass after the full client-side Phase 9 change
   set — a real, pre-existing, date-hardcoded bug in `e2e-recurrence.sh` (unrelated to this
@@ -100,16 +128,28 @@ Section 28 final report has been delivered. Full design/rationale for every deci
   deterministic `e2e:offline` suite instead (Maestro has no reliable way to simulate real
   connectivity loss on this Simulator setup).
 
-## Not done yet — do not claim these are finished
+## Not done yet — deferred to Phase 10, not blocking
 
-- **Full manual conflict-*resolution*** (as opposed to detection). A stale-write conflict
-  today surfaces only as the generic sync-status "Sync issue" + Retry — never a silent
-  overwrite, but not yet the brief's dedicated "Sync conflict — this task changed on another
-  device" flow with Reload/Review/Discard/Retry actions.
 - **Native network-disconnection testing, account-switch-no-flash, and Android** — see the
-  native-verification bullet above for exactly what was and wasn't attempted.
+  native-verification bullet above for exactly what was and wasn't attempted; explicitly
+  deferred to a Phase 10 manual release checklist by the completion pass's own brief.
 
-## A genuinely non-obvious testing gotcha worth knowing before touching this code
+## A concurrency nuance worth knowing before touching Apply my change
+
+The completion brief says both "refetch latest authorized server version" (literally Apply's
+first step) *and* "if another update happened between review and application, remain in Needs
+review — never silently fall back to last-write-wins." As implemented
+(`syncIssueResolution.ts`'s `applyMyChange`), Apply always re-fetches the server row
+immediately before reapplying, using that just-fetched value as the new precondition — so a
+write landing *during* Apply's own fetch-then-write pair is still caught by the RPC's `40001`
+check, but a write landing during the human review window *before* the user presses Apply is
+transparently picked up as the new base rather than re-surfaced for a second review. This was
+a deliberate reading of the brief's own literal step order, documented rather than silently
+picked either way — see [DECISIONS.md](../../../docs/DECISIONS.md) for the full reasoning. If
+a future session decides Apply should instead pin to the exact reviewed version, that's a real
+behavior change, not a bug fix.
+
+## Genuinely non-obvious testing gotchas worth knowing before touching this code
 
 RNTL's `act()` returns a promise in this installed version *even for a synchronous callback*.
 An unawaited `act(() => {...})` doesn't fail the test that called it — it leaves a dangling
@@ -120,6 +160,24 @@ one earlier test's missing `await`. See [TEST_STRATEGY.md](../../../docs/TEST_ST
 "Conventions established" list for the full writeup — the rule now: always `await act(async
 () => {...})`, never a bare `act(() => {...})`, matching this codebase's existing
 `render`/`fireEvent`/`renderHook` async convention.
+
+**A Zustand selector that allocates a new array/object every call must be wrapped in
+`useShallow`** (`zustand/react/shallow`) when passed to `useOfflineQueueStore(...)` (or any
+Zustand 5 store in this codebase) — otherwise `useSyncExternalStore` reads "new reference" as
+"store changed" on every render, producing an actual infinite render loop
+("Maximum update depth exceeded"), not just a wasted re-render. Found via
+`SyncStatusIndicator.tsx`/the Sync Issues list screen both passing `selectSyncIssues`
+(`.filter().sort()` — a new array every call) directly to the hook. `selectOperationById`
+(returns a stable reference or `undefined`) didn't need it — only array/object-valued
+selectors do.
+
+**Never wrap a component test's tree in the app's own singleton `queryClient`**
+(`@/lib/query/queryClient`) via `QueryClientProvider` — its internal timers/subscriptions
+persist across the whole Jest worker process and can hang the *entire test run* past Jest's
+own timeout, not just fail one test. `SyncIssueDetailScreen.test.tsx` (which needs a real
+`useQuery` for its comparison fetch) hit this directly. Always construct a fresh
+`new QueryClient({ defaultOptions: { queries: { retry: false } } })` per test file, matching
+the pattern `QuickAddInput.test.tsx`/`FamilyTaskBoard.test.tsx` already established.
 
 ## See also
 
