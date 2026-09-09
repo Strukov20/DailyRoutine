@@ -48,6 +48,21 @@ export interface UIState {
    */
   realtimeStatus: 'connecting' | 'connected' | 'reconnecting' | 'offline' | 'error';
   setRealtimeStatus: (status: UIState['realtimeStatus']) => void;
+
+  /**
+   * Phase 10 — called by AuthProvider on a real sign-out (never a mere
+   * family switch), alongside its own TanStack Query cache clearing.
+   * Clears every field above that carries this *account's* own context —
+   * activeFamilyId (a different family's schedule must never flash for
+   * the next signed-in account on this device before they pick their
+   * own), and any pending deep-link/notification route this account
+   * hadn't consumed yet (must never resolve into the next account's
+   * session instead). colorSchemeOverride and realtimeStatus are left
+   * alone — a theme preference isn't account-sensitive, and
+   * realtimeStatus reflects the connection itself, which the next
+   * session's own Realtime manager will update on its own.
+   */
+  resetForSignOut: () => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -65,4 +80,7 @@ export const useUIStore = create<UIState>((set) => ({
 
   realtimeStatus: 'offline',
   setRealtimeStatus: (status) => set({ realtimeStatus: status }),
+
+  resetForSignOut: () =>
+    set({ activeFamilyId: null, pendingInviteToken: null, pendingNotificationRoute: null }),
 }));

@@ -8,6 +8,7 @@ import { createLogger } from '@/lib/logger/logger';
 import { clearPersistedQueryCache } from '@/lib/query/persistedQueryClient';
 import { queryClient } from '@/lib/query/queryClient';
 import { supabase } from '@/lib/supabase/client';
+import { useUIStore } from '@/store/uiStore';
 
 const logger = createLogger('auth-provider');
 
@@ -100,6 +101,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         if (event === 'SIGNED_OUT' && lastUserIdRef.current) {
           void clearPersistedQueryCache(lastUserIdRef.current);
           queryClient.clear();
+          useUIStore.getState().resetForSignOut();
           lastUserIdRef.current = null;
         }
       }

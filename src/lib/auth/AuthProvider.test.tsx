@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react-native';
 import { Text } from 'react-native';
 
 import { supabase } from '@/lib/supabase/client';
+import { useUIStore } from '@/store/uiStore';
 
 import { AuthProvider, useAuth } from './AuthProvider';
 
@@ -102,6 +103,11 @@ describe('AuthProvider', () => {
   it('reacts to a later sign-out event from onAuthStateChange', async () => {
     const fakeSession = { user: { id: 'user-1', email: 'a@test.local' } };
     (supabase.auth.getSession as jest.Mock).mockResolvedValue({ data: { session: fakeSession } });
+    useUIStore.setState({
+      activeFamilyId: 'family-1',
+      pendingInviteToken: 'stale-token',
+      pendingNotificationRoute: '/task/stale-task',
+    });
 
     await render(
       <AuthProvider>
@@ -123,6 +129,12 @@ describe('AuthProvider', () => {
 
     expect(mockClearPersistedQueryCache).toHaveBeenCalledWith('user-1');
     expect(mockQueryClientClear).toHaveBeenCalledTimes(1);
+    // Phase 10: a real sign-out must also clear profile-scoped Zustand
+    // state — the next account signed in on this device must never see
+    // this account's active family or a stale pending deep link.
+    expect(useUIStore.getState().activeFamilyId).toBeNull();
+    expect(useUIStore.getState().pendingInviteToken).toBeNull();
+    expect(useUIStore.getState().pendingNotificationRoute).toBeNull();
   });
 
   it('never clears the persisted cache for a mere TOKEN_REFRESHED event (not a sign-out)', async () => {
