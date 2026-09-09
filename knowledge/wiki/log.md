@@ -778,3 +778,55 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     changes. Deliberately not bumped, consistent with this repository's stated tooling-version-
     pinning discipline; recorded as deferred rather than silently ignored or reflexively fixed.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-09T00:00:00Z — Phase 9 (Secure Realtime Sync, Offline Resilience, Conflict Center): in progress, first wiki entry
+
+- **Operation type:** feature (new domain) + documentation + wiki update. **This phase is not
+  finished** — this entry and the new wiki page both say so explicitly and must be updated
+  again, not treated as a closing entry, once the remaining scope lands.
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-09-phase9-realtime-offline-partial.md`](../raw/sessions/2026-09-09-phase9-realtime-offline-partial.md).
+  Covers both this session's client-layer work and the prior (compacted) session's database
+  layer (commits `615c040`, `eee7cac`), which had never been logged here — this is the first
+  Phase 9 wiki entry for either.
+- **Wiki pages added:**
+  [`engineering/realtime-sync-and-offline.md`](engineering/realtime-sync-and-offline.md)
+  (new, `status: proposed` — deliberately not `current`, tracks a "done" and "not done yet"
+  list to be kept current as the phase continues rather than closed out prematurely).
+- **Wiki pages updated:** [`index.md`](index.md) — added the new page under Engineering.
+- **Canonical docs updated:** `docs/SECURITY_AND_PRIVACY.md` (Mechanism 3 rewritten from a
+  Phase-2-era "not implemented, here's the planned design" note to the actual Broadcast
+  implementation, which is more private than that old plan — content-free payloads, not
+  merely sanitized ones — plus a new offline-cache-privacy paragraph explicitly stating
+  app-sandbox storage is not the same guarantee as hardware encryption), `docs/ARCHITECTURE.md`
+  (the provider-stack diagram was stale — missing `AuthProvider` entirely and in the wrong
+  order relative to `QueryProvider` — corrected; new "Realtime sync (Phase 9)" section; "Offline
+  & caching" rewritten from "not wired up yet" to the actual implementation), `docs/ROADMAP.md`
+  and `docs/MVP_SCOPE.md` (moved the now-implemented subset of "advanced offline sync" out of
+  "V2, design before building" into "implemented," with the still-V2 remainder — full manual
+  conflict-resolution UI, offline editing beyond a personal task — precisely named rather than
+  left as a blanket "still V2"), `docs/DECISIONS.md` (new "Phase 9 — in progress" entry),
+  `docs/TEST_STRATEGY.md` (pgTAP file/assertion counts corrected from the stale Phase 7-era
+  13 files/391 to the current 15 files/508; two new testing conventions recorded).
+- **Decisions/contradictions recorded:**
+  - `docs/SECURITY_AND_PRIVACY.md`'s old Mechanism 3 and `docs/ROADMAP.md`'s old "V2, design
+    before building" framing were both genuine, accurate-at-the-time statements that had gone
+    stale against code built either earlier in Phase 9 (the DB layer, previously undocumented)
+    or in this session — corrected, not silently left contradicting the implementation the
+    way the standing instruction warns against.
+  - The actual Realtime payload design (fully content-free) is **stricter** than the Phase-2
+    plan it replaces (a sanitized-but-present row shape) — recorded as a deliberate
+    improvement the Phase 9 brief specified, not a scope creep needing separate justification.
+  - Recurring-occurrence complete/restore was named in the brief's offline-queue scope
+    (Section 9) alongside the six one-off-task operations that got built; it was not wired in
+    this pass. Recorded as a known, tracked gap in the new wiki page's "Not done yet" list —
+    not silently dropped from scope, not claimed as done.
+  - The Conflict Center UI, the real local Realtime WebSocket integration test, the offline
+    integration test suite, native device verification, and full manual conflict-resolution
+    UI are all still unbuilt. `npm run verify` is green (51 suites, 427 tests) but the
+    pgTAP/Deno/e2e:backend/e2e:notifications/e2e:calendar/e2e:recurrence suites were last
+    confirmed green against the DB-layer commit only, before any client-side Phase 9 code
+    existed — re-confirmation is still owed before this phase can be called complete.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

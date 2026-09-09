@@ -106,30 +106,55 @@ for an outsider/anonymous — by `supabase/tests/060_privacy_regression_test.sql
 
 ## Mechanism 3 — Realtime never re-broadcasts the raw row
 
-**Not implemented yet** — Realtime sync is explicitly out of scope for Phase 2 (see
-docs/ROADMAP.md); `supabase/config.toml` has `[realtime] enabled = true` (the default) but no
-table currently has Realtime turned on, and no broadcast trigger exists. This section
-documents the design that must be followed when Realtime is added, not current behavior.
+**Implemented, Phase 9** (`supabase/migrations/20260909120000_realtime_offline_conflicts.sql`)
+— the design below supersedes an earlier Phase-2-era plan in this same section that proposed
+broadcasting a *sanitized* row (the `family_schedule` view's own redacted shape). What was
+actually built goes further than that plan: broadcasts carry **no row content at all**, not
+even sanitized content.
 
-Supabase Realtime's `postgres_changes` on the base `events`/`tasks` tables must **not be used
-for cross-member updates**, even though modern Supabase Realtime is RLS-aware, because:
+Supabase Realtime's `postgres_changes` on the base `events`/`tasks`/`responsibilities` tables
+is **never used** for cross-device/cross-member updates, even though modern Supabase Realtime
+is RLS-aware, because it broadcasts the full `NEW`/`OLD` row payload to the change-detection
+layer before RLS narrows _visibility_ of the row — RLS controls whether a subscriber sees the
+change event at all, not whether the payload is column-redacted.
 
-1. it broadcasts the full `NEW`/`OLD` row payload to the change-detection layer before RLS
-   narrows _visibility_ of the row — RLS controls whether a subscriber sees the change event
-   at all, not whether the payload is column-redacted; a private row's realtime payload could
-   still contain the title even if only the owner's connection receives it, which is fine
-   for the owner but is exactly the kind of "trust the transport, not the data" pattern this
-   document is trying to avoid;
-2. it is easy to misconfigure (a service-role key or a permissive policy added later for an
-   unrelated feature silently widens who receives these events).
+Instead: **Broadcast**, over two kinds of private channel, each gated by its own RLS policy
+on `realtime.messages` (never `USING (true)`):
 
-Instead: **family-visible schedule changes must broadcast through the same sanitization
-shape as `family_schedule`**, using Supabase's Broadcast-from-Database pattern — a trigger on
-`events`/`tasks` reusing the exact `CASE`-based projection from the view (extracted into a
-shared SQL function at that point, so both the view and the broadcast trigger call the same
-code rather than two copies of the sanitization logic) and broadcasting _that_ payload to a
-per-family Realtime channel (`family:{family_id}:schedule`). Personal, non-shared items
-(`family_id IS NULL`) must never trigger a broadcast at all.
+- `profile:<profile_id>` — only `auth.uid() = profile_id` may `select`/listen (the malformed-
+  topic and non-UUID-suffix cases fail closed via `public.try_cast_uuid`, which never raises,
+  only returns `null`).
+- `family:<family_id>` — only a *current, active* (`removed_at is null`) member of that
+  family may listen; a removed member's existing subscription may persist for the life of
+  their already-established Realtime connection (Supabase may cache per-connection channel
+  authorization) — payloads must therefore remain content-free regardless, since revocation
+  of *new* subscriptions is not the same guarantee as revocation of an open one.
+- Clients only ever get `select` (listen) on `realtime.messages` — never `insert` (send);
+  every broadcast is emitted server-side, from `public.emit_invalidation`, a
+  `security definer` function that is the *only* caller of `realtime.send(...)`.
+
+**The payload is a fixed, generic, content-free shape** —
+`{version: 1, scope: 'profile'|'family', entity: 'tasks'|'events'|'responsibilities'|'members'|
+'categories'|'reminders'|'recurrence', operation: 'changed'}` — never the changed row, never a
+title/description/category/participant/assignment detail, never a token. Seven narrowly scoped
+trigger functions (one per table: `tasks`, `task_occurrences`, `reminders`, `events`,
+`responsibilities`, `family_members`, `categories`) fire `after insert or update or delete ...
+for each row`, each with a fixed `search_path`, schema-qualified calls, and explicit
+`revoke ... from public, anon` (covered by the Phase 6.1 anon-execute regression guard). A
+`DELETE` uses the row's own prior `owner_profile_id`/`family_id` (`OLD`, not `NEW`) so a
+deletion never broadcasts to the wrong scope. Junction tables (`task_assignments`,
+`event_participants`, `responsibility_assignments`) get no broadcast trigger of their own —
+every write to them is transactionally coupled to a write on their parent table within the
+same RPC call, which already has one, avoiding duplicate broadcast storms.
+
+On receipt, the client (`src/lib/realtime/useRealtimeSync.ts`) validates the payload (zod
+`safeParse`, silently ignoring anything malformed or carrying an unrecognized version/entity),
+maps `entity` to a fixed set of query-key prefixes
+(`src/lib/realtime/invalidationMap.ts`), and calls `invalidateQueries` — it is never written
+directly into the query cache as trusted data, and a broadcast is never treated as
+authorization for anything. Bursts within a 300ms window coalesce into one invalidation pass
+per affected query-key prefix, and the current device receiving its own broadcast is harmless
+(the same idempotent invalidate-then-refetch-through-RLS path either way).
 
 ## Mechanism 4 — notifications
 
@@ -256,9 +281,20 @@ database logs) must follow the same rule once they exist: log row ids, not row c
   `GRANT`s — no table relies on RLS alone while leaving broad default privileges in place.
   `service_role` is never referenced by the mobile app (`src/lib/supabase/client.ts` only
   ever uses the anon key — see `docs/DECISIONS.md`, "Never place a service_role key...").
-- ⬜ **Not yet implemented**: Realtime (Mechanism 3) — see that section above. Confirm the
-  broadcast-trigger design is actually in place, as a PR checklist item, before enabling
-  Realtime on `events`/`tasks` for the first time.
+- ✅ **Implemented in Phase 9**: Realtime (Mechanism 3) — see that section above.
+- ✅ **Implemented in Phase 9**: the persisted offline read cache
+  (`src/lib/query/persistedQueryClient.ts`) writes to on-device AsyncStorage, partitioned per
+  authenticated profile id and cleared on real sign-out. This is **app-sandbox storage, not
+  hardware-encrypted storage** — iOS/Android sandbox each app's files from other apps, but
+  that is a different guarantee from at-rest encryption; this document must never claim the
+  cache is encrypted, because it isn't. Only an explicit allowlist persists (task/calendar/
+  family/conflict/category *lists*, never auth tokens, invitation tokens, notification
+  tokens, mutation error payloads, raw Realtime messages, or the offline queue's own rows —
+  `shouldDehydrateQuery` rejects anything outside that allowlist). The offline mutation queue
+  (`src/lib/offline/`) is a **separate** persisted store, same per-profile partitioning and
+  logout-clearing, bounded to 200 operations, holding only the six safe personal-task
+  operations in Section 9's scope (never family/shared mutations, never auth material) — see
+  [DECISIONS.md, "Phase 9"](DECISIONS.md) for the idempotency/stale-write design.
 - ✅ **Implemented in Phase 6, extended in Phase 7**: shared family task and event-
   responsibility assignment notifications (Mechanism 4) — content-free push payloads (ids
   only), server-derived recipients inside the same transaction as the mutation, the

@@ -1906,3 +1906,96 @@ tap-to-navigate and the Snooze/Done notification actions specifically could not 
 to a structural, cross-process iOS UI-automation limitation (not an app defect) also detailed
 above, and are not claimed as observed.
 
+## Phase 9 (Secure Realtime Sync, Offline Resilience, and Conflict Center) — in progress
+
+**Status note, written mid-phase**: this entry documents what has actually been built and
+verified so far (DB layer, Realtime manager, persisted cache, offline mutation queue,
+sync-status UI), not the full 28-section brief. The Conflict Center UI, the real local
+Realtime WebSocket integration test, the offline integration test suite, native device
+verification, and the full documentation/wiki pass for the *remaining* scope are not yet
+done — see `knowledge/wiki/engineering/realtime-sync-and-offline.md` for the current
+done/not-done split, kept current as the phase continues.
+
+### Broadcast, not Postgres Changes — and a content-free payload, not a sanitized one
+
+`postgres_changes` was rejected outright (same reasoning as the Phase-2-era note in
+[SECURITY_AND_PRIVACY.md](SECURITY_AND_PRIVACY.md) this phase superseded): it broadcasts the
+full row before RLS narrows *visibility*, not *content* — a private row's payload could still
+carry its title to a connection RLS merely permits to see the event exists. Supabase's
+Broadcast-from-Database (`realtime.send`, private channels, RLS on `realtime.messages`) was
+chosen instead. The brief went one step further than that earlier plan (which proposed
+broadcasting the `family_schedule` view's own *sanitized* shape): broadcasts here carry no row
+content at all, ever — a fixed `{version, scope, entity, operation}` envelope. This is
+strictly more private (nothing to redact wrong) at the cost of the client always needing a
+follow-up fetch through the normal RLS-gated read path, which it already does for every other
+query — no new read path was needed to make this work.
+
+### `realtime.topic()` reads a per-subscription-attempt GUC — verified directly, not assumed
+
+`realtime.topic()` is `nullif(current_setting('realtime.topic', true), '')::text` — it returns
+whatever the real Realtime server sets via `set_config('realtime.topic', ..., true)` for that
+specific subscription attempt, not a property of the row or the session in general. A plain
+`psql` `SELECT` against `realtime.messages` with no topic GUC set makes every RLS policy here
+evaluate to `false` — confirmed by a real query returning 0 rows where it should have matched,
+before formalizing the pgTAP suite. Every RLS test in
+`supabase/tests/150_realtime_offline_conflicts_test.sql` wraps its assertion in
+`set_config('realtime.topic', '<topic>', true)` first, matching the real server's own
+authorization flow — a test that forgot this would silently prove nothing (every policy false
+either way) rather than failing loudly, which is why this is called out here explicitly.
+
+### Idempotency: `client_operation_id` for create, `expected_updated_at` for update/schedule
+
+`create_personal_task` gained a nullable `client_operation_id uuid` column plus a partial
+unique index `(owner_profile_id, client_operation_id) where client_operation_id is not null`.
+The RPC checks for an existing row with the same `(caller, client_operation_id)` first and
+returns its id on replay instead of inserting — a duplicate delivery (offline queue retry,
+crash-then-relaunch) can never create a duplicate task. `update_personal_task`/
+`schedule_personal_task` gained a nullable `p_expected_updated_at timestamptz` precondition:
+when supplied and it no longer matches the row's actual `updated_at`, the RPC raises with
+errcode `40001` (`serialization_failure` — reused deliberately rather than inventing a bespoke
+code, since it is a real, standard Postgres code whose meaning — "retry against a state that
+moved under you" — already matches) instead of applying the write. Adding these parameters via
+bare `CREATE OR REPLACE FUNCTION` would have created an *additional* overload rather than
+replacing the original (Postgres function identity includes the parameter type list) — each of
+the three functions is preceded by an explicit `DROP FUNCTION IF EXISTS <exact prior
+signature>`, with `REVOKE`/`GRANT` reapplied after (dropping a function drops its grants too).
+Both `update_personal_task`'s Phase 5 assignment-status guard and
+`schedule_personal_task`'s Phase 8 recurring-task guard were preserved by rebuilding each
+function body from its current (latest-migration) source rather than the original Phase 4
+version — a near-miss caught by grepping for every later migration that had already touched
+these same functions before writing the Phase 9 version.
+
+### Offline queue scope: six personal-task operations, nothing else
+
+Family/shared task mutations, assignments, invitations, family membership, events,
+responsibilities, recurrence-series edits, reminder-definition edits, category creation, and
+notification token changes are never queued — they fail immediately while offline with a
+clear message, the same as before this phase. Only create/update/schedule/complete/restore/
+delete of a personal, one-off task queue. An offline create is Inbox-only (no `date`) — a
+dated offline create is refused with a clear message rather than queued, since Section 9
+scoped queued creation to "an unscheduled Inbox task" specifically. Recurring-occurrence
+complete/restore (also named in the brief's Section 9 list) is **not yet wired into the
+queue** — deferred, tracked as a known gap, not silently dropped from scope.
+
+### FIFO dependency chaining: an offline-created task's own id isn't known until it syncs
+
+A task created offline is optimistically rendered under a client-generated id
+(`clientGeneratedId`) before the server assigns a real one. If the user then completes/edits
+that same task while still offline, the dependent operation is queued against
+`clientGeneratedId` as its `entityId`, since the real id doesn't exist yet. Once the create
+replays successfully, `useOfflineQueueStore.remapClientGeneratedId` rewrites every later op
+still pointing at that `clientGeneratedId` to the real server id before its turn comes up —
+the one real "FIFO replay where dependencies require it" case (Section 10) this phase's scope
+actually produces, found and fixed before it could ship as a silent data-loss bug (completing
+the *wrong*, nonexistent, task id).
+
+### Stale-write conflicts surface today only as "Sync issue" — full resolution UI deferred
+
+A queued update/schedule that loses its `expected_updated_at` precondition is marked `failed`
+with `lastSafeErrorCode: 'conflict'` and never retried automatically — the queue guarantees it
+can never silently overwrite a change made elsewhere. What is **not** yet built is Section 11's
+full manual-resolution UX (a distinct "Sync conflict" message with Reload/Review/Discard/Retry
+actions) — today this surfaces through the same generic sync-status "Sync issue" + Retry as any
+other permanently-failed operation. Recorded here as a deliberate, temporary scope reduction,
+not an oversight — see [ROADMAP.md, "Offline behavior"](ROADMAP.md).
+
