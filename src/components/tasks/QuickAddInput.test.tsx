@@ -10,6 +10,21 @@ import { QuickAddInput } from './QuickAddInput';
 
 initI18n();
 
+// Phase 9 — the create-task hook now pulls in the offline queue store,
+// which pulls in AsyncStorage; same convention as persistedQueryClient.test.ts.
+jest.mock('@react-native-async-storage/async-storage', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
+
+// See src/components/calendar/CalendarScreen.test.tsx for why NetInfo is
+// mocked at this boundary — its real native module doesn't initialize
+// under this project's test environment, and useCreatePersonalTask now
+// reads useIsOffline() unconditionally.
+jest.mock('@react-native-community/netinfo', () => ({
+  useNetInfo: () => ({ isConnected: true }),
+}));
+
 // A manual factory (not a bare `jest.mock('@/lib/tasks/taskService')`) —
 // automock still evaluates the real module, which imports the real
 // Supabase client and its AsyncStorage native module. See

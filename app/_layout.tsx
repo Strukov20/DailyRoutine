@@ -10,6 +10,7 @@ import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { initI18n } from '@/i18n';
 import { AuthProvider, useAuth } from '@/lib/auth/AuthProvider';
 import { useNotificationResponseRouter } from '@/lib/notifications/notificationResponseRouter';
+import { useOfflineQueueSync } from '@/lib/offline/useOfflineQueueSync';
 import { QueryProvider } from '@/lib/query/QueryProvider';
 import { useRealtimeSync } from '@/lib/realtime/useRealtimeSync';
 import { useReminderNotificationActions } from '@/lib/reminders/useReminderNotificationActions';
@@ -66,6 +67,10 @@ function RootNavigator() {
   // TanStack Query invalidation on generic invalidation messages. Mounted
   // once here, never from an individual screen.
   useRealtimeSync();
+  // Phase 9 — the bounded offline mutation queue's own lifecycle (see
+  // src/lib/offline/useOfflineQueueSync.ts). Mounted once here, never from
+  // a screen.
+  useOfflineQueueSync();
 
   // A signed-out visitor who opened an invitation deep link
   // (app/invite/[token].tsx) was sent to sign in/up with no way to carry

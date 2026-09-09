@@ -205,6 +205,13 @@ export interface CreatePersonalTaskParams {
   categoryId?: string;
   visibility?: TaskVisibility;
   familyId?: string;
+  /**
+   * Phase 9 — an offline-queued create's idempotency key (see
+   * src/lib/offline). `create_personal_task` returns the existing row's id
+   * on a replay with the same (caller, clientOperationId) pair instead of
+   * inserting a duplicate. Omitted for a normal online create.
+   */
+  clientOperationId?: string;
 }
 
 export async function getTask(taskId: string): Promise<Task | null> {
@@ -225,6 +232,7 @@ export async function createPersonalTask(params: CreatePersonalTaskParams): Prom
     p_category_id: params.categoryId,
     p_visibility: params.visibility,
     p_family_id: params.familyId,
+    p_client_operation_id: params.clientOperationId,
   });
   if (error) throw toTaskServiceError(error);
   return data;
@@ -240,6 +248,15 @@ export interface UpdatePersonalTaskParams {
   clearCategory?: boolean;
   visibility?: TaskVisibility;
   familyId?: string;
+  /**
+   * Phase 9 — optimistic-concurrency precondition (see docs/DECISIONS.md,
+   * "Phase 9"): when set, the RPC raises a stale-write conflict (errcode
+   * 40001, surfaced here as TaskErrorCode 'conflict') if the row's actual
+   * updated_at no longer matches, rather than silently overwriting a
+   * change made elsewhere. Omitted for a normal online edit, where the UI
+   * already reflects the live server state.
+   */
+  expectedUpdatedAt?: string;
 }
 
 export async function updatePersonalTask(params: UpdatePersonalTaskParams): Promise<void> {
@@ -253,6 +270,7 @@ export async function updatePersonalTask(params: UpdatePersonalTaskParams): Prom
     p_clear_category: params.clearCategory,
     p_visibility: params.visibility,
     p_family_id: params.familyId,
+    p_expected_updated_at: params.expectedUpdatedAt,
   });
   if (error) throw toTaskServiceError(error);
 }
@@ -273,6 +291,8 @@ export interface SchedulePersonalTaskParams {
   startTime?: string;
   durationMinutes?: number;
   timezone?: string;
+  /** Phase 9 — same stale-write precondition as UpdatePersonalTaskParams.expectedUpdatedAt. */
+  expectedUpdatedAt?: string;
 }
 
 export async function schedulePersonalTask(params: SchedulePersonalTaskParams): Promise<void> {
@@ -282,6 +302,7 @@ export async function schedulePersonalTask(params: SchedulePersonalTaskParams): 
     p_start_time: params.startTime,
     p_duration_minutes: params.durationMinutes,
     p_timezone: params.timezone,
+    p_expected_updated_at: params.expectedUpdatedAt,
   });
   if (error) throw toTaskServiceError(error);
 }
