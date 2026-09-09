@@ -20,7 +20,7 @@ const logger = createLogger('task-service');
  * has no such grant for `authenticated`.
  */
 
-export type TaskErrorCode = 'forbidden' | 'invalid_input' | 'conflict' | 'unknown';
+export type TaskErrorCode = 'forbidden' | 'not_found' | 'invalid_input' | 'conflict' | 'unknown';
 
 const CODE_BY_SQLSTATE: Record<string, TaskErrorCode> = {
   '42501': 'forbidden',
@@ -30,6 +30,13 @@ const CODE_BY_SQLSTATE: Record<string, TaskErrorCode> = {
   // already-resolved state — someone else took the task, a reassigned-away
   // recipient tried to accept, etc. See docs/DECISIONS.md, "Phase 5."
   '40001': 'conflict',
+  // Sync Issues completion pass (Phase 9) — update/schedule/complete/
+  // restore_personal_task now distinguish "the row is gone" (P0002) from
+  // "the row exists but isn't yours" (42501), so an offline replay against
+  // a task deleted from another device can show "This task no longer
+  // exists" instead of the generic authorization message. See
+  // docs/DECISIONS.md, "Phase 9."
+  P0002: 'not_found',
 };
 
 export class TaskServiceError extends Error {

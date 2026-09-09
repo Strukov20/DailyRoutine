@@ -7,6 +7,7 @@ import type { TaskErrorCode } from '@/lib/tasks/taskService';
  */
 const TASK_ERROR_MESSAGE_KEYS: Record<TaskErrorCode, string> = {
   forbidden: 'errors.forbidden',
+  not_found: 'errors.notFound',
   invalid_input: 'errors.invalidInput',
   conflict: 'errors.conflict',
   unknown: 'errors.generic',

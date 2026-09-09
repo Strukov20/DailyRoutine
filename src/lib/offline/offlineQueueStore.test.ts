@@ -1,7 +1,10 @@
 import {
   selectHasFailedOperations,
   selectIsTaskPendingSync,
+  selectOperationById,
   selectPendingOperationCount,
+  selectSyncIssueCount,
+  selectSyncIssues,
   useOfflineQueueStore,
 } from './offlineQueueStore';
 import { MAX_OFFLINE_QUEUE_SIZE, type OfflineOperation } from './types';
@@ -77,10 +80,10 @@ describe('useOfflineQueueStore', () => {
     await useOfflineQueueStore.getState().enqueue(fakeOp({ operationId: 'op-1' }));
     await useOfflineQueueStore.getState().enqueue(fakeOp({ operationId: 'op-2' }));
 
-    await useOfflineQueueStore.getState().updateOperation('op-1', { status: 'failed', lastSafeErrorCode: 'conflict' });
+    await useOfflineQueueStore.getState().updateOperation('op-1', { status: 'conflict', lastSafeErrorCode: 'conflict' });
 
     const ops = useOfflineQueueStore.getState().operations;
-    expect(ops.find((op) => op.operationId === 'op-1')?.status).toBe('failed');
+    expect(ops.find((op) => op.operationId === 'op-1')?.status).toBe('conflict');
     expect(ops.find((op) => op.operationId === 'op-2')?.status).toBe('pending');
   });
 
@@ -94,16 +97,16 @@ describe('useOfflineQueueStore', () => {
     expect(useOfflineQueueStore.getState().operations.map((op) => op.operationId)).toEqual(['op-2']);
   });
 
-  it("resets a leftover 'in-flight' operation back to 'pending' on hydrate (a crash mid-replay never strands an op)", async () => {
+  it("resets a leftover 'syncing' operation back to 'retry_wait' on hydrate (a crash mid-replay never strands an op)", async () => {
     await useOfflineQueueStore.getState().hydrate('profile-a');
     await useOfflineQueueStore.getState().enqueue(fakeOp({ operationId: 'op-1' }));
-    await useOfflineQueueStore.getState().updateOperation('op-1', { status: 'in-flight' });
+    await useOfflineQueueStore.getState().updateOperation('op-1', { status: 'syncing' });
 
     // Simulate an app relaunch: fresh store, re-hydrate from disk.
     useOfflineQueueStore.setState({ profileId: null, operations: [] });
     await useOfflineQueueStore.getState().hydrate('profile-a');
 
-    expect(useOfflineQueueStore.getState().operations[0]?.status).toBe('pending');
+    expect(useOfflineQueueStore.getState().operations[0]?.status).toBe('retry_wait');
   });
 
   it("remapClientGeneratedId rewrites every op referencing a not-yet-synced task's clientGeneratedId to its real server id", async () => {
@@ -152,21 +155,49 @@ describe('selectors', () => {
     expect(selectIsTaskPendingSync(state, 'unrelated')).toBe(false);
   });
 
-  it('selectPendingOperationCount excludes failed operations', () => {
+  it('selectPendingOperationCount counts pending/syncing only — never a sync issue, and never retry_wait (which counts as a sync issue instead)', () => {
     const state = {
-      operations: [fakeOp({ operationId: 'a', status: 'pending' }), fakeOp({ operationId: 'b', status: 'failed' })],
+      operations: [
+        fakeOp({ operationId: 'a', status: 'pending' }),
+        fakeOp({ operationId: 'b', status: 'retry_wait' }),
+        fakeOp({ operationId: 'c', status: 'syncing' }),
+        fakeOp({ operationId: 'd', status: 'conflict' }),
+        fakeOp({ operationId: 'e', status: 'permanent_failure' }),
+      ],
     } as ReturnType<typeof useOfflineQueueStore.getState>;
-    expect(selectPendingOperationCount(state)).toBe(1);
+    expect(selectPendingOperationCount(state)).toBe(2);
   });
 
-  it('selectHasFailedOperations is true only when at least one operation failed', () => {
+  it('selectSyncIssues returns retry_wait/conflict/permanent_failure operations (never pending/syncing), oldest first', () => {
+    const state = {
+      operations: [
+        fakeOp({ operationId: 'newer', status: 'conflict', createdAt: '2026-01-03T00:00:00.000Z' }),
+        fakeOp({ operationId: 'pending', status: 'pending' }),
+        fakeOp({ operationId: 'syncing', status: 'syncing' }),
+        fakeOp({ operationId: 'middle', status: 'retry_wait', createdAt: '2026-01-02T00:00:00.000Z' }),
+        fakeOp({ operationId: 'older', status: 'permanent_failure', createdAt: '2026-01-01T00:00:00.000Z' }),
+      ],
+    } as ReturnType<typeof useOfflineQueueStore.getState>;
+    expect(selectSyncIssues(state).map((op) => op.operationId)).toEqual(['older', 'middle', 'newer']);
+    expect(selectSyncIssueCount(state)).toBe(3);
+  });
+
+  it('selectHasFailedOperations is true only when at least one operation is a sync issue', () => {
     const clean = { operations: [fakeOp({ status: 'pending' })] } as ReturnType<
       typeof useOfflineQueueStore.getState
     >;
-    const dirty = { operations: [fakeOp({ status: 'failed' })] } as ReturnType<
+    const dirty = { operations: [fakeOp({ status: 'conflict' })] } as ReturnType<
       typeof useOfflineQueueStore.getState
     >;
     expect(selectHasFailedOperations(clean)).toBe(false);
     expect(selectHasFailedOperations(dirty)).toBe(true);
+  });
+
+  it('selectOperationById finds exactly one operation by id, or undefined', () => {
+    const state = {
+      operations: [fakeOp({ operationId: 'a' }), fakeOp({ operationId: 'b' })],
+    } as ReturnType<typeof useOfflineQueueStore.getState>;
+    expect(selectOperationById(state, 'b')?.operationId).toBe('b');
+    expect(selectOperationById(state, 'missing')).toBeUndefined();
   });
 });

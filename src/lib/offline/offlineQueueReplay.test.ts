@@ -133,11 +133,15 @@ describe('runOfflineQueueReplay', () => {
 
     const ops = useOfflineQueueStore.getState().operations;
     expect(ops).toHaveLength(1);
-    expect(ops[0]).toMatchObject({ operationId: 'op-1', status: 'failed', lastSafeErrorCode: 'forbidden' });
+    expect(ops[0]).toMatchObject({
+      operationId: 'op-1',
+      status: 'permanent_failure',
+      lastSafeErrorCode: 'authorization_lost',
+    });
     expect(mockRestorePersonalTask).toHaveBeenCalledWith('task-2');
   });
 
-  it('marks a stale-write conflict as failed without retrying (never silently overwrites)', async () => {
+  it('marks a stale-write conflict as "conflict" (needs review) without retrying (never silently overwrites)', async () => {
     mockUpdatePersonalTask.mockRejectedValue(new TaskServiceError('conflict', 'stale'));
     await useOfflineQueueStore.getState().enqueue(
       fakeOp({
@@ -151,13 +155,27 @@ describe('runOfflineQueueReplay', () => {
     await runOfflineQueueReplay();
 
     expect(useOfflineQueueStore.getState().operations[0]).toMatchObject({
-      status: 'failed',
+      status: 'conflict',
       lastSafeErrorCode: 'conflict',
     });
     expect(mockUpdatePersonalTask).toHaveBeenCalledTimes(1);
   });
 
-  it('leaves a transient (unknown) failure pending and stops the pass, for the next trigger to retry', async () => {
+  it('marks a not-found failure as "entity_deleted"', async () => {
+    mockUpdatePersonalTask.mockRejectedValue(new TaskServiceError('not_found', 'gone'));
+    await useOfflineQueueStore
+      .getState()
+      .enqueue(fakeOp({ operationType: 'update_personal_task', entityId: 'task-1' }));
+
+    await runOfflineQueueReplay();
+
+    expect(useOfflineQueueStore.getState().operations[0]).toMatchObject({
+      status: 'permanent_failure',
+      lastSafeErrorCode: 'entity_deleted',
+    });
+  });
+
+  it('leaves a transient (unknown) failure in retry_wait and stops the pass, for the next trigger to retry', async () => {
     mockCompletePersonalTask.mockRejectedValue(new Error('network blip'));
     await useOfflineQueueStore
       .getState()
@@ -166,11 +184,11 @@ describe('runOfflineQueueReplay', () => {
     await runOfflineQueueReplay();
 
     const op = useOfflineQueueStore.getState().operations[0];
-    expect(op?.status).toBe('pending');
+    expect(op?.status).toBe('retry_wait');
     expect(op?.attemptCount).toBe(1);
   });
 
-  it('gives up and marks failed once a transient failure exhausts its attempt budget', async () => {
+  it('gives up and marks permanent_failure once a transient failure exhausts its attempt budget', async () => {
     mockCompletePersonalTask.mockRejectedValue(new Error('network blip'));
     await useOfflineQueueStore.getState().enqueue(
       fakeOp({
@@ -183,7 +201,7 @@ describe('runOfflineQueueReplay', () => {
     await runOfflineQueueReplay();
 
     expect(useOfflineQueueStore.getState().operations[0]).toMatchObject({
-      status: 'failed',
+      status: 'permanent_failure',
       lastSafeErrorCode: 'unknown',
     });
   });
@@ -251,8 +269,8 @@ describe('runOfflineQueueReplay', () => {
     await runOfflineQueueReplay();
 
     expect(useOfflineQueueStore.getState().operations[0]).toMatchObject({
-      status: 'failed',
-      lastSafeErrorCode: 'forbidden',
+      status: 'permanent_failure',
+      lastSafeErrorCode: 'authorization_lost',
     });
   });
 });

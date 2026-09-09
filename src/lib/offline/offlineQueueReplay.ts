@@ -3,7 +3,12 @@ import { onlineManager } from '@tanstack/react-query';
 import { createLogger } from '@/lib/logger/logger';
 import { queryClient } from '@/lib/query/queryClient';
 import { queryKeyPrefixesForEntity } from '@/lib/realtime/invalidationMap';
-import { completeOccurrence, restoreOccurrence, RecurrenceServiceError } from '@/lib/recurrence/recurrenceService';
+import {
+  completeOccurrence,
+  restoreOccurrence,
+  RecurrenceServiceError,
+  type RecurrenceErrorCode,
+} from '@/lib/recurrence/recurrenceService';
 import {
   completePersonalTask,
   createPersonalTask,
@@ -19,23 +24,45 @@ import {
 } from '@/lib/tasks/taskService';
 
 import { useOfflineQueueStore } from './offlineQueueStore';
-import { MAX_ATTEMPTS_BEFORE_GIVING_UP, PERMANENT_FAILURE_CODES, type OfflineOperation } from './types';
+import {
+  MAX_ATTEMPTS_BEFORE_GIVING_UP,
+  PERMANENT_FAILURE_CODES,
+  type OfflineOperation,
+  type OfflineSafeErrorCode,
+} from './types';
 
 const logger = createLogger('offline-queue-replay');
 
-type ReplayOutcome =
+export type ReplayOutcome =
   | { result: 'succeeded'; createdEntityId?: string }
-  | { result: 'failed'; code: TaskErrorCode };
+  | { result: 'failed'; code: OfflineSafeErrorCode };
+
+/** Maps the transport layer's own error taxonomy onto the queue's safe, user-facing vocabulary (Sync Issues completion pass). */
+function toSafeErrorCode(code: TaskErrorCode | RecurrenceErrorCode): OfflineSafeErrorCode {
+  switch (code) {
+    case 'conflict':
+      return 'conflict';
+    case 'not_found':
+      return 'entity_deleted';
+    case 'forbidden':
+      return 'authorization_lost';
+    case 'invalid_input':
+      return 'permanent_validation';
+    case 'unknown':
+    default:
+      return 'unknown';
+  }
+}
 
 /**
  * Executes exactly one queued operation against the real RPCs, in the same
  * transport layer any online mutation uses (Section 10: "never create a
  * generic RPC capable of executing arbitrary operation names" — this is a
- * fixed switch over the six known operation types, not a dispatcher). Both
+ * fixed switch over the known operation types, not a dispatcher). Both
  * create's `clientOperationId` and update/schedule's `expectedUpdatedAt`
  * are what makes a blind retry after a crash or a duplicate delivery safe.
  */
-async function replayOperation(operation: OfflineOperation): Promise<ReplayOutcome> {
+export async function replayOperation(operation: OfflineOperation): Promise<ReplayOutcome> {
   try {
     switch (operation.operationType) {
       case 'create_personal_task': {
@@ -94,31 +121,51 @@ async function replayOperation(operation: OfflineOperation): Promise<ReplayOutco
     }
     return { result: 'succeeded' };
   } catch (error) {
-    const code =
+    const rawCode =
       error instanceof TaskServiceError || error instanceof RecurrenceServiceError ? error.code : 'unknown';
-    return { result: 'failed', code };
+    return { result: 'failed', code: toSafeErrorCode(rawCode) };
   }
 }
 
-/** 'recurrence' covers occurrence-scoped ops too (tasks/calendar/recurrence/conflicts — see invalidationMap.ts); everything else only ever needs the narrower 'tasks' set. */
-function invalidateAfterReplay(operationType: OfflineOperation['operationType']): void {
-  const entity = operationType === 'complete_task_occurrence' || operationType === 'restore_task_occurrence'
-    ? 'recurrence'
-    : 'tasks';
-  for (const prefix of queryKeyPrefixesForEntity(entity)) {
-    void queryClient.invalidateQueries({ queryKey: prefix as unknown[] });
+/**
+ * `usePendingReminders`/`useScheduledOccurrencesForReminders` (which drive
+ * `useReminderReconciliation`'s automatic re-run — Section 5: "reconcile
+ * local reminders if the task schedule changed") are keyed under
+ * `['recurrence', ...]`, not `['tasks', ...]` — a plain task schedule/
+ * complete/restore/delete replay invalidating only the 'tasks' entity
+ * would silently leave a stale local reminder scheduled. Every operation
+ * type except a fresh create (which can't have a reminder attached yet)
+ * invalidates both.
+ */
+export function invalidateAfterReplay(operationType: OfflineOperation['operationType']): void {
+  const entities: Parameters<typeof queryKeyPrefixesForEntity>[0][] =
+    operationType === 'create_personal_task' ? ['tasks'] : ['tasks', 'recurrence'];
+  const seen = new Set<string>();
+  for (const entity of entities) {
+    for (const prefix of queryKeyPrefixesForEntity(entity)) {
+      const key = JSON.stringify(prefix);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      void queryClient.invalidateQueries({ queryKey: prefix as unknown[] });
+    }
   }
 }
 
 let activeReplay: Promise<void> | null = null;
 
 /**
- * Section 12 — the queue's own lifecycle: FIFO, one operation in flight at
- * a time, one worker at a time for the whole app (the `activeReplay`
+ * Section 12/6 — the queue's own lifecycle: FIFO, one operation in flight
+ * at a time, one worker at a time for the whole app (the `activeReplay`
  * module-level guard — sufficient on React Native's single JS thread,
  * unlike a genuinely multi-process client where a persisted lease would be
- * needed). Stops the instant the connection or the queue itself says there
- * is nothing more to safely do; never spins on a timer.
+ * needed — this is also what "prevent simultaneous duplicate retries"
+ * (Section 5) relies on: a manual Retry just flips one op back to
+ * 'pending' and calls this same function, joining whatever pass is
+ * already running rather than racing it). Stops the instant the
+ * connection or the queue itself says there is nothing more to safely do;
+ * never spins on a timer. Picks up both 'pending' (never yet attempted)
+ * and 'retry_wait' (previously failed transiently) operations — both mean
+ * the same thing to the worker: "waiting for its turn."
  */
 export function runOfflineQueueReplay(): Promise<void> {
   if (activeReplay) return activeReplay;
@@ -131,11 +178,13 @@ export function runOfflineQueueReplay(): Promise<void> {
       for (;;) {
         if (!onlineManager.isOnline()) break;
         const current = useOfflineQueueStore.getState();
-        const next = current.operations.find((op) => op.status === 'pending');
+        const next = current.operations
+          .filter((op) => op.status === 'pending' || op.status === 'retry_wait')
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
         if (!next) break;
 
         await current.updateOperation(next.operationId, {
-          status: 'in-flight',
+          status: 'syncing',
           attemptCount: next.attemptCount + 1,
         });
 
@@ -156,14 +205,26 @@ export function runOfflineQueueReplay(): Promise<void> {
         const isPermanent = PERMANENT_FAILURE_CODES.has(outcome.code);
         const exhausted = attemptCount >= MAX_ATTEMPTS_BEFORE_GIVING_UP;
 
+        if (outcome.code === 'conflict') {
+          // Needs review — never auto-retried, and deliberately not
+          // lumped in with the other permanent-failure reasons (Section
+          // 3: "Do not expose a generic Retry action before the user
+          // chooses a resolution").
+          await useOfflineQueueStore.getState().updateOperation(next.operationId, {
+            status: 'conflict',
+            lastSafeErrorCode: 'conflict',
+          });
+          continue;
+        }
+
         if (isPermanent || exhausted) {
           logger.warn('an offline operation failed permanently and will not be retried automatically', {
             operationType: next.operationType,
             code: outcome.code,
           });
           await useOfflineQueueStore.getState().updateOperation(next.operationId, {
-            status: 'failed',
-            lastSafeErrorCode: outcome.code,
+            status: 'permanent_failure',
+            lastSafeErrorCode: exhausted && !isPermanent ? 'unknown' : outcome.code,
           });
           // A permanently-failed op never blocks unrelated later-queued
           // ones — keep draining the rest of the queue.
@@ -171,9 +232,10 @@ export function runOfflineQueueReplay(): Promise<void> {
         }
 
         // Looks transient (most often: the device just went offline
-        // mid-request) — leave it 'pending' for the next trigger (network
-        // restore, foreground, manual retry) rather than spinning here.
-        await useOfflineQueueStore.getState().updateOperation(next.operationId, { status: 'pending' });
+        // mid-request) — leave it 'retry_wait' for the next trigger
+        // (network restore, foreground, manual retry) rather than
+        // spinning here.
+        await useOfflineQueueStore.getState().updateOperation(next.operationId, { status: 'retry_wait' });
         break;
       }
     } finally {

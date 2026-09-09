@@ -45,12 +45,12 @@ export const useOfflineQueueStore = create<OfflineQueueState>((set, get) => ({
   hydrate: async (profileId: string) => {
     const loaded = await loadQueue(profileId);
     // Section 10: "process crash never loses accepted queued intent." An
-    // operation left 'in-flight' means the app died mid-replay with the
+    // operation left 'syncing' means the app died mid-replay with the
     // request's outcome unknown — never assumed lost *or* assumed done,
     // just retried; every queued RPC is idempotent (client_operation_id
     // for create, expected_updated_at precondition for update/schedule),
     // so re-attempting it is always safe.
-    const operations = loaded.map((op) => (op.status === 'in-flight' ? { ...op, status: 'pending' as const } : op));
+    const operations = loaded.map((op) => (op.status === 'syncing' ? { ...op, status: 'retry_wait' as const } : op));
     // A stale hydrate from a profile the app has since switched away from
     // must never clobber the newer profile's already-hydrated state.
     if (get().profileId !== null && get().profileId !== profileId) return;
@@ -108,15 +108,41 @@ export const useOfflineQueueStore = create<OfflineQueueState>((set, get) => ({
   },
 }));
 
-/** True while any pending/in-flight/failed op targets this task (create's not-yet-real id or an existing task's real id). */
+/** True while any queued op (in any status — still-pending or needing review) targets this task (create's not-yet-real id or an existing task's real id). */
 export function selectIsTaskPendingSync(state: OfflineQueueState, taskId: string): boolean {
   return state.operations.some((op) => op.entityId === taskId || op.clientGeneratedId === taskId);
 }
 
+/** "Pending changes: N" — freshly queued or actively in flight, never yet failed even once. */
 export function selectPendingOperationCount(state: OfflineQueueState): number {
-  return state.operations.filter((op) => op.status !== 'failed').length;
+  return state.operations.filter((op) => op.status === 'pending' || op.status === 'syncing').length;
 }
 
+/**
+ * Sync Issues — every operation that's had at least one failed attempt:
+ * 'retry_wait' (Section 2's "Waiting to retry," still auto-retrying but
+ * surfaced so the user can intervene early — Review/Discard/a forced
+ * Retry), 'conflict' ("Needs review"), and 'permanent_failure' ("Cannot
+ * be synchronized" / "Task no longer available"). Disjoint from
+ * `selectPendingOperationCount` on purpose — an operation is never
+ * counted in both at once. Oldest first, matching the Sync Issues list's
+ * own ordering rule.
+ */
+export function selectSyncIssues(state: OfflineQueueState): OfflineOperation[] {
+  return state.operations
+    .filter((op) => op.status === 'retry_wait' || op.status === 'conflict' || op.status === 'permanent_failure')
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+export function selectSyncIssueCount(state: OfflineQueueState): number {
+  return selectSyncIssues(state).length;
+}
+
+/** Back-compat alias some call sites still read as a boolean gate. */
 export function selectHasFailedOperations(state: OfflineQueueState): boolean {
-  return state.operations.some((op) => op.status === 'failed');
+  return selectSyncIssueCount(state) > 0;
+}
+
+export function selectOperationById(state: OfflineQueueState, operationId: string): OfflineOperation | undefined {
+  return state.operations.find((op) => op.operationId === operationId);
 }

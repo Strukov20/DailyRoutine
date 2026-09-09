@@ -2,7 +2,7 @@ import type { TaskErrorCode } from '@/lib/tasks/taskService';
 
 import { taskErrorMessageKey } from './errorMessages';
 
-const ALL_CODES: TaskErrorCode[] = ['forbidden', 'invalid_input', 'conflict', 'unknown'];
+const ALL_CODES: TaskErrorCode[] = ['forbidden', 'not_found', 'invalid_input', 'conflict', 'unknown'];
 
 describe('taskErrorMessageKey', () => {
   it('maps every TaskErrorCode to a distinct tasks: translation key', () => {
