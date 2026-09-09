@@ -830,3 +830,82 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
     confirmed green against the DB-layer commit only, before any client-side Phase 9 code
     existed — re-confirmation is still owed before this phase can be called complete.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-09T12:00:00Z — Phase 9 continued: Conflict Center, real integration tests, a real recurrence-script bug fix
+
+- **Operation type:** feature (new domain) + test (two new real local integration suites) +
+  bug fix (unrelated pre-existing script fragility) + wiki update. Still not the phase's
+  closing entry — native verification and the full manual conflict-resolution UI remain open.
+- **Source material ingested:**
+  [`knowledge/raw/sessions/2026-09-09-phase9-conflict-center-and-integration-tests.md`](../raw/sessions/2026-09-09-phase9-conflict-center-and-integration-tests.md).
+- **Wiki pages updated:**
+  [`engineering/realtime-sync-and-offline.md`](engineering/realtime-sync-and-offline.md) —
+  "Done"/"Not done yet" split brought current (Conflict Center, both real integration test
+  suites, and the re-confirmed e2e:backend/notifications/calendar/recurrence runs all moved
+  from "not done" to "done"); still `status: proposed`, not `current`.
+- **Canonical docs to be updated in this same pass:** `docs/DECISIONS.md` (Conflict Center
+  design notes, the two integration suites' environment fixes, the e2e-recurrence.sh bug),
+  `docs/TEST_STRATEGY.md` (new pgTAP/e2e counts and the two new `e2e:*` scripts),
+  `docs/ARCHITECTURE.md`/`docs/SECURITY_AND_PRIVACY.md` if the Conflict Center's design
+  warrants its own section beyond what Realtime/offline already cover.
+- **Decisions/contradictions recorded:**
+  - A private, family-linked event's Realtime broadcast **does** reach `family:<family_id>`
+    (not withheld) — an assumption held while planning `scripts/e2e-realtime.mjs`, corrected
+    by reading the actual trigger SQL before writing the test rather than asserting a wrong
+    expectation. Correct by construction: the payload never carries content regardless of
+    which topic it goes out on.
+  - `e2e-recurrence.sh` had its own real, pre-existing wall-clock bug (a hardcoded creation
+    date, unrelated to any Phase 9 code) — found only because re-verification happened to run
+    a day after the script was last authored/tested. Fixed; not silently patched over.
+  - Both new real integration suites (`e2e:offline`, `e2e:realtime`) needed real environment
+    fixes before they could run at all under Jest/Node against a live backend (jest-expo's
+    RN fetch polyfill breaking real network calls; a virtual env-var module needing an
+    explicit transform carve-out; a non-cascading FK silently leaking test accounts on
+    cleanup) — each is a genuine, reusable lesson for any future real-backend test in this
+    repo, not just this phase's own scripts.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-09T14:00:00Z — Phase 9 continued: real native iOS verification, Maestro policy recorded
+
+- **Operation type:** verification (real device) + documentation + wiki update. Still not the
+  phase's closing entry — see the wiki page's remaining "Not done yet" list.
+- **Wiki pages updated:**
+  [`engineering/realtime-sync-and-offline.md`](engineering/realtime-sync-and-offline.md) —
+  native iOS verification and the Maestro policy decision moved from "not done" to "done";
+  remaining gaps (full manual conflict-resolution UI, recurring-occurrence offline queue,
+  network-disconnection/account-switch/Android testing) stay listed, `status` stays
+  `proposed`.
+- **Canonical docs updated:** `docs/DECISIONS.md` (five new subsections under the existing
+  "Phase 9" entry: Conflict Center Review-routing rationale, the two real environment fixes
+  behind the integration suites, the corrected private-event-broadcast assumption, the full
+  native verification writeup, and the Maestro policy decision), `docs/TEST_STRATEGY.md`
+  (E2E row extended with the Phase 9 native pass; the RLS/privacy row's stale "not yet
+  written" note about the two integration suites corrected).
+- **Decisions/contradictions recorded:**
+  - A real, valuable piece of native evidence: with the Conflict Center open on a real
+    Simulator build, an external `curl`-driven RPC call (simulating another device) made the
+    on-screen conflict list update live with zero manual refresh — direct proof the full
+    Realtime pipeline (trigger → Broadcast → real WebSocket → invalidation → refetch →
+    re-render) works end to end on a running app, not only inside `e2e-realtime.mjs`'s own
+    isolated test.
+  - A genuine tool-level limitation (not an app defect) was independently reproduced: a
+    Maestro assertion reported "1 conflict" as not visible on a step whose own screenshot
+    shows that exact text clearly rendered — confirming the Simulator/Maestro touch-and-
+    assertion-delivery flakiness `personal_task_smoke.yaml` already documented from Phase 5
+    also affects assertions, not only taps. Recorded as inconclusive for the one interaction
+    it affected (the Review action's tap-through), not asserted as either a pass or a bug —
+    the underlying routing logic is already deterministically covered by
+    `ConflictRow.test.tsx`.
+  - A leftover `expo run:ios` process from an earlier point in this same session (idle ~18
+    hours, its own log confirming it had already finished its work) was found still running
+    and was terminated before starting this pass's own native build, to avoid it competing
+    for the same Simulator device.
+  - Network-disconnection testing, account-switch-no-flash, and Android were explicitly not
+    attempted this pass — recorded as gaps, not silently skipped. The Maestro policy decision
+    itself explains why network-disconnection specifically was deferred to `e2e:offline`
+    rather than attempted via Maestro.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

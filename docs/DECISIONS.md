@@ -1999,3 +1999,98 @@ actions) — today this surfaces through the same generic sync-status "Sync issu
 other permanently-failed operation. Recorded here as a deliberate, temporary scope reduction,
 not an oversight — see [ROADMAP.md, "Offline behavior"](ROADMAP.md).
 
+### Conflict Center: Review only ever navigates where the RPC itself says it's safe
+
+`ConflictRow`'s Review action does not decide for itself whether an entity is navigable — it
+trusts `list_family_conflicts`'s own output exactly: `primaryEntityType === 'event' &&
+primaryEntityId` routes to `/event/<id>`, `'task'` routes to `/task/<id>/edit`, and anything
+else (a redacted/null id, an `'occurrence'`, a `'responsibility'` — neither has its own
+single-item edit route) falls through to `/calendar` (Family Today). This means a private Busy
+conflict belonging to another adult can never be routed into their private item, by
+construction — the client has no privileged information to make that mistake with in the
+first place, since a redacted id is genuinely absent from the payload, not merely hidden by a
+client-side check.
+
+### Two real, reusable environment fixes found while building the offline-queue and Realtime integration suites
+
+Both are documented in full in `jest.e2e.config.js`'s and `scripts/e2e-realtime.mjs`'s own
+comments; summarized here because they'll matter for any *future* real-backend test in this
+repo, not just these two: (1) the shared `jest-expo` preset's own `setupFiles` install a React
+Native `fetch`/XHR polyfill that silently resolves every real network request with an
+undefined status/body under Jest — any suite that needs to hit a real HTTP endpoint (not just
+Realtime WebSockets) needs to avoid that preset, not merely mock around it. (2)
+`babel-preset-expo`'s environment-variable inlining rewrites `process.env.EXPO_PUBLIC_*` reads
+into an import of a real (but ES-module) `expo/virtual/env.js` file, which needs an explicit
+`transformIgnorePatterns` carve-out under a non-jest-expo Jest config, or every module that
+reads `env.EXPO_PUBLIC_*` (starting with `src/lib/supabase/client.ts`) fails to load at all.
+
+### `e2e-realtime.mjs`: a private, family-linked event's Realtime broadcast is not withheld from the family channel
+
+Written into this brief as a corrected assumption, not merely a passing test: before writing
+the script, the working assumption was that a private event would never broadcast to
+`family:<family_id>`, mirroring the Busy-block privacy rule for row *content*. Reading
+`broadcast_event_change`'s actual body first (rather than testing the assumption after the
+fact) showed this is wrong by design: the trigger fires to the family topic whenever
+`family_id` is set, regardless of `visibility`, and this is *correct* — the payload itself
+never carries content either way, so a family member's client just refetches through the
+already-redacted `family_schedule` view. The script verifies the property that actually
+matters instead (every payload, including this one, is confirmed content-free by the same
+secret-marker sweep), rather than a wrong assumption about which topic gets used.
+
+### Native iOS verification: real evidence, one real (tool-level) limitation, three explicit gaps
+
+A real `expo run:ios` debug build, installed and launched on a booted iPhone 17 Pro / iOS 26.5
+Simulator with Metro connected — not a bundle-export-only check, since this phase's actual
+claims (live cross-device sync, an on-device cache, a running WebSocket connection) can only
+be observed by actually running the app. The existing `personal_task_smoke.yaml` Maestro flow
+(Phase 5) ran clean end to end first, as a regression check — no Phase 9 change broke the
+existing sign-in/quick-add/schedule/complete/restore path.
+
+The single most valuable piece of evidence gathered: with the Conflict Center open on-device,
+an *external* `curl`-driven RPC call (simulating a second device/collaborator) created two
+overlapping family events, and the on-screen conflict list **updated live, with no manual
+refresh, no re-navigation, and no app restart** — direct, real proof that the full pipeline
+(a Postgres trigger emitting a Broadcast → the real local Realtime server → the app's real
+WebSocket subscription → `useRealtimeSync`'s invalidation mapping → a TanStack Query refetch →
+a re-render) works end to end on an actual running app, not just in the isolated
+`e2e-realtime.mjs` script. The sync-status indicator ("Synced") and the conflict badge (both
+the native Calendar-tab badge and the in-screen chip, both with the real count) were also
+directly observed rendering correctly.
+
+One genuine tool-level limitation, not an app defect, was independently reproduced during this
+pass: attempting to verify the Review action's tap-through via Maestro produced an assertion
+failure ("1 conflict" is visible) on a step whose own captured screenshot clearly shows that
+exact text rendered on screen — a concrete instance of the same Simulator/Maestro
+touch-and-assertion-delivery unreliability already documented at length in
+`personal_task_smoke.yaml`'s own header comments from Phase 5, now confirmed to also affect
+assertion checks, not only taps. Review's own routing logic is deterministically covered by
+`ConflictRow.test.tsx` regardless (both the event and task navigation cases, and the
+redacted/responsibility fallback case) — the native pass could not add confidence beyond that
+for this one interaction, and is recorded as inconclusive rather than either "passing" or "a
+bug," honestly.
+
+**Explicitly not attempted this pass**: true network-disconnection testing (verifying cached
+data stays visible, a queued mutation shows "Pending sync," and reconnect triggers replay, all
+by actually cutting the Simulator's network) — not safely automatable on this Simulator setup,
+the same limitation Phase 8 already documented for a different feature; the deterministic
+`e2e:offline` suite already proves the underlying mechanism (idempotent replay, stale-write
+detection) without needing a real network cut. Account-switch-no-flash was not checked
+on-device this pass. Android was not attempted — no emulator was available in this
+environment.
+
+### Maestro policy for Phase 9 (Section 23)
+
+No new Maestro flow was added this phase. The existing `personal_task_smoke.yaml` was re-run
+as a pure regression check (does Phase 9 break the pre-existing flow — it does not) rather
+than extended to cover Realtime/offline scenarios, for the same reason true network-
+disconnection testing wasn't attempted above: Maestro has no reliable way to simulate a real
+connectivity loss on this Simulator setup, and the specific interactions Phase 9 most needs
+verified (a live cross-device update, a queued-offline mutation, a reconnect-triggered replay)
+are either already covered more rigorously by `e2e-realtime.mjs`/`e2e:offline` (real backend,
+deterministic, bounded, zero residue) or require exactly the network-cut capability Maestro
+cannot provide here. Writing a new Maestro flow that could only exercise the *online* half of
+these scenarios would add tool-level flakiness risk (see the touch/assertion-delivery
+limitation above) without adding coverage beyond what already exists. Deferred, not
+forgotten — if a future phase finds a reliable way to script connectivity loss on this
+Simulator/CI setup, revisit.
+

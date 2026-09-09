@@ -10,6 +10,7 @@ sources:
   - ../../../docs/DECISIONS.md
   - ../../../docs/TEST_STRATEGY.md
   - ../../raw/sessions/2026-09-09-phase9-realtime-offline-partial.md
+  - ../../raw/sessions/2026-09-09-phase9-conflict-center-and-integration-tests.md
 tags: [engineering, realtime, offline, sync, conflicts, phase9]
 ---
 
@@ -55,29 +56,59 @@ Section 28 final report has been delivered. Full design/rationale for every deci
   `list_family_conflicts()` — a deterministic, privacy-redacting conflict engine covering all
   8 required categories. 508 pgTAP assertions (15 files) passing against a real local
   instance.
+- **Conflict Center** — `app/conflicts.tsx`, `src/domain/conflicts/`, `src/lib/conflicts/
+  conflictService.ts`. Today/Upcoming (bounded 7-day) sections, a Review action that only
+  navigates when the RPC's own redaction says it's safe, a badge on the Calendar tab/header
+  sourced from the same query the screen itself uses. Read-only beyond Review, per the
+  brief's own non-goals.
+- **Real local Realtime WebSocket integration test** — `scripts/e2e-realtime.mjs`
+  (`npm run e2e:realtime`), five real personas, 28 assertions, run twice consecutively, zero
+  residue confirmed directly against the database both times.
+- **Offline queue integration test** — `src/lib/offline/__e2e__/offlineQueue.e2e.test.ts`
+  (`npm run e2e:offline`), driving the production queue against real local RPCs (idempotent
+  create-replay, a real stale-write conflict that never overwrites the real row, real
+  cross-account isolation), run twice consecutively, zero residue.
+- **Re-confirmed e2e:backend (32/32) / e2e:notifications (24/24) / e2e:calendar (28/28) /
+  e2e:recurrence (23/23, twice)** all still pass after the full client-side Phase 9 change
+  set — a real, pre-existing, date-hardcoded bug in `e2e-recurrence.sh` (unrelated to this
+  phase's own code) was found and fixed along the way; see DECISIONS.md.
+- **Native iOS verification** — a real `expo run:ios` debug build on an iPhone 17 Pro / iOS
+  26.5 Simulator, Metro connected. The existing `personal_task_smoke.yaml` Maestro flow (sign
+  in, quick-add, schedule, complete, restore) ran clean end to end — no regression from any
+  Phase 9 change. Directly observed on-device: the sync-status indicator rendering "Synced";
+  the Conflict Center rendering its real empty state, then — after an *external* `curl`-driven
+  RPC call created two overlapping events, simulating another device — **live-updating with
+  zero manual refresh** to show the real conflict, driven by the genuine Realtime
+  broadcast → WebSocket → invalidate → refetch pipeline running for real on a physical-
+  simulator device; the conflict badge rendering correctly both on the Calendar tab (native
+  red badge) and as the in-screen chip, with the real count. The Review action's own logic is
+  deterministically covered by `ConflictRow.test.tsx`; native tap-through verification of it
+  specifically was inconclusive — this exact Simulator/Maestro combination has
+  [DECISIONS.md](../../../docs/DECISIONS.md)-documented touch/assertion-delivery flakiness
+  from Phase 5, and this pass independently reproduced a clear instance of it (an assertion
+  reporting text as *not visible* that the same step's own screenshot shows clearly present).
+  **Not attempted this pass**: true network-disconnection testing (offline cache/pending-sync/
+  reconnect-replay) on-device — not safely automatable on this Simulator setup (same
+  limitation Phase 8 already documented), covered instead by the deterministic
+  `e2e:offline` suite; account-switch-no-flash; Android (no emulator available in this
+  environment this pass).
+- **Maestro policy decision for Phase 9 (Section 23)** — recorded in
+  [DECISIONS.md](../../../docs/DECISIONS.md): no new Maestro flow added, existing coverage
+  re-run as a regression check only, network-disconnection scenarios deliberately left to the
+  deterministic `e2e:offline` suite instead (Maestro has no reliable way to simulate real
+  connectivity loss on this Simulator setup).
 
 ## Not done yet — do not claim these are finished
 
-- **Conflict Center UI.** `list_family_conflicts()` is built and tested server-side; there is
-  no client domain/hooks/service layer for it yet, no `/conflicts` route, no badge on
-  Calendar/Family Today. This is the largest remaining piece of the brief's UI surface.
 - **Full manual conflict-*resolution*** (as opposed to detection). A stale-write conflict
   today surfaces only as the generic sync-status "Sync issue" + Retry — never a silent
   overwrite, but not yet the brief's dedicated "Sync conflict — this task changed on another
   device" flow with Reload/Review/Discard/Retry actions.
-- **Real local Realtime WebSocket integration test** (`scripts/e2e-realtime.mjs`,
-  `npm run e2e:realtime`) — specified in the brief, not written.
-- **Offline integration test suite** against the production queue and real local RPCs
-  (13 verification points specified in the brief) — not written. The 32 Jest tests in
-  `src/lib/offline/` mock the RPC layer; they are not a substitute for this.
 - **Recurring-occurrence complete/restore in the offline queue.** The brief's Section 9 list
   named this alongside the six one-off-task operations that are implemented; it was not
   wired in this pass.
-- **Re-confirmation that e2e:backend/notifications/calendar/recurrence still pass** after the
-  client-side Phase 9 changes — last confirmed green against the DB-layer commit only, before
-  the client layer existed.
-- **Native iOS/Android verification, and the Maestro policy decision** for any new flows —
-  neither attempted yet this phase.
+- **Native network-disconnection testing, account-switch-no-flash, and Android** — see the
+  native-verification bullet above for exactly what was and wasn't attempted.
 
 ## A genuinely non-obvious testing gotcha worth knowing before touching this code
 
