@@ -1,8 +1,16 @@
--- Tests: Phase 9 completion pass (Sync Issues resolution UX) — the one
--- server-side change this pass makes: distinguishing "the row is gone"
--- (P0002) from "the row exists but isn't yours" (42501) across
--- update_personal_task, schedule_personal_task, complete_personal_task,
--- restore_personal_task, complete_task_occurrence, restore_task_occurrence.
+-- Tests: Phase 9 final security/concurrency pass.
+--
+-- Primary subject: for an untrusted authenticated caller, "this task id
+-- does not exist," "this task exists but belongs to another profile," and
+-- "this task exists but is no longer visible to the caller" (soft-deleted)
+-- must be externally indistinguishable — same SQLSTATE, same message —
+-- across update_personal_task, schedule_personal_task, complete_personal_
+-- task, restore_personal_task, complete_task_occurrence, restore_task_
+-- occurrence. Proven by literally capturing the raised SQLSTATE+message
+-- for a random (never-existed) UUID and for another profile's real task
+-- UUID and asserting they are byte-for-byte identical — not just "both
+-- raise 42501" (which alone wouldn't rule out a distinguishing message).
+--
 -- Also covers the guarantees the client-side resolution flows depend on:
 -- an update touches only the fields explicitly passed (never an unrelated
 -- server field), a resolved stale-write conflict can conflict again on a
@@ -10,7 +18,7 @@
 -- guarantee (a repeat call is a safe no-op, never an error) — see
 -- docs/DECISIONS.md, "Phase 9."
 begin;
-select plan(20);
+select plan(22);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password,
@@ -24,75 +32,35 @@ from unnest(array['si-owner@test.local', 'si-outsider@test.local']) as email;
 select id as owner_id from auth.users where email = 'si-owner@test.local' \gset
 select id as outsider_id from auth.users where email = 'si-outsider@test.local' \gset
 
+-- A per-session helper (pg_temp — never touches public, gone at rollback):
+-- runs one probe RPC call and captures its SQLSTATE+message as one string,
+-- or 'OK' if it didn't raise. Lets the assertions below compare two
+-- distinct calls' *exact* error output instead of merely asserting "both
+-- happen to be 42501," which alone wouldn't rule out a distinguishing
+-- message text.
+create or replace function pg_temp.capture_error(p_sql text) returns text
+language plpgsql as $$
+begin
+  execute p_sql;
+  return 'OK';
+exception when others then
+  return sqlstate || '|' || sqlerrm;
+end;
+$$;
+
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'owner_id', 'role', 'authenticated')::text, true);
 
 -- ---------------------------------------------------------------------------
--- P0002 (not found) vs 42501 (not yours) — a deleted task's id genuinely
--- exists nowhere findable (soft-deleted rows are excluded by every RPC's
--- own `deleted_at is null` check), which is exactly the "gone" case the
--- Sync Issues screen needs to show "This task no longer exists" for.
+-- Setup: a real task the owner keeps, a real task the owner soft-deletes
+-- (the "gone" case), and a recurring series + occurrence for the
+-- occurrence-RPC half of this same proof.
 -- ---------------------------------------------------------------------------
+
+select public.create_personal_task('Owner-only task', p_date := '2026-11-02') as owned_task_id \gset
 
 select public.create_personal_task('To be deleted', p_date := '2026-11-01') as gone_task_id \gset
 select public.delete_or_archive_personal_task(:'gone_task_id');
-
-select throws_ok(
-  format($$ select public.update_personal_task(%L, p_title := 'edit') $$, :'gone_task_id'),
-  'P0002',
-  null,
-  'update_personal_task raises P0002 for a soft-deleted (gone) task'
-);
-select throws_ok(
-  format($$ select public.schedule_personal_task(%L, '2026-11-05') $$, :'gone_task_id'),
-  'P0002',
-  null,
-  'schedule_personal_task raises P0002 for a gone task'
-);
-select throws_ok(
-  format($$ select public.complete_personal_task(%L) $$, :'gone_task_id'),
-  'P0002',
-  null,
-  'complete_personal_task raises P0002 for a gone task'
-);
-select throws_ok(
-  format($$ select public.restore_personal_task(%L) $$, :'gone_task_id'),
-  'P0002',
-  null,
-  'restore_personal_task raises P0002 for a gone task'
-);
-
--- A genuinely nonexistent id (never created at all) hits the same P0002
--- path, not a generic 42501 — "not found" and "never existed" are the same
--- observable case to the caller.
-select throws_ok(
-  $$ select public.update_personal_task('00000000-0000-0000-0000-000000000099', p_title := 'edit') $$,
-  'P0002',
-  null,
-  'update_personal_task raises P0002 for an id that never existed'
-);
-
--- "Not yours" stays 42501, distinct from "gone" — the outsider's own task
--- is a genuinely existing row this caller was never authorized on.
-select public.create_personal_task('Owner-only task', p_date := '2026-11-02') as owned_task_id \gset
-select set_config('request.jwt.claims', json_build_object('sub', :'outsider_id', 'role', 'authenticated')::text, true);
-select throws_ok(
-  format($$ select public.update_personal_task(%L, p_title := 'not mine') $$, :'owned_task_id'),
-  '42501',
-  null,
-  'update_personal_task raises 42501 (never P0002) for a task that exists but belongs to someone else'
-);
-select throws_ok(
-  format($$ select public.complete_personal_task(%L) $$, :'owned_task_id'),
-  '42501',
-  null,
-  'complete_personal_task raises 42501 for another profile''s task'
-);
-select set_config('request.jwt.claims', json_build_object('sub', :'owner_id', 'role', 'authenticated')::text, true);
-
--- ---------------------------------------------------------------------------
--- Same P0002/42501 split for the occurrence RPCs.
--- ---------------------------------------------------------------------------
 
 -- generate_task_occurrences clamps to a 45-day rolling horizon from the
 -- real current_date regardless of the requested p_through_date (see its
@@ -105,27 +73,82 @@ select public.create_recurring_personal_task(
 select public.generate_task_occurrences(current_date + 7);
 select id as occ_id from public.task_occurrences where task_id = :'recurring_id' order by occurrence_date limit 1 \gset
 
-select throws_ok(
-  $$ select public.complete_task_occurrence('00000000-0000-0000-0000-000000000098') $$,
-  'P0002',
-  null,
-  'complete_task_occurrence raises P0002 for an occurrence id that does not exist'
-);
-select throws_ok(
-  $$ select public.restore_task_occurrence('00000000-0000-0000-0000-000000000098') $$,
-  'P0002',
-  null,
-  'restore_task_occurrence raises P0002 for an occurrence id that does not exist'
-);
+-- ---------------------------------------------------------------------------
+-- The proof itself, from the outsider's own session — an untrusted
+-- authenticated caller who owns none of the ids probed below.
+-- ---------------------------------------------------------------------------
 
 select set_config('request.jwt.claims', json_build_object('sub', :'outsider_id', 'role', 'authenticated')::text, true);
-select throws_ok(
-  format($$ select public.complete_task_occurrence(%L) $$, :'occ_id'),
-  '42501',
-  null,
-  'complete_task_occurrence raises 42501 (never P0002) for another profile''s occurrence'
-);
+
+select pg_temp.capture_error(
+  format($$ select public.update_personal_task(%L, p_title := 'probe') $$, gen_random_uuid())
+) as update_random \gset
+select pg_temp.capture_error(
+  format($$ select public.update_personal_task(%L, p_title := 'probe') $$, :'owned_task_id')
+) as update_foreign \gset
+select pg_temp.capture_error(
+  format($$ select public.update_personal_task(%L, p_title := 'probe') $$, :'gone_task_id')
+) as update_gone \gset
+select is(:'update_random'::text, :'update_foreign'::text, 'update_personal_task: a random UUID and another profile''s real task UUID raise the identical SQLSTATE+message');
+select is(:'update_random'::text, :'update_gone'::text, 'update_personal_task: a random UUID and a soft-deleted (gone) task UUID raise the identical SQLSTATE+message');
+select ok(:'update_random' like '42501|%', 'update_personal_task''s shared unavailable outcome is errcode 42501');
+select ok(:'update_random' not like '%probe%' and :'update_random' not like '%Owner-only%' and :'update_random' not like '%To be deleted%', 'update_personal_task''s unavailable message never echoes the payload or either task''s real title');
+
+select pg_temp.capture_error(
+  format($$ select public.schedule_personal_task(%L, '2026-11-05') $$, gen_random_uuid())
+) as schedule_random \gset
+select pg_temp.capture_error(
+  format($$ select public.schedule_personal_task(%L, '2026-11-05') $$, :'owned_task_id')
+) as schedule_foreign \gset
+select is(:'schedule_random'::text, :'schedule_foreign'::text, 'schedule_personal_task: a random UUID and another profile''s real task UUID raise the identical SQLSTATE+message');
+
+select pg_temp.capture_error(
+  format($$ select public.complete_personal_task(%L) $$, gen_random_uuid())
+) as complete_random \gset
+select pg_temp.capture_error(
+  format($$ select public.complete_personal_task(%L) $$, :'owned_task_id')
+) as complete_foreign \gset
+select pg_temp.capture_error(
+  format($$ select public.complete_personal_task(%L) $$, :'gone_task_id')
+) as complete_gone \gset
+select is(:'complete_random'::text, :'complete_foreign'::text, 'complete_personal_task: a random UUID and another profile''s real task UUID raise the identical SQLSTATE+message');
+select is(:'complete_random'::text, :'complete_gone'::text, 'complete_personal_task: a random UUID and a soft-deleted task UUID raise the identical SQLSTATE+message');
+
+select pg_temp.capture_error(
+  format($$ select public.restore_personal_task(%L) $$, gen_random_uuid())
+) as restore_random \gset
+select pg_temp.capture_error(
+  format($$ select public.restore_personal_task(%L) $$, :'owned_task_id')
+) as restore_foreign \gset
+select is(:'restore_random'::text, :'restore_foreign'::text, 'restore_personal_task: a random UUID and another profile''s real task UUID raise the identical SQLSTATE+message');
+
+select pg_temp.capture_error(
+  format($$ select public.complete_task_occurrence(%L) $$, gen_random_uuid())
+) as occ_complete_random \gset
+select pg_temp.capture_error(
+  format($$ select public.complete_task_occurrence(%L) $$, :'occ_id')
+) as occ_complete_foreign \gset
+select is(:'occ_complete_random'::text, :'occ_complete_foreign'::text, 'complete_task_occurrence: a random UUID and another profile''s real occurrence UUID raise the identical SQLSTATE+message');
+
+select pg_temp.capture_error(
+  format($$ select public.restore_task_occurrence(%L) $$, gen_random_uuid())
+) as occ_restore_random \gset
+select pg_temp.capture_error(
+  format($$ select public.restore_task_occurrence(%L) $$, :'occ_id')
+) as occ_restore_foreign \gset
+select is(:'occ_restore_random'::text, :'occ_restore_foreign'::text, 'restore_task_occurrence: a random UUID and another profile''s real occurrence UUID raise the identical SQLSTATE+message');
+
 select set_config('request.jwt.claims', json_build_object('sub', :'owner_id', 'role', 'authenticated')::text, true);
+
+-- 22023 (a real, transition-specific rule) is unaffected — it only ever
+-- fires once the existence+ownership check has already passed, i.e. only
+-- for a task the caller is genuinely authorized to know exists.
+select throws_ok(
+  $$ select public.schedule_personal_task(gen_random_uuid(), null) $$,
+  '22023',
+  null,
+  'p_date is required by schedule_personal_task — still checked before the existence lookup'
+);
 
 -- ---------------------------------------------------------------------------
 -- Occurrence RPCs are idempotent by construction (a WHERE status = ...
@@ -220,7 +243,7 @@ select throws_ok(
 -- ---------------------------------------------------------------------------
 -- anon spot-check — already covered structurally by the schema-wide
 -- anon-EXECUTE-grant guard (130_security_regression_test.sql), this is a
--- direct confirmation for the two RPCs this migration actually changed.
+-- direct confirmation for the RPCs this migration actually changed.
 -- ---------------------------------------------------------------------------
 
 select throws_ok(
@@ -234,6 +257,18 @@ select throws_ok(
   '42501',
   null,
   'anon cannot call complete_task_occurrence at all'
+);
+
+-- ---------------------------------------------------------------------------
+-- Secret/existence-marker sweep — none of the captured error strings above
+-- ever leak a real title, another profile's id, or an internal SQL name
+-- beyond the fixed 'task unavailable'/'occurrence unavailable' text.
+-- ---------------------------------------------------------------------------
+select ok(
+  :'update_foreign' !~* 'owner-only|to be deleted|si-owner|si-outsider'
+  and :'complete_foreign' !~* 'owner-only|to be deleted'
+  and :'occ_complete_foreign' !~* 'daily sync-issue',
+  'secret-marker sweep: no captured unavailable-task error ever contains a real task/series title or email'
 );
 
 select * from finish();
