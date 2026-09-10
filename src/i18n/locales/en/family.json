@@ -36,12 +36,19 @@
     "copyLink": "Copy link",
     "copied": "Copied!",
     "shareMessage": "You're invited to join a family on FamilyFlow: {{link}}",
+    "revoke": "Revoke",
+    "revokeAction": "Revoke invitation",
+    "revokeConfirm": {
+      "title": "Revoke this invitation?",
+      "message": "The link you shared will stop working immediately. This cannot be undone — send a new invitation if you still want to invite this person."
+    },
     "errors": {
       "emailRequired": "Enter an email address.",
       "emailInvalid": "Enter a valid email address.",
       "forbidden": "Only the family owner can send invitations.",
       "acceptFailed": "Couldn't accept this invitation. Please try again.",
-      "declineFailed": "Couldn't decline this invitation. Please try again."
+      "declineFailed": "Couldn't decline this invitation. Please try again.",
+      "revokeFailed": "Couldn't revoke this invitation. Please try again."
     },
     "signedOut": {
       "title": "You've been invited to a family",
