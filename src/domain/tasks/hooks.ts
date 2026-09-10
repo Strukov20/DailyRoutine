@@ -106,7 +106,20 @@ function restoreTaskQueries(
   }
 }
 
-/** Optimistically rewrites `taskId` wherever it appears in any mounted task-list query. */
+/**
+ * Optimistically rewrites `taskId` wherever it appears in any mounted
+ * task-list query.
+ *
+ * `getQueriesData({ queryKey: ['tasks'] })` matches by *prefix* — it also
+ * returns `taskKeys.detail(taskId)` (`['tasks', 'detail', taskId]`) entries,
+ * whose cached data is a single `Task` object from `useTask()`, not a
+ * `Task[]`. The `<Task[]>` generic here is only a type assertion — it does
+ * not change what `getQueriesData` actually returns at runtime — so a
+ * single-task detail cache being present (e.g. the user recently viewed
+ * that task's edit screen) made `data.map` throw. Guard with
+ * `Array.isArray`, not just a truthiness check, since a cached single Task
+ * object is truthy too.
+ */
 function patchTaskInCache(
   queryClient: QueryClient,
   taskId: string,
@@ -114,7 +127,7 @@ function patchTaskInCache(
 ): void {
   const queries = queryClient.getQueriesData<Task[]>({ queryKey: ['tasks'] });
   for (const [key, data] of queries) {
-    if (!data) continue;
+    if (!Array.isArray(data)) continue;
     queryClient.setQueryData(
       key,
       data.map((task) => (task.id === taskId ? updater(task) : task)),
@@ -122,11 +135,14 @@ function patchTaskInCache(
   }
 }
 
-/** Optimistically removes `taskId` wherever it appears in any mounted task-list query. */
+/**
+ * Optimistically removes `taskId` wherever it appears in any mounted
+ * task-list query. Same non-array-data hazard as `patchTaskInCache` above.
+ */
 function removeTaskFromCache(queryClient: QueryClient, taskId: string): void {
   const queries = queryClient.getQueriesData<Task[]>({ queryKey: ['tasks'] });
   for (const [key, data] of queries) {
-    if (!data) continue;
+    if (!Array.isArray(data)) continue;
     queryClient.setQueryData(
       key,
       data.filter((task) => task.id !== taskId),
@@ -134,10 +150,12 @@ function removeTaskFromCache(queryClient: QueryClient, taskId: string): void {
   }
 }
 
+/** Same non-array-data hazard as `patchTaskInCache` above. */
 function findCachedTask(queryClient: QueryClient, taskId: string): Task | undefined {
   const queries = queryClient.getQueriesData<Task[]>({ queryKey: ['tasks'] });
   for (const [, data] of queries) {
-    const found = data?.find((task) => task.id === taskId);
+    if (!Array.isArray(data)) continue;
+    const found = data.find((task) => task.id === taskId);
     if (found) return found;
   }
   return undefined;

@@ -141,6 +141,35 @@ describe('useCompletePersonalTask', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
   });
 
+  it('does not throw when a single-task detail cache entry (useTask) is mounted alongside list queries', async () => {
+    // Real bug: getQueriesData({ queryKey: ['tasks'] }) matches by prefix,
+    // so it also returns taskKeys.detail(taskId) entries — a single Task
+    // object from useTask(), not a Task[] — whenever the user has recently
+    // viewed that task's own screen. patchTaskInCache used to call
+    // `data.map(...)` unconditionally on every match, which threw
+    // "data.map is not a function" the moment a detail-cache entry for any
+    // task was present, e.g. after viewing Today, opening a task's edit
+    // screen (mounting useTask), going back, then completing a task.
+    const client = makeClientWithInbox(new QueryClient());
+    client.setQueryData(taskKeys.detail('t1'), TASK);
+    (completePersonalTask as jest.Mock).mockResolvedValue(undefined);
+
+    const { result } = await renderHook(() => useCompletePersonalTask(), {
+      wrapper: makeWrapper(client),
+    });
+
+    await act(async () => {
+      result.current.mutate('t1');
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const cachedList = client.getQueryData<Task[]>(taskKeys.inbox('u1'));
+    expect(cachedList?.[0]?.completedAt).not.toBeNull();
+    // The single-task detail entry must be left untouched by the list-
+    // patching logic (never coerced into an array, never dropped either).
+    expect(client.getQueryData<Task>(taskKeys.detail('t1'))).toEqual(TASK);
+  });
+
   it('deterministically rolls back the optimistic update on a server failure', async () => {
     const client = makeClientWithInbox(new QueryClient());
     (completePersonalTask as jest.Mock).mockRejectedValue(new Error('network error'));
