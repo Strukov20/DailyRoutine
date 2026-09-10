@@ -11,7 +11,7 @@ initI18n();
 
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
-  useNavigation: () => ({ addListener: jest.fn(() => jest.fn()) }),
+  useNavigation: () => ({ addListener: jest.fn(() => jest.fn()), setOptions: jest.fn() }),
 }));
 
 jest.mock('@/lib/auth/AuthProvider', () => ({
@@ -234,6 +234,7 @@ describe('EventEditorForm', () => {
         return jest.fn();
       },
       dispatch: jest.fn(),
+      setOptions: jest.fn(),
     });
 
     await renderWithTheme(<EventEditorForm mode="create" onDone={jest.fn()} />);
@@ -249,5 +250,27 @@ describe('EventEditorForm', () => {
     );
 
     alertSpy.mockRestore();
+  });
+
+  it('disables the native-stack swipe-back gesture only while the form has unsaved edits', async () => {
+    // Real bug: a native swipe-back gesture can finish removing the screen
+    // before the beforeRemove listener's preventDefault() ever runs, making
+    // the "unsaved changes?" dialog's Cancel button appear to do nothing.
+    // Disabling the gesture itself while dirty is what actually closes
+    // that race — proven here via navigation.setOptions, not beforeRemove.
+    const setOptions = jest.fn();
+    jest.spyOn(require('expo-router'), 'useNavigation').mockReturnValue({
+      addListener: jest.fn(() => jest.fn()),
+      dispatch: jest.fn(),
+      setOptions,
+    });
+
+    await renderWithTheme(<EventEditorForm mode="create" onDone={jest.fn()} />);
+
+    await waitFor(() => expect(setOptions).toHaveBeenLastCalledWith({ gestureEnabled: true }));
+
+    await fireEvent.changeText(screen.getByTestId('event-editor-title'), 'Something new');
+
+    await waitFor(() => expect(setOptions).toHaveBeenLastCalledWith({ gestureEnabled: false }));
   });
 });
