@@ -254,6 +254,21 @@ AsyncStorage is null` even though every call is mocked. Listing the exports expl
   catalog marks `IMMUTABLE`), but isn't sufficient on its own since the planner trusts the
   declared volatility rather than deriving it — the cross-timezone check is the one that
   actually exercises the property in question.
+- **`queryClient.getQueriesData({ queryKey: [prefix] })` matches by prefix — a test that only
+  ever seeds list-shaped cache entries can't catch a helper that assumes every match has that
+  shape (Phase 10B, found live on a real device, not by any existing test).**
+  `src/domain/tasks/hooks.ts`'s `patchTaskInCache`/`removeTaskFromCache`/`findCachedTask` all
+  called `getQueriesData({ queryKey: ['tasks'] })` and assumed every returned `data` was a
+  `Task[]` — but `taskKeys.detail(taskId)` (`['tasks', 'detail', taskId]`) also starts with
+  `'tasks'` and caches a single `Task` object from `useTask()`. The `<Task[]>` generic on
+  `getQueriesData` is a compile-time assertion only; it doesn't change what the call actually
+  returns, and a cached single object is truthy, so a bare `if (!data) continue` guard doesn't
+  catch it — `Array.isArray(data)` does. No Jest suite had ever seeded a `taskKeys.detail`
+  entry alongside a list query, so this shipped invisibly until real device testing hit it
+  (marking a task complete after having viewed that task's own edit screen). **When writing a
+  cache helper against any `getQueriesData`/`getQueriesFilter` prefix match, seed a test cache
+  with every *other* key shape sharing that prefix, not just the one shape the helper was
+  written for.**
 
 ## What "at least one test of each kind" means going forward
 

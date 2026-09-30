@@ -2789,3 +2789,93 @@ re-run against both fresh exports (no `NOTIFICATION_WORKER_SECRET`/`SERVICE_ROLE
 `CLIENT_SECRET` match), `git diff --check` clean. `.env.local` was never read, printed, or
 copied. No EAS environment variable was created or modified. No build was started.
 
+## Phase 10B live device validation
+
+**Status**: the repo owner manually applied the Staging project's Auth Site URL/redirect
+allowlist (see [DEPLOYMENT.md, "0a"](DEPLOYMENT.md)) and began exercising the app against it
+on a real iOS Simulator/device, pointed at the linked Staging Supabase project. Three real
+bugs surfaced during that testing, all found and fixed live, in the same session; this is the
+first genuine device-level validation this phase has had.
+
+### `patchTaskInCache`/`removeTaskFromCache`/`findCachedTask`: a `getQueriesData` prefix-match hazard
+
+Reported live: marking any task complete from Today threw `TypeError: undefined is not a
+function` inside `patchTaskInCache` (`src/domain/tasks/hooks.ts:120`, `data.map(...)`).
+Root-caused, not guessed: `getQueriesData({ queryKey: ['tasks'] })` matches by *prefix*, so it
+also returns `taskKeys.detail(taskId)` (`['tasks', 'detail', taskId]`) entries — a single
+`Task` object from `useTask()`, not a `Task[]` — whenever the user had recently viewed that
+task's own edit screen. The `<Task[]>` generic on `getQueriesData` is only a compile-time
+assertion; it doesn't change what the call actually returns at runtime, and a cached single
+`Task` object is truthy, so the existing `if (!data) continue` guard never caught it. Fixed by
+guarding all three helpers with `Array.isArray(data)` instead. A Jest suite with a real
+`QueryClient` had never caught this because no existing test seeded a `taskKeys.detail` cache
+entry alongside a list query — added a regression test that does exactly that. Commit
+`0619bf8`.
+
+### Calendar showing nothing, tasks only showing "stuff created this session" — not a bug
+
+Two follow-up reports from the same testing session turned out to be expected behavior once
+traced, not regressions:
+
+- **Calendar (events) appeared empty, and Today/Inbox (tasks) only showed items created
+  during the current session.** Root cause: the app's `.env.local` now points at the Staging
+  project (linked this phase), which had just been migrated and had zero seed data — every
+  "missing" item was real data that only ever existed in the local Docker Supabase stack used
+  during earlier development, not a database the Staging project shares. Creating a task/event
+  live against Staging worked correctly and showed up immediately, confirming Staging
+  read/write path is healthy; the "different life" impression on each screen was explained
+  fully by: Today/Inbox use optimistic client-side cache inserts on create (so a just-created
+  item appears instantly), Calendar's event-create mutations do not (`onSuccess`-only
+  invalidation, no `onMutate`) — see [Family calendar](../knowledge/wiki/engineering/family-calendar.md)
+  and `src/domain/calendar/hooks.ts`.
+- **A task created on Today never appears in Calendar.** By design, not a gap: the MVP Day
+  Calendar (`useOwnDayEvents`) reads only the `events` table, never `tasks` — see
+  [Family calendar](../knowledge/wiki/engineering/family-calendar.md), "The MVP Day Calendar —
+  personal/family/child **events**." Tasks and events are deliberately separate entities with
+  no merged view in this phase's scope.
+- **Drop-off/pick-up responsibilities can't be assigned to a child profile in the Family
+  calendar.** Also by design, already enforced at two independent layers: `EventEditorForm.tsx`
+  only ever sources the drop-off/pick-up picker from `adults`, never `children`; the
+  `set_responsibility_assignment` RPC (touched during the Phase 10B corrective pass, above)
+  raises `22023` if the assignee isn't an adult. A child has no account and can't
+  accept/decline an assignment, so the rule is consistent product design, not an oversight.
+
+### The native-stack swipe-back race: `beforeRemove` alone can't close it, `gestureEnabled` can
+
+Reported live: in `EventEditorForm`/`TaskEditorForm`'s "unsaved changes?" confirmation
+(`navigation.addListener('beforeRemove', ...)` + `Alert.alert`), swiping back natively made
+Cancel and Discard behave identically — the form closed either way. Root cause: a native
+swipe-back gesture can finish removing the screen at the native layer before
+`event.preventDefault()` in the JS listener ever runs; by the time the Alert's buttons are
+pressed, the screen is already gone regardless of which one is tapped. This is a documented
+`native-stack` limitation (the exact warning React Navigation prints —
+`"The screen was removed natively but didn't get removed from JS state"` — names it directly
+and points at `usePreventRemove`, which has the same underlying limitation for gesture-
+triggered removal specifically, per React Navigation's own docs). Rather than trying to
+out-race the native removal after the fact, both forms now disable the gesture itself while
+dirty (`navigation.setOptions({ gestureEnabled: !isDirty })`, a `useEffect` keyed on
+`isDirty`), closing the race before it can start — the header back button is unaffected, since
+that path was always JS-controlled from the start and already went through `beforeRemove`
+correctly. Both test files' `useNavigation` mocks were missing `setOptions` entirely (never
+exercised before this), which failed all 16 existing tests in both files until added; a new
+regression test per form proves `setOptions` toggles `gestureEnabled` to `false` the instant
+the form becomes dirty. Commit `9f09ff7`.
+
+### A real, if narrow, UI gap found asking "how do I revoke an invitation I lost the link for?"
+
+`revoke_family_invitation` (the RPC) and `useRevokeFamilyInvitation` (the hook) had existed
+and been tested since Phase 3 — but no screen ever called the hook. `app/(app)/family.tsx`'s
+pending-invitations list was read-only (title + "pending" status only), so an owner who didn't
+copy/share a generated invitation link before leaving that screen had no way to revoke it and
+send a fresh one before the 7-day expiry. Added a trailing `IconButton` per pending-invitation
+row, following the exact `Alert.alert`-confirmation pattern this screen already uses for leave/
+delete family (destructive style, no-op Cancel, a safe error message on failure), wired to the
+existing hook — no backend change needed, the gap was purely a missing UI call site. New en/uk
+i18n keys, three new tests covering confirm/cancel/error paths. Commit `cb22684`.
+
+**Verification**: `npm run verify` — 65 suites/582 tests (up from 576 at the start of this
+live-testing pass — +1 cache-guard regression test, +2 gesture regression tests, +3
+revoke-invitation tests), lint/typecheck/wiki:lint all clean. Each fix was verified in
+isolation (targeted `jest` runs) before the full suite re-run. No migration or RPC changed —
+all three code fixes are client-only.
+

@@ -1278,3 +1278,48 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
   exports found no matches. `git diff --check` — clean. `.env.local` was never read. No EAS
   environment variable was created or modified. No build was started.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-30T00:00:00Z — Phase 10B: live device validation (three real bugs, one UI gap)
+
+- **Operation type:** live interactive debugging against a real iOS Simulator run, pointed at
+  the linked Staging Supabase project — the first genuine device-level exercise of this app.
+  Documentation for the fixes below was initially skipped at commit time and closed
+  retroactively in the same session after the user asked for a general status check; recorded
+  here as a real process miss, not silently corrected.
+- **Source material:** [`knowledge/raw/sessions/
+  2026-09-30-phase10b-live-device-validation.md`](../raw/sessions/2026-09-30-phase10b-live-device-validation.md).
+- **Wiki pages updated:** `domain/family-spaces.md` — the `revoke_family_invitation` entry now
+  notes it was wired into the UI only this phase, after existing unused since Phase 3.
+- **Canonical docs updated:** `docs/DECISIONS.md` (new "Phase 10B live device validation"
+  section — all three fixes plus the two "confirmed by-design, not a bug" reports),
+  `docs/TEST_STRATEGY.md` (new "Conventions established" bullet on the
+  `getQueriesData`-prefix-match test gap), `docs/RELEASE_CHECKLIST.md` (Auth Site URL row
+  corrected from "not configured" to "configured" — the repo owner's own manual Dashboard
+  action, confirmed directly, not inferred; stale Jest test count corrected 576→582),
+  `docs/DEPLOYMENT.md` ("0a" section updated to match).
+- **Decisions/contradictions recorded:** none new — the "Calendar shows nothing"/"tasks don't
+  appear in Calendar"/"can't assign a child a responsibility" reports were all confirmed
+  intentional existing design via direct code tracing, not contradictions requiring resolution.
+- **Three real bugs found and fixed, all from live device testing, none caught by the existing
+  test suite beforehand:**
+  1. `patchTaskInCache`/`removeTaskFromCache`/`findCachedTask` assumed every
+     `getQueriesData({ queryKey: ['tasks'] })` match was a `Task[]`, but the prefix match also
+     returns `taskKeys.detail(taskId)`'s single `Task` object (from `useTask()`) — `data.map`
+     threw the instant a task's own detail screen had been viewed before completing any task
+     from a list. Fixed with `Array.isArray(data)` guards; a regression test now seeds exactly
+     this cache shape, which no prior test had done.
+  2. A native swipe-back gesture on `EventEditorForm`/`TaskEditorForm` could finish removing
+     the screen before the `beforeRemove` listener's `preventDefault()` ran, making the
+     "unsaved changes?" dialog's Cancel and Discard behave identically — a documented
+     `native-stack` limitation `beforeRemove` alone can't close. Fixed by disabling the gesture
+     itself while the form is dirty (`navigation.setOptions({ gestureEnabled: !isDirty })`).
+  3. `revoke_family_invitation`/`useRevokeFamilyInvitation` existed and were tested since
+     Phase 3 but were never called from any screen — an owner who lost/didn't copy an
+     invitation link had no way to revoke it. Wired up as a new icon-button action on the
+     pending-invitations row.
+- **Verified:** `npm run verify` — 65 suites / 582 tests (up from 576 before this session's
+  fixes), lint/typecheck/wiki:lint all clean. Each fix verified in isolation before the final
+  full-suite re-run. No migration or RPC changed — all three fixes are client-only.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).

@@ -43,10 +43,11 @@ Three environments, never conflated:
 | Staging/Beta | Hosted integration testing and beta-device validation, synthetic accounts only | A dedicated hosted Supabase project, never shared with production | `staging` |
 | Production   | Future public release | A separate hosted Supabase project | `production` |
 
-**Currently**: Staging exists and is linked (project ref `ocurkeddkqkeitjfbcbe`, `eu-west-1` —
-see "0a. Auth Site URL and redirect URL allowlist" below for what its Auth settings still need)
-— Production has not been created (see "Known limitations" below and each section's own status
-line). The client-side plumbing needed no code change to support this: `src/lib/env.ts`'s
+**Currently**: Staging exists and is linked (project ref `ocurkeddkqkeitjfbcbe`, `eu-west-1`),
+with its Auth Site URL/redirect allowlist configured (see "0a," below, for the exact traced
+values and how they were applied) — Production has not been created (see "Known limitations"
+below and each section's own status line). The client-side plumbing needed no code change to
+support this: `src/lib/env.ts`'s
 `EXPO_PUBLIC_APP_ENV` was already a validated enum, `'local' | 'staging' | 'production'`,
 defaulting to `'local'` and throwing at startup on an invalid value — "fail closed," never
 silently falling back to some other environment — before Staging existed.
@@ -97,10 +98,11 @@ local-only conventions):
 ## 0a. Auth Site URL and redirect URL allowlist (Phase 10B audit)
 
 Every value below is traced directly to code or to `supabase/config.toml` — none is guessed.
-**Not yet applied to the Staging project** — `supabase db push` (already run) only deploys
-migrations; it does not sync `config.toml`'s `[auth]` section. That is a separate step
-(`supabase config push`, or the equivalent Dashboard fields), which is an external
-configuration action and was out of scope for this audit to perform.
+**Now applied to the Staging project** — `supabase db push` itself never syncs `config.toml`'s
+`[auth]` section (it only deploys migrations), so this required a separate step; the repo
+owner applied these values manually via the Dashboard's Authentication → URL Configuration
+page (not `supabase config push`, and not performed by an agent — see
+[DECISIONS.md, "Phase 10B live device validation"](DECISIONS.md)).
 
 **Where every URL comes from**: `src/lib/supabase/authRedirect.ts`'s `makeAuthRedirectUri()`
 wraps `expo-linking`'s `createURL()`. Per that library's own documentation (confirmed by
@@ -120,10 +122,10 @@ production.**
 | Notification tap routing | *(no URL — internal navigation only)* | `notificationResponseRouter.ts` resolves a tapped notification straight to an in-app route (e.g. `/task/<id>/edit`) via Expo Router's `router.push()`, entirely in-process. No deep link is generated, parsed, or registered anywhere for this. |
 | Development-only callback (local Expo Go / Metro) | `exp://127.0.0.1:8081` and `exp://127.0.0.1:8081/--/*` | `supabase/config.toml`'s `auth.additional_redirect_urls` — **local-stack only**, already configured, not applicable to the Staging project's own Auth settings under the confirmed iOS-first/device-build testing plan (a dev-client or TestFlight build uses `familyflow://`, not `exp://` — see above). |
 
-**Supabase Auth Site URL** (`auth.site_url` in `config.toml`, currently applied to the local
-stack only): `familyflow://` — not a hosted web URL, because this app has no web frontend (see
-`docs/ARCHITECTURE.md`). This is the value the Staging project's Dashboard **Authentication →
-URL Configuration → Site URL** field needs, once that configuration step is actually performed.
+**Supabase Auth Site URL** (`auth.site_url` in `config.toml`, applied to both the local stack
+and, now, the Staging project's Dashboard **Authentication → URL Configuration → Site URL**
+field): `familyflow://` — not a hosted web URL, because this app has no web frontend (see
+`docs/ARCHITECTURE.md`).
 
 **Supabase Auth redirect URL allowlist** the Staging project needs (per `config.toml`'s own
 `additional_redirect_urls`, adapted — the `exp://` entries are local-dev-only, see the table
