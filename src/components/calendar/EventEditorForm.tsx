@@ -119,6 +119,20 @@ export function EventEditorForm({ mode, eventId, initialValues, onDone, defaultF
     },
   });
 
+  // Closes the native-stack swipe-back race the `beforeRemove` listener
+  // below can't fully cover on its own: a native swipe gesture can finish
+  // removing the screen natively before `event.preventDefault()` below
+  // ever runs, making the "unsaved changes?" dialog's Cancel button appear
+  // to do nothing (the screen is already gone either way) — this is a
+  // documented native-stack limitation, not something `beforeRemove`
+  // (or `usePreventRemove`) can fully solve after the fact. Disabling the
+  // gesture itself while dirty prevents the race from ever starting; the
+  // header back button still goes through `beforeRemove` normally, since
+  // that path is JS-controlled from the start.
+  useEffect(() => {
+    navigation.setOptions({ gestureEnabled: !isDirty });
+  }, [navigation, isDirty]);
+
   const justSubmittedRef = useRef(false);
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', (event) => {

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import { initI18n } from '@/i18n';
 import { AppThemeProvider } from '@/theme';
@@ -9,7 +9,7 @@ initI18n();
 
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
-  useNavigation: () => ({ addListener: jest.fn(() => jest.fn()) }),
+  useNavigation: () => ({ addListener: jest.fn(() => jest.fn()), setOptions: jest.fn() }),
 }));
 
 jest.mock('@/lib/auth/AuthProvider', () => ({
@@ -197,5 +197,33 @@ describe('TaskEditorForm — occurrence vs. series UX (Phase 8 audit)', () => {
     );
 
     expect(screen.queryByText('Repeat')).not.toBeOnTheScreen();
+  });
+});
+
+describe('TaskEditorForm — native-stack swipe-back gesture', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('disables the swipe-back gesture only while the form has unsaved edits', async () => {
+    // Real bug: a native swipe-back gesture can finish removing the screen
+    // before the beforeRemove listener's preventDefault() ever runs, making
+    // the "unsaved changes?" dialog's Cancel button appear to do nothing.
+    // Disabling the gesture itself while dirty is what actually closes
+    // that race — proven here via navigation.setOptions, not beforeRemove.
+    const setOptions = jest.fn();
+    jest.spyOn(require('expo-router'), 'useNavigation').mockReturnValue({
+      addListener: jest.fn(() => jest.fn()),
+      dispatch: jest.fn(),
+      setOptions,
+    });
+
+    await renderWithTheme(<TaskEditorForm mode="create" onDone={jest.fn()} />);
+
+    await waitFor(() => expect(setOptions).toHaveBeenLastCalledWith({ gestureEnabled: true }));
+
+    await fireEvent.changeText(screen.getByTestId('task-editor-title'), 'Something new');
+
+    await waitFor(() => expect(setOptions).toHaveBeenLastCalledWith({ gestureEnabled: false }));
   });
 });

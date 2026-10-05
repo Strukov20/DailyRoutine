@@ -1,7 +1,7 @@
 ---
 title: Recurring tasks and reminders
 status: current
-updated: 2026-09-08
+updated: 2026-09-09
 sources:
   - ../../../docs/ARCHITECTURE.md
   - ../../../docs/DATA_MODEL.md
@@ -11,7 +11,8 @@ sources:
   - ../../raw/sessions/2026-09-08-phase8-recurring-tasks-reminders.md
   - ../../raw/sessions/2026-09-08-phase8-final-validation.md
   - ../../raw/sessions/2026-09-08-phase8-production-cleanup.md
-tags: [engineering, recurrence, reminders, notifications, phase8]
+  - ../../raw/sessions/2026-09-09-phase10b-hosted-lint-corrective-pass.md
+tags: [engineering, recurrence, reminders, notifications, phase10]
 ---
 
 ## Status: implemented (Phase 8) and verified on-device, personal tasks only
@@ -58,6 +59,27 @@ recurring occurrences (generating through the requested date first). `taskServic
 duplicate the pre-Phase-8 list. Occurrence actions are **non-optimistic** (invalidate-only): a
 recurring task's `id` repeats across every occurrence, so an optimistic cache patch keyed by
 task id risks mutating the wrong occurrence in another mounted list.
+
+**`compute_next_occurrence_date` — declared `IMMUTABLE`, and now actually is (Phase 10B fix).**
+This internal, zero-grant helper (the only place the per-frequency date arithmetic above lives)
+was declared `immutable` from Phase 8 onward and behaved that way in every test written against
+it — but a hosted `supabase db lint` run (Phase 10B) found it silently routed two expressions
+through `STABLE` overloads: the daily branch's runtime string-to-`interval` cast
+(`(p_interval || ' days')::interval`, which calls `interval_in` — `STABLE` by Postgres's own
+classification, unlike a typed `interval` *literal*, which is parsed to a `Const` at parse time
+and never hits this) and the weekly branch's `date_trunc('week', <date>)` (no `date_trunc(text,
+date)` overload exists, so Postgres's resolver picks the *preferred* datetime-category type —
+`timestamptz`, `STABLE` — over the correct-but-non-preferred `timestamp` one). Both were
+verified, before any fix, to already produce timezone-invariant *values* in practice (the
+round-trip through a session timezone self-cancels for whole-day arithmetic) — which is exactly
+why nothing had ever caught this: there was no observable bug, only an unprovable contract.
+Fixed by removing the `STABLE` dependency structurally rather than reclassifying the function:
+`make_interval(days => p_interval)` (needs no string parsing) and an explicit `::timestamp`
+cast on `date_trunc`'s argument (forces the correct overload). See
+[DECISIONS.md, "Phase 10B corrective pass"](../../../docs/DECISIONS.md) for the full
+root-cause writeup and [testing-strategy.md](testing-strategy.md) for the general lesson this
+established about verifying `IMMUTABLE` claims (cross-session-timezone testing, not just
+`EXPLAIN`-based constant-fold checks) for any future PL/pgSQL function in this codebase.
 
 ## Reminders: a device-local scheduler, deliberately separate from the Phase 6 push outbox
 
@@ -188,7 +210,10 @@ flaky-test fix), `TaskEditorForm.test.tsx` (6, new), `domain/recurrence/schemas.
 plus 4 new tests in `notificationService.test.ts` proving local-reminder permission is
 independent of push-token/EAS/`Device.isDevice`. `scripts/e2e-recurrence.sh`
 (`npm run e2e:recurrence`, 23 checks) confirmed repeatable twice consecutively with no DB reset
-and zero residue.
+and zero residue. **Phase 10B** adds `190_hosted_lint_fixes_test.sql` (24 assertions) —
+`compute_next_occurrence_date` specifically: monthly/yearly/weekly correctness unchanged,
+deterministic repeated calls, and identical output across three session timezones (the direct
+test of the immutability property the hosted linter had flagged as unproven).
 
 ## See also
 

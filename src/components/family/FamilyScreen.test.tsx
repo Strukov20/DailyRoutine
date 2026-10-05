@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-
 import { Alert } from 'react-native';
 
 import { initI18n } from '@/i18n';
-import type { Family, FamilyMember } from '@/domain/family/types';
+import type { Family, FamilyInvitation, FamilyMember } from '@/domain/family/types';
 import { FamilyServiceError } from '@/lib/family/familyService';
 import { AppThemeProvider } from '@/theme';
 
@@ -53,18 +53,39 @@ function fakeMember(overrides: Partial<FamilyMember> = {}): FamilyMember {
   };
 }
 
+function fakeInvitation(overrides: Partial<FamilyInvitation> = {}): FamilyInvitation {
+  return {
+    id: 'invite-1',
+    familyId: 'fam-1',
+    invitedEmail: 'friend@example.com',
+    invitedBy: 'owner-1',
+    status: 'pending',
+    expiresAt: '2026-01-08T00:00:00.000Z',
+    respondedAt: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
 let mockMembers: FamilyMember[] = [fakeMember()];
+let mockInvitations: FamilyInvitation[] = [];
 const mockLeaveMutateAsync = jest.fn();
 const mockDeleteMutateAsync = jest.fn();
+const mockRevokeMutateAsync = jest.fn();
 let mockLeavePending = false;
 let mockDeletePending = false;
+let mockRevokePending = false;
 
 jest.mock('@/domain/family/hooks', () => ({
   useActiveFamily: () => ({ families: [FAMILY], activeFamily: FAMILY, isLoading: false, isError: false }),
   useFamilyMembers: () => ({ data: mockMembers }),
-  useFamilyInvitations: () => ({ data: [] }),
+  useFamilyInvitations: () => ({ data: mockInvitations }),
   useLeaveFamily: () => ({ mutateAsync: (...args: unknown[]) => mockLeaveMutateAsync(...args), isPending: mockLeavePending }),
   useDeleteFamily: () => ({ mutateAsync: (...args: unknown[]) => mockDeleteMutateAsync(...args), isPending: mockDeletePending }),
+  useRevokeFamilyInvitation: () => ({
+    mutateAsync: (...args: unknown[]) => mockRevokeMutateAsync(...args),
+    isPending: mockRevokePending,
+  }),
 }));
 
 // react-native's Alert.alert never renders into the RNTL tree (it's a
@@ -95,7 +116,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockLeavePending = false;
   mockDeletePending = false;
+  mockRevokePending = false;
   mockMembers = [fakeMember()];
+  mockInvitations = [];
   mockCallerProfileId = 'owner-1';
 });
 
@@ -147,5 +170,50 @@ describe('FamilyScreen — family settings danger zone', () => {
     await pressAlertButton('Delete family');
 
     await waitFor(() => expect(screen.getByText("Couldn't delete the family. Please try again.")).toBeTruthy());
+  });
+});
+
+describe('FamilyScreen — pending invitations', () => {
+  it('revoking a pending invitation requires confirmation, then calls revokeFamilyInvitation with its id', async () => {
+    mockInvitations = [fakeInvitation()];
+    mockRevokeMutateAsync.mockResolvedValue(undefined);
+    await renderScreen();
+
+    await fireEvent.press(screen.getByLabelText('Revoke invitation'));
+
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Revoke this invitation?',
+      expect.stringContaining('will stop working immediately'),
+      expect.anything(),
+    );
+
+    await pressAlertButton('Revoke');
+    await waitFor(() => expect(mockRevokeMutateAsync).toHaveBeenCalledWith('invite-1'));
+  });
+
+  it('shows a Cancel option and never calls revokeFamilyInvitation on its own', async () => {
+    mockInvitations = [fakeInvitation()];
+    await renderScreen();
+
+    await fireEvent.press(screen.getByLabelText('Revoke invitation'));
+
+    const buttons = alertSpy.mock.calls.at(-1)?.[2];
+    const cancelButton = buttons?.find((b) => b.text === 'Cancel');
+    expect(cancelButton).toBeDefined();
+    expect(cancelButton?.style).toBe('cancel');
+    expect(mockRevokeMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('shows a safe error message when revoking fails, without touching the delete/leave error state', async () => {
+    mockInvitations = [fakeInvitation()];
+    mockRevokeMutateAsync.mockRejectedValue(new FamilyServiceError('forbidden', 'nope'));
+    await renderScreen();
+
+    await fireEvent.press(screen.getByLabelText('Revoke invitation'));
+    await pressAlertButton('Revoke');
+
+    await waitFor(() =>
+      expect(screen.getByText("Couldn't revoke this invitation. Please try again.")).toBeTruthy(),
+    );
   });
 });

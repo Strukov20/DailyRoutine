@@ -1,7 +1,7 @@
 ---
 title: Push notifications
 status: current
-updated: 2026-09-08
+updated: 2026-09-10
 sources:
   - ../../../docs/ARCHITECTURE.md
   - ../../../docs/DATA_MODEL.md
@@ -11,7 +11,9 @@ sources:
   - ../../../docs/DEPLOYMENT.md
   - ../../raw/sessions/2026-09-06-phase6-push-notifications.md
   - ../../raw/sessions/2026-09-08-phase6.1-push-deployment-validation.md
-tags: [engineering, notifications, edge-functions, phase6, phase6.1, deployment]
+  - ../../raw/sessions/2026-09-10-phase10b-eas-initialization.md
+  - ../../raw/sessions/2026-09-10-phase10b-eas-prebuild-readiness.md
+tags: [engineering, notifications, edge-functions, phase6, phase6.1, phase10]
 ---
 
 ## Status: implemented (Phase 6), scoped to shared family task assignment events only. **Not deployed** (Phase 6.1)
@@ -37,6 +39,28 @@ Supabase accounts and a physical device, which an agent cannot create or use aut
 agent can perform at all). See [`docs/DEPLOYMENT.md`](../../../docs/DEPLOYMENT.md) for the
 exact commands and the manual acceptance matrix, and [DECISIONS.md, "Phase
 6.1"](../../../docs/DECISIONS.md) for the scoping decision and rationale.
+
+**Phase 10B update: the "no `eas.json`, no linked Supabase project" gap above is now half
+closed.** `eas.json` exists (Phase 10A); the EAS project itself is now created and linked —
+`@bombastiiic/familyflow`, `extra.eas.projectId` set in `app.config.ts` — and the hosted
+Supabase project is linked and deployed too (see [Family Spaces](../domain/family-spaces.md)
+and [DECISIONS.md, "Phase 10B"](../../../docs/DECISIONS.md) sections for both). **Still true:
+no real push has ever been sent or received** — no push credentials exist yet, no build has
+been run, and no physical device has registered a token. The "genuinely greenfield" framing
+above describes Phase 6.1's own starting point accurately as history; it is no longer the
+current state.
+
+**Phase 10B pre-build readiness**: each `eas.json` profile now declares an explicit
+`"environment": "development" | "preview" | "production"` — this scopes which set of
+EAS-hosted variables (`eas env:*`, none created yet) a build under that profile would pull in;
+without it there'd be nothing for a future `eas env:set` to attach to unambiguously. Verified
+correct via `eas config -p ios -e <profile>` (read-only) for all four profiles. First
+recommended build is `development-simulator` (buildable today, no Apple credential needed,
+but can't validate push — `Device.isDevice` is `false` on Simulator), then
+`development-device` once `eas credentials` has been run — see
+[DECISIONS.md, "Phase 10B EAS pre-build readiness"](../../../docs/DECISIONS.md) and
+[RELEASE_CHECKLIST.md](../../../docs/RELEASE_CHECKLIST.md) for the full variable/visibility
+matrix.
 
 ## Durable transactional outbox — why not a direct send
 

@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { Alert, FlatList, StyleSheet, View } from 'react-native';
-import { Button, Chip, Divider, List, Menu, SegmentedButtons, Text } from 'react-native-paper';
+import { Button, Chip, Divider, IconButton, List, Menu, SegmentedButtons, Text } from 'react-native-paper';
 import { useState } from 'react';
 
 import { FamilyTaskBoard } from '@/components/tasks/FamilyTaskBoard';
@@ -15,8 +15,9 @@ import {
   useFamilyInvitations,
   useFamilyMembers,
   useLeaveFamily,
+  useRevokeFamilyInvitation,
 } from '@/domain/family/hooks';
-import type { FamilyMember } from '@/domain/family/types';
+import type { FamilyInvitation, FamilyMember } from '@/domain/family/types';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { FamilyServiceError } from '@/lib/family/familyService';
 import { createLogger } from '@/lib/logger/logger';
@@ -47,6 +48,8 @@ export default function FamilyScreen() {
   const invitationsQuery = useFamilyInvitations(activeFamily?.id ?? null);
   const leaveFamily = useLeaveFamily();
   const deleteFamily = useDeleteFamily();
+  const revokeInvitation = useRevokeFamilyInvitation(activeFamily?.id ?? '');
+  const [invitationError, setInvitationError] = useState<string | null>(null);
 
   if (isLoading) {
     return (
@@ -121,6 +124,29 @@ export default function FamilyScreen() {
         },
       },
     ]);
+  };
+
+  const onRevokeInvitation = (invitation: FamilyInvitation) => {
+    setInvitationError(null);
+    Alert.alert(
+      t('family:invite.revokeConfirm.title'),
+      t('family:invite.revokeConfirm.message'),
+      [
+        { text: t('common:actions.cancel'), style: 'cancel' },
+        {
+          text: t('family:invite.revoke'),
+          style: 'destructive',
+          onPress: () => {
+            void revokeInvitation.mutateAsync(invitation.id).catch((error: unknown) => {
+              logger.warn('revoke invitation failed', {
+                code: error instanceof FamilyServiceError ? error.code : 'unknown',
+              });
+              setInvitationError(t('family:invite.errors.revokeFailed'));
+            });
+          },
+        },
+      ],
+    );
   };
 
   const renderMember = ({ item }: { item: FamilyMember }) => (
@@ -220,11 +246,28 @@ export default function FamilyScreen() {
                 <List.Subheader style={styles.subheader}>
                   {t('family:pendingInvitations')}
                 </List.Subheader>
+                {invitationError ? (
+                  <Text
+                    variant="bodySmall"
+                    style={[styles.invitationError, { color: theme.colors.danger }]}
+                  >
+                    {invitationError}
+                  </Text>
+                ) : null}
                 {invitations.map((invitation) => (
                   <List.Item
                     key={invitation.id}
                     title={invitation.invitedEmail}
                     description={t('family:invite.status.pending')}
+                    right={(props) => (
+                      <IconButton
+                        {...props}
+                        icon="close"
+                        accessibilityLabel={t('family:invite.revokeAction')}
+                        loading={revokeInvitation.isPending}
+                        onPress={() => onRevokeInvitation(invitation)}
+                      />
+                    )}
                   />
                 ))}
                 <Divider style={styles.divider} />
@@ -311,6 +354,9 @@ const styles = StyleSheet.create({
   },
   subheader: {
     paddingHorizontal: 0,
+  },
+  invitationError: {
+    marginBottom: 4,
   },
   divider: {
     marginVertical: 8,

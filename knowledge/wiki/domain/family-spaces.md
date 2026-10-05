@@ -1,7 +1,7 @@
 ---
 title: Family Spaces
 status: current
-updated: 2026-09-09
+updated: 2026-09-30
 sources:
   - ../../../docs/PRODUCT.md
   - ../../../docs/DATA_MODEL.md
@@ -12,7 +12,8 @@ sources:
   - ../../raw/sessions/2026-09-02-phase2-supabase-foundation.md
   - ../../raw/sessions/2026-09-03-phase3-family-space.md
   - ../../raw/sessions/2026-09-09-phase10-release-stabilization.md
-tags: [domain, family]
+  - ../../raw/sessions/2026-09-30-phase10b-live-device-validation.md
+tags: [domain, family, phase10]
 ---
 
 ## Confirmed
@@ -65,7 +66,10 @@ below):
   never by matching the caller's email (there is no email provider — invitations are
   delivered as a `familyflow://invite/<token>` deep link via native Share or copy-link, see
   `app/family/invite.tsx` and `src/lib/family/inviteLink.ts`). `revoke_family_invitation(id)`
-  (owner-only).
+  (owner-only) — **wired into the UI only as of Phase 10B**: the RPC/hook existed and were
+  tested since Phase 3, but no screen called it, so an owner who didn't copy/share a generated
+  link before leaving the invite screen had no way to revoke it before its 7-day expiry. Now a
+  trailing icon button on each pending-invitation row in `app/(app)/family.tsx`.
 - `create_child_profile(family_id, display_name, date_of_birth?)` / `update_child_profile(...)`
   — any adult member (owner or adult role) may manage children; minimal fields only, no
   `profile_id` ever assigned.

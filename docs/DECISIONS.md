@@ -2454,3 +2454,428 @@ theming," above — and passed). `expo-doctor` unchanged at 20/21 (the same pre-
 `expo`/`expo-router` patch-version drift noted in Phase 9, not introduced this phase).
 `git diff --check` clean.
 
+## Phase 10B corrective pass (hosted lint findings)
+
+**Status**: complete. Staging (project ref `ocurkeddkqkeitjfbcbe`, `eu-west-1`) was linked and
+all 22 prior migrations deployed to it before this pass began — this section covers only the
+narrow fix that followed a `supabase db lint` run against that hosted project. No other Stage
+B work (Auth, Edge Functions, EAS) was touched.
+
+### Root cause: an IMMUTABLE function silently routing through two STABLE overloads
+
+`compute_next_occurrence_date` (Phase 8) was declared `immutable` and, on the local instance
+used throughout Phase 8/9/10A, behaved that way in every test written against it. The hosted
+linter (and, reproduced locally via `supabase db lint --local --level warning`, the identical
+finding) flagged two expressions inside it as `STABLE`. Both were real, verified directly
+against a local Postgres instance, not assumed from the warning text:
+
+- **Daily branch**: `(p_interval || ' days')::interval` concatenates a computed string and
+  casts it to `interval` at runtime — that cast invokes `interval_in`, which
+  `pg_proc.provolatile` shows is `STABLE`, not `IMMUTABLE`. The monthly/yearly branches'
+  `interval '1 month - 1 day'` *typed literal* syntax was never flagged, because Postgres
+  parses that form into a `Const` at parse time — no runtime function call at all, so
+  `interval_in`'s classification never enters into it. That asymmetry (identical-looking
+  interval usage, only one form flagged) is what made this non-obvious from reading the
+  function alone.
+- **Weekly branch**: `date_trunc('week', v_candidate)`, where `v_candidate` is `date`. No
+  `date_trunc(text, date)` overload exists in Postgres; both `date → timestamp` and
+  `date → timestamptz` are implicit casts (`pg_cast.castcontext = 'i'`), so the call is
+  ambiguous between the `IMMUTABLE` `date_trunc(text, timestamp)` overload and the `STABLE`
+  `date_trunc(text, timestamptz)` one. Postgres's overload resolver breaks the tie by
+  preferring the *preferred type* of the shared type category (`pg_type.typispreferred` —
+  confirmed directly: `timestamptz` is preferred in the datetime category, `timestamp` is
+  not), so the call silently resolved to the `STABLE`, session-timezone-dependent overload.
+
+Both were checked for *actual* behavioral impact, not just classification, by running the
+exact same calls under three session timezones (UTC, `Pacific/Kiritimati` at UTC+14, `Etc/
+GMT+12` at UTC−12 — the two most extreme real IANA offsets) before writing any fix: the
+computed *values* were already timezone-invariant in every case, because the round-trip
+through a session timezone is self-consistent for whole-day arithmetic with no time-of-day
+component. That is exactly why this had never been caught by any prior test — nothing was
+observably wrong. But "happens to be timezone-invariant today, unprovably" is not the same
+guarantee as "genuinely immutable," and Postgres's own documentation is explicit that calling
+a `STABLE` function from a routine declared `IMMUTABLE` is the programmer's responsibility, not
+something the planner checks — a future caller relying on the declared contract (a functional
+index, a generated column, cross-timezone plan caching) would be relying on an accidental
+invariant with no structural guarantee behind it.
+
+### Fix: rewrite to remove the STABLE dependency entirely, don't reclassify the function
+
+`STABLE` was rejected as a fix — nothing in this function actually depends on "the current
+query's" transaction-scoped state; every input is a plain, fully-determined argument. Declaring
+it `STABLE` would have been a strictly less honest fix: correct enough to silence the linter,
+but wrong about what the function actually is, and it would also have made
+`generate_task_occurrences` (the sole caller) less inlining/optimization-friendly for no reason.
+Instead, both call sites were rewritten to avoid the ambiguous/STABLE path structurally:
+
+- Daily: `p_after + make_interval(days => p_interval)` — `make_interval` is `IMMUTABLE`
+  (confirmed via `pg_proc`) and needs no string parsing at all.
+- Weekly: `date_trunc('week', v_candidate::timestamp)` — the explicit cast forces the
+  unambiguous `IMMUTABLE` overload instead of letting the resolver pick the preferred-but-wrong
+  one.
+
+Both rewrites were confirmed via `EXPLAIN (VERBOSE, COSTS OFF)` to constant-fold when given
+literal arguments (the practical signature of a genuinely immutable expression chain) and
+produce byte-identical output to the prior expressions across every case
+`140_recurring_tasks_reminders_test.sql` already exercised, plus new dedicated coverage in
+`190_hosted_lint_fixes_test.sql` (24 assertions): monthly skip-invalid-anchor, yearly leap-day
+skip, weekly interval-boundary snapping, deterministic repeated calls, identical results across
+three session timezones, the still-zero-grants regression check, and the real caller path
+(`create_recurring_personal_task` → `generate_task_occurrences`) end to end for the two
+frequencies whose arithmetic changed.
+
+### Two unrelated unused-variable warnings, same pass
+
+`set_responsibility_assignment` (`v_event_id`, selected but never read — `r.event_id` is still
+used in the join condition itself, just never selected out) and `update_event` (`v_family_id`,
+selected but never read — this RPC authorizes via `owner_profile_id` alone) both had one dead
+local variable each, almost certainly a copy-paste artifact from a shape that once needed it.
+Both removed with no behavior change; both functions' full behavior remains covered by
+`050_events_and_responsibilities_test.sql`/`120_family_calendar_test.sql` (re-run, unchanged),
+plus one direct smoke assertion each added to `190_hosted_lint_fixes_test.sql` for locality.
+
+### No index, generated column, or other dependent assumption to check
+
+Checked directly (`pg_index`/`pg_get_indexdef` for any reference to the function; `pg_attribute
+.attgenerated` for any generated column anywhere in the database) before writing the fix: zero
+matches outside Supabase's own vendor schemas (`realtime`/`storage`/`auth`, unrelated). The
+function has zero grants (`revoke all ... from public, anon, authenticated`, unchanged by this
+pass) and exactly one caller (`generate_task_occurrences`), so the blast radius of changing its
+internals was already structurally small before any fix was chosen.
+
+**Verification**: `npx supabase db reset` (23 migrations, clean) + `npx supabase test db` — 19
+files, 602 pgTAP assertions (up from 18/578; new `190_hosted_lint_fixes_test.sql`, 24
+assertions). `npx supabase db lint --local --level warning` — clean, zero findings (all three
+prior warnings gone, no new ones). `npm run verify` — 65 suites/576 tests unchanged (no client
+code touched this pass), wiki:lint clean. `npx supabase db push --dry-run` against the linked
+staging project — reports exactly one pending migration
+(`20260912140100_fix_hosted_lint_warnings.sql`), confirming local/remote parity is otherwise
+intact. The real `supabase db push` was never run this pass, per explicit instruction — the
+migration exists locally and is ready to deploy whenever the repo owner approves that step.
+
+## Phase 10B Auth audit (Auth, deep-link, and staging-environment configuration)
+
+**Status**: audit only, no configuration performed. By the start of this pass, the repo owner
+had already linked the Staging project (ref `ocurkeddkqkeitjfbcbe`, `eu-west-1`), deployed all
+23 migrations (including the Phase 10B corrective pass above), confirmed a clean hosted
+`supabase db lint`, and confirmed the Expo owner (`boombastiiic`), app slug (`familyflow`), iOS
+bundle identifier (`com.familyflow.app`), version (`1.0.0`), build number (`1`), and platform
+target (iOS first). This pass audited every Auth/deep-link/environment value the app generates
+or expects, produced the operator configuration matrix now in
+[DEPLOYMENT.md, "0a"/"0b"](DEPLOYMENT.md), and deliberately performed zero external
+configuration — no Dashboard change, no `supabase config push`, no key retrieval.
+
+### Every URL traced to its actual source, not assumed
+
+`src/lib/supabase/authRedirect.ts`'s `makeAuthRedirectUri()` is the single source for every
+Supabase-facing redirect URL in the app; each of its three callers
+(`authService.ts`'s `signUpWithPassword`/`requestPasswordReset`, `oauth.ts`'s
+`signInWithProvider`) and each corresponding landing route
+(`app/(auth)/confirm.tsx`, `app/reset-password.tsx`, `app/auth-callback.tsx`) was read
+directly to confirm the exact resulting URL and query-param shape
+(`familyflow://confirm?code=...`, `familyflow://reset-password?code=...`,
+`familyflow://auth-callback`). The invitation deep link
+(`src/lib/family/inviteLink.ts` → `familyflow://invite/<token>`) was confirmed to be a
+purely app-internal mechanism — Supabase Auth is never involved in generating or redirecting
+to it, so it does not belong in Supabase's own redirect allowlist, a distinction easy to get
+wrong by pattern-matching on "it's a deep link" alone. Notification tap routing
+(`notificationResponseRouter.ts`) was confirmed to generate no URL at all — a tapped
+notification resolves straight to an in-app route string and navigates via Expo Router's
+`router.push()`, entirely in-process; there is nothing to register anywhere for it.
+
+### EAS builds don't need a different redirect URL — confirmed from `expo-linking`'s own source, not assumed
+
+A genuine open question going in: does an EAS-built app (dev-client or production) produce a
+different deep-link URL shape than a plain Metro/local build, the way Expo Go's `exp://`
+scheme differs? Read `node_modules/expo-linking/src/createURL.ts` directly rather than relying
+on general Expo knowledge that could be stale for the installed version: its own doc comment
+states plainly that "development and production builds" both resolve to `<scheme>://path`,
+and only Expo Go resolves to `exp://host:port/--/path` — gated internally by `isExpoHosted()`,
+which checks for Expo's own hosting domains or `Constants.expoGoConfig`, neither of which is
+true for a standalone dev-client or production build. **Conclusion: there is no separate
+"EAS-build callback"** — `familyflow://*` covers every non-Expo-Go build, including every EAS
+profile. `supabase/config.toml`'s own comment ("the exp:// entries support Expo Go / dev-client
+testing") is imprecise on this specific point (dev-client behaves like production for URL-scheme
+purposes, not like Expo Go) — noted here since it doesn't cause any actual misconfiguration
+(having the `exp://` entries present is harmless, just unnecessary for dev-client specifically),
+so the comment itself was left alone rather than treated as a correction target.
+
+### `supabase db push` does not sync Auth settings — a real, load-bearing gap
+
+Checked directly (`npx supabase config --help`) rather than assumed: `supabase config push` is
+a distinct subcommand from `db push`, and pushes the *whole* `config.toml` (not just `[auth]`)
+to the linked project. This means the Staging project's Auth Site URL and redirect allowlist
+are **not yet applied**, despite `config.toml` already declaring the correct values and despite
+every migration already being deployed — deploying migrations and configuring Auth are two
+independent actions in this CLI, not one. This is the single most important finding of this
+pass: without it, an operator could reasonably assume "migrations are deployed, so the project
+is ready" and then have every Staging sign-up/password-reset/OAuth redirect silently fail.
+Running `supabase config push` (or the equivalent Dashboard entry) was not performed — it
+changes hosted project settings, which this pass was instructed not to touch.
+
+### Confirming the project URL pattern without fetching or printing a key
+
+Section 7 of this pass's brief asked whether `https://ocurkeddkqkeitjfbcbe.supabase.co` is the
+correct project URL, but explicitly not to insert it until verified. Verified two ways, both
+read-only and neither touching a secret: `supabase/.temp/linked-project.json` and
+`supabase/.temp/project-ref` (local CLI cache files, already on disk from the operator's own
+prior `supabase link`) confirm the exact project ref; `supabase/.temp/pooler-url` confirms the
+region (`aws-1-eu-west-1...`) matches the confirmed `eu-west-1`. Neither file contains a
+password, token, or key. The literal URL is deliberately **not** written into any committed
+file this pass (see [DEPLOYMENT.md, "0b"](DEPLOYMENT.md)) — the operator is directed to copy it
+from the Dashboard's own API settings page, the authoritative source, rather than trust a
+pattern derived from local cache files alone.
+
+### Anon key vs. publishable key: already compatible, confirmed by exhaustive grep
+
+`src/lib/env.ts` validates `EXPO_PUBLIC_SUPABASE_ANON_KEY` as `z.string().min(1)` — no format
+assumption. `src/lib/supabase/client.ts` passes it straight through to `createClient()` as an
+opaque string. A grep across `src/` for every reference to this variable found only the two
+sites above plus test/e2e setup files doing the same pass-through — nothing decodes it as a
+JWT or inspects its shape. Combined with `@supabase/supabase-js` being pinned to `^2.113.0`
+(well past the version that added the new key format), the conclusion is that **no code change
+is needed regardless of which key format the Staging project's Dashboard shows** — confirming
+this phase's own standing instruction (`DEPLOYMENT.md`, "0. Environments") not to perform a
+speculative key-model migration.
+
+### Two stale claims found and corrected in `DEPLOYMENT.md`, both now proven wrong by the confirmed hosted state
+
+"Currently: only Local exists — no Staging or Production Supabase project has been created or
+linked" and "No hosted Supabase project is connected to this repository" (in "Known
+limitations") were both accurate when written (Phase 6.1/Phase 10) and are now false, since the
+Staging project is linked. Corrected in place, preserving what remains true nearby
+(`dispatch-notifications` still never deployed to it, `NOTIFICATION_WORKER_SECRET` still never
+set on it, no EAS project yet) rather than deleting the surrounding accurate context.
+
+### A version/build-number contradiction found, not fixed this pass
+
+`app.config.ts` hardcodes `version: '0.1.0'` and sets no `ios.buildNumber` at all — but the
+repo owner has now confirmed `1.0.0`/build `1`, and `eas.json`'s `cli.appVersionSource: "local"`
+means an EAS build will read these fields straight from `app.config.ts`. This needs a small
+code change before any EAS build, but release-identity fields were outside this pass's explicit
+scope (an Auth/deep-link/staging-environment audit) — flagged in
+[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) rather than changed here.
+
+**Verification**: read-only this pass — no migration, RPC, or client code changed; no test
+suite affected. `npm run verify`/`supabase test db` were not re-run since nothing they cover
+changed. Every URL/value in the resulting matrix traces to a specific file and line, listed
+above and in [DEPLOYMENT.md, "0a"/"0b"](DEPLOYMENT.md). No service-role key, database
+password, access token, or `NOTIFICATION_WORKER_SECRET` was retrieved, printed, or logged; no
+CLI command that prints project API keys was run; no Dashboard setting was changed.
+
+## Phase 10B EAS initialization
+
+**Status**: `@bombastiiic/familyflow` created and linked; no build, credential, or submission
+action performed. Release identity in `app.config.ts` now matches the repo owner's confirmed
+values: `owner: 'bombastiiic'`, `version: '1.0.0'`, `ios.buildNumber: '1'`,
+`extra.eas.projectId: 'de243f7f-c6ad-4537-a799-621d645baf31'`.
+
+### A real account-name mismatch caught by an exact-match check, not assumed close enough
+
+The repo owner's first-given Expo account name, `boombastiiic`, was requested to be verified
+against `npx eas-cli@latest whoami` before anything was created — an explicit stop condition,
+not a formality. The authenticated account was `bombastiiic` (one fewer "o"), confirmed at the
+byte level (`xxd` on the raw command output, not just eyeballing terminal text) to rule out a
+rendering artifact before treating it as a real mismatch. Work stopped there — `eas init` was
+not run, `owner` was not written into `app.config.ts` speculatively — and the discrepancy was
+reported back rather than guessed at (e.g., assuming a typo in one direction or the other, or
+silently trying both). The repo owner confirmed it was a typo in their own original message and
+the correct value is `bombastiiic` — the same session then resumed and completed the
+initialization. This is the same discipline this phase has applied to every other identifier
+so far (project ref, region, bundle id): verify against ground truth before creating or linking
+anything with it, since an EAS project name is not casually renameable once real builds and
+store listings start referencing it.
+
+### `bombastiiic` (personal) vs. `bombastiiics-team` (org) — both valid logins, only one correct
+
+`whoami` listed two accounts available to the same login: `bombastiiic` (Role: Owner) and
+`bombastiiics-team` (Role: Owner). The repo owner's
+instructions were explicit that the personal account, not the team, should own this project —
+`eas init --account bombastiiic --non-interactive` was used specifically to disambiguate
+this rather than relying on `eas init`'s own default account selection, which could plausibly
+have picked either in a non-interactive context.
+
+### Dynamic config (`app.config.ts`) can't be auto-written by `eas init` — a real, expected CLI limitation
+
+`eas init --account bombastiiic --non-interactive` succeeded server-side (the project was
+created — confirmed via the printed dashboard URL and, independently, `eas project:info`
+afterward) but exited non-zero client-side, because `app.config.ts` is a dynamic
+(function-based) config the CLI cannot safely rewrite — it printed the exact JSON shape to add
+under `extra.eas.projectId` and stopped. This is expected, documented Expo CLI behavior for
+dynamic configs, not a bug encountered — added manually, then verified two independent ways
+before treating it as done: `npx expo config --type public`'s resolved output showing the
+matching `extra.eas.projectId`, and `npx eas-cli@latest project:info` showing the same ID from
+EAS's own side. Both needed to agree, since a typo in the manually-added ID would silently
+produce a client that thinks it's linked to a project it isn't.
+
+### A pre-existing, unrelated test bug found while running `npm run verify` as part of this pass's own verification
+
+`ConflictsScreen.test.tsx`'s "buckets today's conflict under Today" test computed its `today`
+fixture via `new Date().toISOString().slice(0, 10)` (UTC), while the screen under test
+(`app/conflicts.tsx`) buckets by `todayDateString()` — the device's *local* calendar date. The
+two diverge for part of every day in any timezone ahead of UTC (this repo's own dev machine
+included), which is exactly the "test reading real wall-clock time" flakiness class already
+documented in `docs/TEST_STRATEGY.md` for two earlier phases (4 and 8) — recognized
+immediately from that pattern rather than re-diagnosed from scratch. Confirmed it predated this
+pass's own changes (reproduced against `git stash`) before fixing it, so as not to conflate an
+unrelated pre-existing bug with this pass's own work. Fixed by using the same production util
+the screen itself uses, committed separately (`c07989b`) from the EAS/config changes.
+
+**Verification**: `npm run verify` (65 suites/576 tests, including the `ConflictsScreen.test.tsx`
+fix — all green), `npx expo config --type public` (owner/version/buildNumber/projectId all
+resolve correctly), `npx eas-cli@latest project:info` (`fullName: @bombastiiic/familyflow`,
+`ID: de243f7f-c6ad-4537-a799-621d645baf31` — matches the config exactly), `npx expo-doctor`
+(20/21, the same pre-existing, unrelated `expo`/`expo-router` patch-version drift noted since
+Phase 9), `npx expo export --platform ios` (clean; re-ran the established client-bundle secret
+audit against the fresh export — no `NOTIFICATION_WORKER_SECRET`/`SERVICE_ROLE`/`CLIENT_SECRET`
+match), `git diff --check` clean. No build was started, no Apple credential was generated or
+requested, no App Store Connect application was created, nothing was uploaded to TestFlight,
+and nothing was submitted or published — the project exists and is linked, and nothing beyond
+that.
+
+## Phase 10B EAS pre-build readiness
+
+**Status**: local-only readiness pass, no build run. `eas.json` profiles now carry an explicit
+EAS environment mapping; the pre-existing `expo-doctor` patch-drift finding is resolved.
+
+### `eas.json`: an explicit `"environment"` field per profile, not left implicit
+
+EAS's "Environments" feature (`eas env:*`) scopes hosted environment variables to one of three
+names — confirmed directly from the installed CLI's own help text (`eas env:list --help`:
+"Default environments are 'production', 'preview', and 'development'"), not assumed from
+general Expo knowledge. `eas.json` had four build profiles but no profile declared which of
+these three environments it belongs to, meaning a future `eas env:set` would have nothing to
+attach a build to unambiguously. Added `"environment": "development"` to both
+`development-simulator`/`development-device`, `"preview"` to `preview`, `"production"` to
+`production` — verified correct (not just syntactically valid) via `eas config -p ios -e
+<profile>` for all four, a read-only display command that echoes back which environment's
+variables it would look up; each resolved to exactly the intended one. No EAS environment
+variable was created — this is wiring for variables that don't exist yet, exactly per the
+brief's own scope boundary (create the attachment point, not the values).
+
+### First build recommendation: `development-simulator`, then `development-device` — not `preview`/`production`
+
+No Apple Developer credential exists yet (confirmed — `npx eas credentials` has never been
+run, see "Phase 10B EAS initialization," above). `development-simulator` is the only profile
+buildable today without one, since Simulator builds carry no distribution
+certificate/provisioning-profile requirement — recommended purely as a build-pipeline sanity
+check, since it structurally cannot validate push (`Device.isDevice` is `false` on Simulator).
+`development-device` is the profile that actually matters for this beta's stated goals (real
+push tokens, cross-device Realtime, the native matrix in `docs/BETA_TESTING.md`), but needs
+`eas credentials` run first. `preview`/`production` are later-stage profiles by design (internal
+beta distribution and store submission respectively) and were never in contention for "first."
+
+### `expo-doctor` 20/21: root cause confirmed via the CLI's own diagnostic output, fixed via Expo's own resolver
+
+Root cause, stated plainly by `expo-doctor` itself, not inferred: `expo@57.0.20` (SDK expects
+`~57.0.21`) and `expo-router@57.0.19` (SDK expects `~57.0.20`) — both within their own
+package.json `~57.0.x` SemVer ranges (lockfile-frozen at an earlier patch within that range,
+the same class of drift already resolved once before, for a different package set, in Phase 5
+— see that phase's own entry above). `npx expo install --check` (non-mutating) confirmed the
+same two packages and nothing more before any change was made. `npx expo install --fix`
+(Expo's own SDK-compatibility-aware resolver — never `npm update`/`npm audit fix`, which don't
+understand Expo's cross-package version-matrix constraints) bumped exactly those two in
+`package.json` (`~57.0.20`→`~57.0.21`, `~57.0.19`→`~57.0.20`); `package-lock.json`'s resulting
+diff also shows a transitive bump of `expo-modules-jsi` to `57.1.0`, pulled in by `expo`'s own
+updated dependency tree, not chosen directly — checked and confirmed to still be "SDK 57
+compatible" as a set by `expo-doctor` itself reporting 21/21 afterward, the authoritative
+signal for that claim, not just the individual version number looking reasonable.
+
+**Verification**: `npm run verify` (65 suites/576 tests, unaffected — no client/RPC code
+changed this pass), `npx expo-doctor` (21/21, was 20/21), `npx expo config --type public`
+(resolves correctly, `extra.eas.projectId` intact), `npx expo export --platform ios` and
+`--platform android` (both clean), the established client-bundle/public-config secret audit
+re-run against both fresh exports (no `NOTIFICATION_WORKER_SECRET`/`SERVICE_ROLE`/
+`CLIENT_SECRET` match), `git diff --check` clean. `.env.local` was never read, printed, or
+copied. No EAS environment variable was created or modified. No build was started.
+
+## Phase 10B live device validation
+
+**Status**: the repo owner manually applied the Staging project's Auth Site URL/redirect
+allowlist (see [DEPLOYMENT.md, "0a"](DEPLOYMENT.md)) and began exercising the app against it
+on a real iOS Simulator/device, pointed at the linked Staging Supabase project. Three real
+bugs surfaced during that testing, all found and fixed live, in the same session; this is the
+first genuine device-level validation this phase has had.
+
+### `patchTaskInCache`/`removeTaskFromCache`/`findCachedTask`: a `getQueriesData` prefix-match hazard
+
+Reported live: marking any task complete from Today threw `TypeError: undefined is not a
+function` inside `patchTaskInCache` (`src/domain/tasks/hooks.ts:120`, `data.map(...)`).
+Root-caused, not guessed: `getQueriesData({ queryKey: ['tasks'] })` matches by *prefix*, so it
+also returns `taskKeys.detail(taskId)` (`['tasks', 'detail', taskId]`) entries — a single
+`Task` object from `useTask()`, not a `Task[]` — whenever the user had recently viewed that
+task's own edit screen. The `<Task[]>` generic on `getQueriesData` is only a compile-time
+assertion; it doesn't change what the call actually returns at runtime, and a cached single
+`Task` object is truthy, so the existing `if (!data) continue` guard never caught it. Fixed by
+guarding all three helpers with `Array.isArray(data)` instead. A Jest suite with a real
+`QueryClient` had never caught this because no existing test seeded a `taskKeys.detail` cache
+entry alongside a list query — added a regression test that does exactly that. Commit
+`0619bf8`.
+
+### Calendar showing nothing, tasks only showing "stuff created this session" — not a bug
+
+Two follow-up reports from the same testing session turned out to be expected behavior once
+traced, not regressions:
+
+- **Calendar (events) appeared empty, and Today/Inbox (tasks) only showed items created
+  during the current session.** Root cause: the app's `.env.local` now points at the Staging
+  project (linked this phase), which had just been migrated and had zero seed data — every
+  "missing" item was real data that only ever existed in the local Docker Supabase stack used
+  during earlier development, not a database the Staging project shares. Creating a task/event
+  live against Staging worked correctly and showed up immediately, confirming Staging
+  read/write path is healthy; the "different life" impression on each screen was explained
+  fully by: Today/Inbox use optimistic client-side cache inserts on create (so a just-created
+  item appears instantly), Calendar's event-create mutations do not (`onSuccess`-only
+  invalidation, no `onMutate`) — see [Family calendar](../knowledge/wiki/engineering/family-calendar.md)
+  and `src/domain/calendar/hooks.ts`.
+- **A task created on Today never appears in Calendar.** By design, not a gap: the MVP Day
+  Calendar (`useOwnDayEvents`) reads only the `events` table, never `tasks` — see
+  [Family calendar](../knowledge/wiki/engineering/family-calendar.md), "The MVP Day Calendar —
+  personal/family/child **events**." Tasks and events are deliberately separate entities with
+  no merged view in this phase's scope.
+- **Drop-off/pick-up responsibilities can't be assigned to a child profile in the Family
+  calendar.** Also by design, already enforced at two independent layers: `EventEditorForm.tsx`
+  only ever sources the drop-off/pick-up picker from `adults`, never `children`; the
+  `set_responsibility_assignment` RPC (touched during the Phase 10B corrective pass, above)
+  raises `22023` if the assignee isn't an adult. A child has no account and can't
+  accept/decline an assignment, so the rule is consistent product design, not an oversight.
+
+### The native-stack swipe-back race: `beforeRemove` alone can't close it, `gestureEnabled` can
+
+Reported live: in `EventEditorForm`/`TaskEditorForm`'s "unsaved changes?" confirmation
+(`navigation.addListener('beforeRemove', ...)` + `Alert.alert`), swiping back natively made
+Cancel and Discard behave identically — the form closed either way. Root cause: a native
+swipe-back gesture can finish removing the screen at the native layer before
+`event.preventDefault()` in the JS listener ever runs; by the time the Alert's buttons are
+pressed, the screen is already gone regardless of which one is tapped. This is a documented
+`native-stack` limitation (the exact warning React Navigation prints —
+`"The screen was removed natively but didn't get removed from JS state"` — names it directly
+and points at `usePreventRemove`, which has the same underlying limitation for gesture-
+triggered removal specifically, per React Navigation's own docs). Rather than trying to
+out-race the native removal after the fact, both forms now disable the gesture itself while
+dirty (`navigation.setOptions({ gestureEnabled: !isDirty })`, a `useEffect` keyed on
+`isDirty`), closing the race before it can start — the header back button is unaffected, since
+that path was always JS-controlled from the start and already went through `beforeRemove`
+correctly. Both test files' `useNavigation` mocks were missing `setOptions` entirely (never
+exercised before this), which failed all 16 existing tests in both files until added; a new
+regression test per form proves `setOptions` toggles `gestureEnabled` to `false` the instant
+the form becomes dirty. Commit `9f09ff7`.
+
+### A real, if narrow, UI gap found asking "how do I revoke an invitation I lost the link for?"
+
+`revoke_family_invitation` (the RPC) and `useRevokeFamilyInvitation` (the hook) had existed
+and been tested since Phase 3 — but no screen ever called the hook. `app/(app)/family.tsx`'s
+pending-invitations list was read-only (title + "pending" status only), so an owner who didn't
+copy/share a generated invitation link before leaving that screen had no way to revoke it and
+send a fresh one before the 7-day expiry. Added a trailing `IconButton` per pending-invitation
+row, following the exact `Alert.alert`-confirmation pattern this screen already uses for leave/
+delete family (destructive style, no-op Cancel, a safe error message on failure), wired to the
+existing hook — no backend change needed, the gap was purely a missing UI call site. New en/uk
+i18n keys, three new tests covering confirm/cancel/error paths. Commit `cb22684`.
+
+**Verification**: `npm run verify` — 65 suites/582 tests (up from 576 at the start of this
+live-testing pass — +1 cache-guard regression test, +2 gesture regression tests, +3
+revoke-invitation tests), lint/typecheck/wiki:lint all clean. Each fix was verified in
+isolation (targeted `jest` runs) before the full suite re-run. No migration or RPC changed —
+all three code fixes are client-only.
+

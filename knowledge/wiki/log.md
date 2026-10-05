@@ -1107,3 +1107,219 @@ entry turns out to be wrong, add a new entry that says so and points at the corr
   patch-version drift). No hosted project, EAS project, or physical device was touched — Stage
   B remains entirely pending, honestly reported as such in every doc updated this pass.
 - **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-09T00:00:00Z — Phase 10B: hosted lint corrective pass
+
+- **Operation type:** bug fix (three `supabase db lint` findings against the newly linked
+  hosted staging project) — a narrow corrective pass, explicitly scoped by the user to stop
+  short of any further Stage B step (Auth, Edge Functions, EAS).
+- **Source material:** [`knowledge/raw/sessions/
+  2026-09-09-phase10b-hosted-lint-corrective-pass.md`](../raw/sessions/2026-09-09-phase10b-hosted-lint-corrective-pass.md).
+- **Wiki pages updated:** `engineering/recurring-tasks-and-reminders.md` — new note on
+  `compute_next_occurrence_date` (previously undocumented in the wiki despite existing since
+  Phase 8), covering the root cause and the fix; its "Testing" section updated with the new
+  pgTAP file.
+- **Canonical docs updated:** `docs/DECISIONS.md` (new "Phase 10B corrective pass" section —
+  the full empirical root-cause writeup: `pg_proc.provolatile`/`pg_cast`/
+  `pg_type.typispreferred` queried directly, not assumed from the lint message), 
+  `docs/TEST_STRATEGY.md` (pgTAP counts 18/578 → 19/602; a new "Conventions established" bullet
+  on verifying an `IMMUTABLE` claim via cross-session-timezone testing, not just
+  `EXPLAIN`-based constant-fold checks — the planner trusts the declared volatility either way),
+  `docs/RELEASE_CHECKLIST.md` (staging project now marked linked; the corrective migration
+  marked dry-run-verified but not yet pushed for real).
+- **Decisions/contradictions recorded:** none new.
+- **One real bug found and fixed**: `compute_next_occurrence_date` (Phase 8) was declared
+  `IMMUTABLE` but silently routed two expressions through `STABLE` overloads — a runtime
+  string-to-`interval` cast (`interval_in`, genuinely `STABLE` by Postgres's own
+  classification) in the daily branch, and an ambiguous `date_trunc` overload resolution
+  (Postgres's resolver prefers `timestamptz` over `timestamp` for a bare `date` argument, via
+  `pg_type.typispreferred`) in the weekly branch. Verified, before writing any fix, that the
+  actual computed values were already timezone-invariant in every case tested (UTC, UTC+14,
+  UTC−12) — this had never been caught by any prior test because nothing was observably wrong,
+  only unprovably contracted. Fixed by removing the `STABLE` dependency structurally
+  (`make_interval` instead of string parsing; an explicit `::timestamp` cast to force the
+  correct `date_trunc` overload) rather than reclassifying the function as `STABLE`, which
+  would have been less accurate and would have pessimized the planner's handling of the
+  function's sole caller for no reason. Two unrelated dead-variable warnings
+  (`set_responsibility_assignment`'s `v_event_id`, `update_event`'s `v_family_id`) were also
+  fixed in the same migration — trivial, no behavior change, confirmed by both direct
+  inspection and the existing 050/120 test files continuing to pass unchanged.
+- **Verified:** `npx supabase db reset` (23 migrations, clean). `npx supabase test db` — 19
+  files, 602 pgTAP assertions (new `190_hosted_lint_fixes_test.sql`, 24 assertions — monthly/
+  yearly/weekly/daily correctness unchanged, deterministic repeated calls, identical results
+  across three session timezones, still-zero-grants, and the real
+  `create_recurring_personal_task` → `generate_task_occurrences` caller path end to end).
+  `npx supabase db lint --local --level warning` — zero findings (was 3; reproduces the hosted
+  linter's output exactly). `npm run verify` — 65 suites/576 tests unchanged, wiki:lint clean.
+  `npx supabase db push --dry-run` against the linked staging project (ref
+  `ocurkeddkqkeitjfbcbe`) — exactly one pending migration, local/remote otherwise in parity.
+  The real `supabase db push` was never run this pass, per explicit instruction; the Supabase
+  CLI (2.116.0) was not updated.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-10T00:00:00Z — Phase 10B: Auth, deep-link, and staging-environment audit
+
+- **Operation type:** read-only configuration audit — no code, migration, or Dashboard change.
+  Scoped narrowly by the user to Auth/deep-link/staging-environment tracing only, with explicit
+  "do not guess, do not retrieve secrets, do not touch the Dashboard" constraints.
+- **Source material:** [`knowledge/raw/sessions/
+  2026-09-10-phase10b-auth-audit.md`](../raw/sessions/2026-09-10-phase10b-auth-audit.md).
+- **Wiki pages updated:** `engineering/authentication.md` — new section tracing every redirect
+  URL to its source, the EAS-build-uses-the-same-scheme finding (confirmed from
+  `expo-linking`'s own installed source, not general knowledge), and the `supabase db push`
+  vs. `config push` gap.
+- **Canonical docs updated:** `docs/DEPLOYMENT.md` (two stale claims corrected — "only Local
+  exists" and "No hosted Supabase project is connected" were both true when written and are
+  now false, since Staging is linked; two new sections, "0a" and "0b," with the full traced
+  Auth Site URL/redirect allowlist/staging-env-var matrix), `docs/DECISIONS.md` (new "Phase
+  10B Auth audit" section, the full writeup), `docs/RELEASE_CHECKLIST.md` (Expo owner and
+  version/build-number confirmed values recorded; a new Auth-config row added to the Stage B
+  table; the migration-deployment row updated to reflect all 23 migrations now deployed).
+- **Decisions/contradictions recorded:** a version/build-number mismatch —
+  `app.config.ts` hardcodes `version: '0.1.0'` with no `ios.buildNumber`, but the operator has
+  now confirmed `1.0.0`/build `1`. Reported, not fixed — release-identity fields were outside
+  this pass's explicit scope.
+- **One real, load-bearing gap found**: `supabase db push` (already run, all 23 migrations
+  deployed) does not sync `supabase/config.toml`'s `[auth]` section to a hosted project —
+  confirmed via `supabase config --help`, which shows `config push` as a distinct command.
+  The Staging project therefore has zero working Auth Site URL/redirect configuration despite
+  every migration being deployed and the hosted lint being clean. Not fixed this pass (would
+  require touching hosted project settings, explicitly out of scope) — documented as the
+  concrete next Stage B step.
+- **Verified without retrieving or printing any secret**: the project URL pattern
+  (`https://<ref>.supabase.co`) was cross-checked against `supabase/.temp/linked-project.json`/
+  `project-ref`/`pooler-url` (pre-existing local CLI cache files, no secrets) rather than
+  fetched or guessed — the resulting literal URL was deliberately not written into any
+  committed file, per the explicit "do not insert until verified" instruction; the operator is
+  directed to copy it from the Dashboard's own API page instead. The anon-key-vs-publishable-
+  key question was resolved by grep (the client treats the key as an opaque string throughout —
+  no code change needed either way), not by inspecting any actual key value.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-10T00:00:00Z — Phase 10B: EAS project initialization
+
+- **Operation type:** external configuration action (EAS project creation/linking), narrowly
+  authorized by the user — explicitly not a build, credential, or submission action.
+- **Source material:** [`knowledge/raw/sessions/
+  2026-09-10-phase10b-eas-initialization.md`](../raw/sessions/2026-09-10-phase10b-eas-initialization.md).
+- **Wiki pages updated:** `engineering/push-notifications.md` — a note distinguishing Phase
+  6.1's own historical "genuinely greenfield" starting point from the now-current state (EAS
+  project linked, Supabase staging linked, still no real push ever sent), without rewriting
+  the historical record itself.
+- **Canonical docs updated:** `docs/RELEASE_CHECKLIST.md` (EAS row marked linked with the
+  verified project ID; the account-name-typo story recorded; "Next Stage B step" rewritten to
+  the actual next item, iOS signing credentials), `docs/DEPLOYMENT.md` (EAS section 1 marked
+  done; a stale "no EAS project" Known-limitations line corrected), `docs/DECISIONS.md` (new
+  "Phase 10B EAS initialization" section).
+- **Decisions/contradictions recorded:** a real account-name mismatch — the user's first-given
+  Expo owner (`boombastiiic`) did not match the authenticated `eas whoami` result
+  (`bombastiiic`), confirmed at the byte level before being treated as real, not a rendering
+  artifact. Work stopped completely (no `eas init`, no `owner` field committed) and the exact
+  discrepancy was reported rather than guessed at; the user confirmed it was a typo in their
+  own message and the correct account is `bombastiiic` (personal, not the `bombastiiics-team`
+  org), and the same session then resumed and completed initialization.
+- **One real, expected CLI limitation encountered, not a bug**: `eas init` cannot auto-write
+  `extra.eas.projectId` into a dynamic (`app.config.ts`) config — it printed the exact value
+  and exited non-zero after successfully creating the project server-side. Added manually,
+  then verified two independent ways (`expo config`'s resolved output and `eas project:info`)
+  before treating it as done, since a typo in the manually-added ID would silently produce a
+  client linked to nothing real.
+- **One pre-existing, unrelated test bug found and fixed** while running `npm run verify` as
+  this session's own sanity check: `ConflictsScreen.test.tsx` computed its "today" fixture via
+  UTC (`toISOString()`) against a screen that buckets by local calendar date
+  (`todayDateString()`) — the same class of real-wall-clock test flakiness already documented
+  for Phases 4 and 8. Confirmed it predated this session (reproduced against `git stash`)
+  before fixing it, and committed separately from the EAS/config work.
+- **Verified:** `npm run verify` — 65 suites/576 tests, all clean. `npx expo config --type
+  public` and `npx eas-cli@latest project:info` independently agree on
+  `@bombastiiic/familyflow` / `de243f7f-c6ad-4537-a799-621d645baf31`. `npx expo-doctor` — 20/21
+  (pre-existing). `npx expo export --platform ios` — clean, re-confirmed via the established
+  client-bundle secret-string audit. `git diff --check` — clean. No build, credential
+  generation, App Store Connect application, TestFlight upload, or submission occurred.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-10T00:00:00Z — Phase 10B: EAS pre-build readiness pass
+
+- **Operation type:** local-only configuration audit and a minimal, tool-recommended
+  dependency patch — no build, no credentials, no EAS environment variable created.
+- **Source material:** [`knowledge/raw/sessions/
+  2026-09-10-phase10b-eas-prebuild-readiness.md`](../raw/sessions/2026-09-10-phase10b-eas-prebuild-readiness.md).
+- **Wiki pages updated:** `engineering/push-notifications.md` — a further Phase 10B note on
+  the `eas.json` environment mapping and the first-build-profile recommendation.
+- **Canonical docs updated:** `docs/RELEASE_CHECKLIST.md` (new "EAS build profile readiness"
+  section — the full profile/environment table, the two-stage first-build recommendation, and
+  the five-variable EAS visibility matrix; `expo-doctor` status updated to 21/21),
+  `docs/DEPLOYMENT.md` (EAS section 1 notes the new environment field), `docs/DECISIONS.md`
+  (new "Phase 10B EAS pre-build readiness" section).
+- **Decisions/contradictions recorded:** none new.
+- **One real gap closed**: none of `eas.json`'s four build profiles declared an EAS
+  `"environment"` — confirmed via the installed CLI's own help text that this is a distinct
+  concept from profile names, scoping which hosted variable set a build pulls in. Added and
+  verified correct (via the read-only `eas config -p ios -e <profile>`, not just JSON
+  validity) for all four profiles.
+- **One pre-existing dependency-drift finding resolved**: `expo-doctor`'s 20/21
+  (`expo`/`expo-router` patch versions behind the SDK's expected range, present since Phase 5)
+  fixed via `npx expo install --fix` — Expo's own SDK-compatibility resolver, not a blind
+  `npm update`. Exactly the two packages the tool named were bumped in `package.json`; a
+  transitive `expo-modules-jsi` bump to `57.1.0` came along via `expo`'s own updated tree, not
+  chosen directly, and was confirmed still SDK-57-compatible by `expo-doctor` itself reporting
+  21/21 afterward.
+- **Verified:** `npm run verify` — 65/576, clean. `npx expo-doctor` — 21/21 (was 20/21). `npx
+  expo config --type public`, `npx expo export --platform ios`/`--platform android` — all
+  clean; the established client-bundle/public-config secret audit re-run against both fresh
+  exports found no matches. `git diff --check` — clean. `.env.local` was never read. No EAS
+  environment variable was created or modified. No build was started.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
+
+---
+
+## 2026-09-30T00:00:00Z — Phase 10B: live device validation (three real bugs, one UI gap)
+
+- **Operation type:** live interactive debugging against a real iOS Simulator run, pointed at
+  the linked Staging Supabase project — the first genuine device-level exercise of this app.
+  Documentation for the fixes below was initially skipped at commit time and closed
+  retroactively in the same session after the user asked for a general status check; recorded
+  here as a real process miss, not silently corrected.
+- **Source material:** [`knowledge/raw/sessions/
+  2026-09-30-phase10b-live-device-validation.md`](../raw/sessions/2026-09-30-phase10b-live-device-validation.md).
+- **Wiki pages updated:** `domain/family-spaces.md` — the `revoke_family_invitation` entry now
+  notes it was wired into the UI only this phase, after existing unused since Phase 3.
+- **Canonical docs updated:** `docs/DECISIONS.md` (new "Phase 10B live device validation"
+  section — all three fixes plus the two "confirmed by-design, not a bug" reports),
+  `docs/TEST_STRATEGY.md` (new "Conventions established" bullet on the
+  `getQueriesData`-prefix-match test gap), `docs/RELEASE_CHECKLIST.md` (Auth Site URL row
+  corrected from "not configured" to "configured" — the repo owner's own manual Dashboard
+  action, confirmed directly, not inferred; stale Jest test count corrected 576→582),
+  `docs/DEPLOYMENT.md` ("0a" section updated to match).
+- **Decisions/contradictions recorded:** none new — the "Calendar shows nothing"/"tasks don't
+  appear in Calendar"/"can't assign a child a responsibility" reports were all confirmed
+  intentional existing design via direct code tracing, not contradictions requiring resolution.
+- **Three real bugs found and fixed, all from live device testing, none caught by the existing
+  test suite beforehand:**
+  1. `patchTaskInCache`/`removeTaskFromCache`/`findCachedTask` assumed every
+     `getQueriesData({ queryKey: ['tasks'] })` match was a `Task[]`, but the prefix match also
+     returns `taskKeys.detail(taskId)`'s single `Task` object (from `useTask()`) — `data.map`
+     threw the instant a task's own detail screen had been viewed before completing any task
+     from a list. Fixed with `Array.isArray(data)` guards; a regression test now seeds exactly
+     this cache shape, which no prior test had done.
+  2. A native swipe-back gesture on `EventEditorForm`/`TaskEditorForm` could finish removing
+     the screen before the `beforeRemove` listener's `preventDefault()` ran, making the
+     "unsaved changes?" dialog's Cancel and Discard behave identically — a documented
+     `native-stack` limitation `beforeRemove` alone can't close. Fixed by disabling the gesture
+     itself while the form is dirty (`navigation.setOptions({ gestureEnabled: !isDirty })`).
+  3. `revoke_family_invitation`/`useRevokeFamilyInvitation` existed and were tested since
+     Phase 3 but were never called from any screen — an owner who lost/didn't copy an
+     invitation link had no way to revoke it. Wired up as a new icon-button action on the
+     pending-invitations row.
+- **Verified:** `npm run verify` — 65 suites / 582 tests (up from 576 before this session's
+  fixes), lint/typecheck/wiki:lint all clean. Each fix verified in isolation before the final
+  full-suite re-run. No migration or RPC changed — all three fixes are client-only.
+- **Responsible agent:** Claude (Sonnet 5, via Claude Code).
